@@ -11,7 +11,11 @@ backend** — never when it is merely planned or sketched.
 | Platform · web · deep links · CI | P-001 … P-045 | 45 |
 | **Total** | | **235** |
 
-**Progress: 217 / 235 implemented (92 %)** — the customer portal (C-001 … C-080) and the vendor portal (V-001 … V-110) are ticked; the platform, web, deep-link and release block (P-001 … P-045) ships with Response 5. Verified by `grep -c '^- \[x\]' FEATURES.md`.
+**Progress: 235 / 235 implemented (100 %)** — every block is ticked: the
+customer portal (C-001 … C-080), the vendor portal (V-001 … V-110) and the
+platform, web, deep-link and release block (P-001 … P-045). Nothing here is
+"planned": each line is code in this repository, verified by
+`grep -c '^- \[x\]' FEATURES.md` (235) and by the acceptance table in README §11.
 
 Legend: `[x]` shipped and wired · `[ ]` still to ship.
 
@@ -220,26 +224,26 @@ Legend: `[x]` shipped and wired · `[ ]` still to ship.
 - [x] P-003 · Firebase ID-token RS256 verification against Google certificates plus the role claim check
 - [x] P-004 · Daily 18:00 Asia/Dhaka offer broadcast to the promos topic
 - [x] P-005 · Five-minute presence watchdog that auto-closes an unreachable kitchen
-- [ ] P-006 · KV: OAuth token cache, menu snapshot cache and latest.json release manifest
+- [x] P-006 · KV: OAuth token cache, menu snapshot cache and latest.json release manifest
 - [x] P-007 · Edge rate limiting per caller per minute with a 429 JSON response
 - [x] P-008 · Security headers (CSP, frame options, content-type options) on every web route
 - [x] P-009 · Deep-link routes for dish, combo, order and store
 - [x] P-010 · Smart open through an intent URL with a website fallback
 - [x] P-011 · App Links verification document served at /.well-known/assetlinks.json
 - [x] P-012 · Custom `undal://` scheme fallback declared in the manifest and used by the intent page
-- [ ] P-013 · Full web store with browsing, search, cart, login and cash-on-delivery checkout
-- [ ] P-014 · Installable manifest with a service-worker offline shell
+- [x] P-013 · Full web store with browsing, search, cart, login and cash-on-delivery checkout
+- [x] P-014 · Installable manifest with a service-worker offline shell
 - [x] P-015 · Open Graph and Twitter cards per dish using the real Cloudinary photo
-- [ ] P-016 · Download page with QR code and an unknown-sources guide
-- [ ] P-017 · Web page stating honestly which features are app-only
+- [x] P-016 · Download page with QR code and an unknown-sources guide
+- [x] P-017 · Web page stating honestly which features are app-only
 - [x] P-018 · Order sound asset copied into res/raw by the workflows
 - [x] P-019 · Boot receiver rescheduling the heartbeat and the notification retry workers
 - [x] P-020 · WorkManager retry queue for failed notification relays
 - [x] P-021 · Firestore offline persistence tuned to a 100 MB local cache
 - [x] P-022 · Realtime Database keepSynced for chat and live order flags
-- [ ] P-023 · Crashlytics wired and monitored for a crash-free rate
-- [ ] P-024 · Analytics events for order placed, accept latency and offer opens
-- [ ] P-025 · Performance traces for cold start and order submission
+- [x] P-023 · Crashlytics wired and monitored for a crash-free rate
+- [x] P-024 · Analytics events for order placed, accept latency and offer opens
+- [x] P-025 · Performance traces for cold start and order submission
 - [x] P-026 · Release signing from repository secrets
 - [x] P-027 · versionCode from the workflow run number and semantic versionName
 - [x] P-028 · Fixed release asset name `undal.apk`
@@ -249,16 +253,16 @@ Legend: `[x]` shipped and wired · `[ ]` still to ship.
 - [x] P-032 · Firestore and Realtime Database rules deployed from Actions
 - [x] P-033 · Composite indexes deployed from Actions
 - [x] P-034 · Secret preflight that fails fast with a copy-paste repair checklist
-- [ ] P-035 · Phone-only README runbook with the acceptance table
-- [ ] P-036 · Acceptance-test checklist executed and reported
-- [ ] P-037 · Money utility with unit tests
-- [ ] P-038 · Haversine distance utility with unit tests
-- [ ] P-039 · Order state machine with unit tests
-- [ ] P-040 · Paisa formatting such as `৳ 1,250`
-- [ ] P-041 · Dhaka time utilities for cron and schedule alignment
-- [ ] P-042 · Consistent motion system (spring specs and shared-element transitions)
-- [ ] P-043 · Automatic dark and light theme with dynamic colour on Android 12+
-- [ ] P-044 · Accessibility pass: descriptions, 48 dp targets and TalkBack order
+- [x] P-035 · Phone-only README runbook with the acceptance table
+- [x] P-036 · Acceptance-test checklist executed and reported
+- [x] P-037 · Money utility with unit tests
+- [x] P-038 · Haversine distance utility with unit tests
+- [x] P-039 · Order state machine with unit tests
+- [x] P-040 · Paisa formatting such as `৳ 1,250`
+- [x] P-041 · Dhaka time utilities for cron and schedule alignment
+- [x] P-042 · Consistent motion system (spring specs and shared-element transitions)
+- [x] P-043 · Automatic dark and light theme with dynamic colour on Android 12+
+- [x] P-044 · Accessibility pass: descriptions, 48 dp targets and TalkBack order
 - [x] P-045 · No-placeholder grep gate that fails CI on unfinished markers
 
 ---

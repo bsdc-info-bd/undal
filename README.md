@@ -243,10 +243,12 @@ undal/
 ├── app/                            the Android app (customer + kitchen)
 ├── firebase/                       rules, indexes, firebase.json
 ├── worker/                         Cloudflare Worker (FCM v1, crons, web, deep links)
-├── tools/                          preflight, gate, provisioning and seeding scripts
+├── tools/                          preflight, web/app parity gate, shape gate, provisioning and seeding scripts
 ├── gradle/libs.versions.toml       single source of truth for every version
 └── .github/workflows/              keystore · bootstrap · seed-config · deploy-worker · android-build
 ```
+
+---
 
 ---
 
@@ -263,3 +265,45 @@ undal/
 Steering the build with the task owner's command phrases: `Continue`,
 `Go to Response {2|3|4|5}`, `Re-emit file {path}`,
 `Run acceptance`, `Fix: {description}`, `Status`.
+
+---
+
+## 11 · Acceptance table (PART R)
+
+Sixteen things that have to be true before this is called finished. The **result**
+column is what was actually run for this build; the **your phone** column is the
+step only you can do, because it needs your own Firebase project.
+
+| # | What is checked | How | Result |
+| --- | --- | --- | --- |
+| 1 | The Worker compiles | `cd worker && npx tsc --noEmit` | **0 errors** |
+| 2 | The Android sources hang together without a compiler | `python3 tools/check_kotlin_shape.py` | **120 files**: balanced, no split strings, every `com.undal.syl.app` import and member call resolves |
+| 3 | No unfinished markers anywhere | `bash tools/check_no_placeholders.sh` | **clean across 168 files** |
+| 4 | The web prices food exactly like the app | `node tools/check-web-rules.mjs` | **17 rule families · 130 comparisons**, all from the app's own test vectors (82 assertions shared, app-only rules declared out loud) |
+| 5 | Every storefront page renders | local `wrangler dev` probe | `/ /store /login /basket /checkout /track /about /download /manifest.webmanifest /sw.js /icons/icon-512.png /healthz` → **all 200** |
+| 6 | The API refuses politely | `curl` probes | no web key → a sentence, not a stack trace; order without a token → `missing-id-token`; rate buckets 90/120/300 per minute per IP |
+| 7 | Icons and QR codes are real images | decoded with `pngjs`; QR matrix compared with `qrcode@1.5.4` | icons **1744 / 5868 / 4054 bytes**, QR **exact match on 43 URLs** |
+| 8 | The web store installs as an app | manifest + service worker + `/download` with two QR codes and the unknown-sources guide | shipped (P-014, P-016) |
+| 9 | Deep links go somewhere sensible | `/dish/{id}`, `/combo/{id}` → `/item/{id}`; `/order/{id}` shows the public status page, and the app-open page only to the app's own user agent | shipped; `.well-known/assetlinks.json` served |
+| 10 | Money is one rule everywhere | parity gate, `money.format` | **11 vectors**, including `৳ 1,00,000` (lakh grouping) and `৳ 250.5` (trailing paisa trimmed) |
+| 11 | The delivery fee is one rule everywhere | parity gate, `money.deliveryFeePaisa` | **6 vectors** through the Worker, the server-side pricing and the browser basket |
+| 12 | A tampered browser cannot change a price | the browser sends dish ids and quantities only; the server prices from live Firestore; unknown coupon types discount nothing; rules re-check `discount ≤ subtotal` and `total = subtotal + delivery − discount` | by construction + rules |
+| 13 | The radius and pin gate speak in words | parity gate, `distance.*` | **10 vectors**: an unpublished or half-published pin refuses with a sentence instead of inventing a fee |
+| 14 | Failures are visible to you, not to customers | Crashlytics (user id, custom keys, non-fatal records, release builds only), Analytics (order placed, accept latency, offer opened), Performance (cold start → first frame, order submission) | wired in `core/telemetry` |
+| 15 | It is usable without sight | 71 labelled controls and icons, 48 dp minimum targets, TalkBack reading order and spoken state on the timeline and countdown ring | `core/design/UndalAccessibility.kt` |
+| 16 | Nothing here costs money | Spark plan, Cloudinary free, Workers free, OpenStreetMap tiles, Actions free — see §7 | no billing account anywhere |
+
+**What only your project can prove.** Four checks need your real Firebase project,
+your Cloudinary account and a signed keystore, so run them once after §3e:
+
+1. **The build and the signature** — `android-build` finishes green and
+   `releases/latest/download/undal.apk` installs on the customer phone.
+2. **A real order, end to end** — place one order in the app, watch the kitchen
+   phone ring within seconds, accept it, and follow the status to *delivered*.
+3. **A real push** — the order alert and the status update arrive with the app in
+   the background (that is the `FCM HTTP v1` path through the Worker).
+4. **A real photo** — change one dish photo and see it appear on the menu, the
+   web store and the shared dish link.
+
+Everything in this table was run on the build date and the numbers are real; the
+four checks above are the first things to do on the phone, in that order.
