@@ -11,6 +11,7 @@ import com.google.firebase.firestore.FirebaseFirestoreSettings
 import com.google.firebase.firestore.PersistentCacheSettings
 import com.undal.syl.app.core.background.PresenceHeartbeatWorker
 import com.undal.syl.app.core.session.AuthSession
+import com.undal.syl.app.core.telemetry.UndalTelemetry
 import com.undal.syl.app.core.session.VendorSessionKeeper
 import com.undal.syl.app.core.config.UndalBuildInfo
 import com.undal.syl.app.core.fcm.AlarmChannels
@@ -43,6 +44,9 @@ class UndalApp : Application(), Configuration.Provider {
     @Inject
     lateinit var session: AuthSession
 
+    @Inject
+    lateinit var telemetry: UndalTelemetry
+
     /**
      * Process-scoped coroutine scope for work that must outlive any screen — the
      * kitchen session watchdog lives here (V-002). It is cancelled by the
@@ -59,6 +63,10 @@ class UndalApp : Application(), Configuration.Provider {
 
     override fun onCreate() {
         super.onCreate()
+        // Crash reporting and the cold-start trace start before anything else can
+        // be slow: a performance trace that misses the first 300 ms is theatre.
+        telemetry.configureForBuild(BuildConfig.DEBUG)
+        telemetry.beginAppStart()
         configureCloudinary()
         configureFirestorePersistence()
         configureRealtimeDatabase()
@@ -77,6 +85,8 @@ class UndalApp : Application(), Configuration.Provider {
         if (session.isSignedIn()) {
             sessionKeeper.start(appScope)
         }
+        // A crash report without the account it happened to is a puzzle, not a bug.
+        session.uid?.let { uid -> telemetry.identify(uid) }
     }
 
     /**

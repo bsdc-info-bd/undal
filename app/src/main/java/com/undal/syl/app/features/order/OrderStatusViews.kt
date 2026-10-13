@@ -33,7 +33,10 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.semantics.semantics
 import com.undal.syl.app.core.design.UndalStatusPill
+import com.undal.syl.app.core.design.undalOrdered
+import com.undal.syl.app.core.design.undalStateDescription
 import com.undal.syl.app.core.theme.UndalDimens
 import com.undal.syl.app.core.theme.undalSemantics
 import com.undal.syl.app.core.util.OrderStateMachine
@@ -116,7 +119,17 @@ fun OrderTimelineStepper(
                 isDone || isCurrent -> doneColour
                 else -> pendingColour
             }
-            Row {
+            val spokenState = when {
+                cancelled && index <= currentIndex -> "cancelled"
+                isDone -> "done"
+                isCurrent -> "happening now"
+                else -> "waiting"
+            }
+            Row(
+                modifier = Modifier
+                    .undalOrdered(index)
+                    .undalStateDescription("${OrderStateMachine.label(step)}, $spokenState")
+            ) {
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
                     Box(
                         modifier = Modifier
@@ -189,7 +202,12 @@ fun PrepCountdownRing(
 ) {
     val ringColour = if (overdue) MaterialTheme.undalSemantics.warning else MaterialTheme.colorScheme.primary
     val trackColour = MaterialTheme.colorScheme.surfaceVariant
-    Column(modifier = modifier, horizontalAlignment = Alignment.CenterHorizontally) {
+    Column(
+        modifier = modifier.semantics {
+            stateDescription = "$headline, $timeLabel left"
+        },
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
         Box(contentAlignment = Alignment.Center) {
             Canvas(modifier = Modifier.size(RING_SIZE)) {
                 val stroke = 12.dp.toPx()

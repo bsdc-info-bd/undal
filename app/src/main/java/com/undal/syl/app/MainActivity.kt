@@ -6,6 +6,7 @@ import android.content.Intent
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.view.Choreographer
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
@@ -15,6 +16,7 @@ import androidx.compose.runtime.setValue
 import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 import com.undal.syl.app.core.background.OrderAlertController
 import com.undal.syl.app.core.fcm.AlarmChannels
+import com.undal.syl.app.core.telemetry.UndalTelemetry
 import com.undal.syl.app.core.theme.UndalTheme
 import com.undal.syl.app.features.root.UndalRoot
 import dagger.hilt.android.AndroidEntryPoint
@@ -33,6 +35,9 @@ import dagger.hilt.android.AndroidEntryPoint
 @AndroidEntryPoint
 class MainActivity : ComponentActivity() {
 
+    @javax.inject.Inject
+    lateinit var telemetry: UndalTelemetry
+
     private var deepLink by mutableStateOf<String?>(null)
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -49,6 +54,10 @@ class MainActivity : ComponentActivity() {
                 UndalRoot(initialDeepLink = deepLink)
             }
         }
+
+        // "The app is open" is the first frame on the glass, not the first line of
+        // code: this is where the cold-start trace from UndalApp ends (P-025).
+        Choreographer.getInstance().postFrameCallback { telemetry.endAppStart() }
     }
 
     override fun onNewIntent(intent: Intent) {

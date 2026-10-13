@@ -6,6 +6,7 @@ import com.undal.syl.app.core.cart.CartLine
 import com.undal.syl.app.core.model.Combo
 import com.undal.syl.app.core.model.MenuCard
 import com.undal.syl.app.core.model.MenuItem
+import com.undal.syl.app.core.telemetry.UndalTelemetry
 import com.undal.syl.app.core.util.Money
 import com.undal.syl.app.data.repo.CartRepo
 import com.undal.syl.app.data.repo.MenuRepo
@@ -27,7 +28,8 @@ import javax.inject.Inject
 @HiltViewModel
 class ItemDetailViewModel @Inject constructor(
     private val menuRepo: MenuRepo,
-    private val cartRepo: CartRepo
+    private val cartRepo: CartRepo,
+    private val telemetry: UndalTelemetry
 ) : ViewModel() {
 
     data class State(
@@ -46,6 +48,9 @@ class ItemDetailViewModel @Inject constructor(
 
     private var cardId: String = ""
 
+    /** One event per opened page, not one per menu update (P-024). */
+    private var offerLogged = false
+
     fun bind(id: String) {
         if (cardId == id) return
         cardId = id
@@ -61,6 +66,11 @@ class ItemDetailViewModel @Inject constructor(
                     .sortedByDescending { it.orderCount }
                     .take(6)
                     .map { MenuCard.Dish(it) }
+
+                if (!offerLogged) {
+                    offerLogged = true
+                    telemetry.offerOpened(cardId, if (card is MenuCard.Bundle) "combo" else "dish")
+                }
 
                 _state.value = _state.value.copy(
                     loading = false,

@@ -17,6 +17,7 @@ import com.undal.syl.app.core.model.VendorOrder
 import com.undal.syl.app.core.model.VendorStatusEvent
 import com.undal.syl.app.core.session.AuthSession
 import com.undal.syl.app.core.session.VendorSessionKeeper
+import com.undal.syl.app.core.telemetry.UndalTelemetry
 import com.undal.syl.app.core.util.OrderStatus
 import com.undal.syl.app.core.util.UndalResult
 import com.undal.syl.app.data.repo.StoreRepo
@@ -49,7 +50,8 @@ class VendorDashboardViewModel @Inject constructor(
     private val sessionKeeper: VendorSessionKeeper,
     private val heartbeat: PresenceHeartbeat,
     private val session: AuthSession,
-    private val auth: FirebaseAuth
+    private val auth: FirebaseAuth,
+    private val telemetry: UndalTelemetry
 ) : ViewModel() {
 
     data class State(
@@ -149,6 +151,12 @@ class VendorDashboardViewModel @Inject constructor(
                     runningTimers = open
                         .filter { it.status == OrderStatus.ACCEPTED }
                         .sortedBy { it.prepEndsAtMillis ?: Long.MAX_VALUE }
+                )
+                // If this phone crashes tonight, the report should say whether the
+                // store was open and how many orders were waiting (P-023).
+                telemetry.vendorState(
+                    storeOpen = _state.value.openState.serviceable,
+                    pendingOrders = _state.value.waiting.size
                 )
             }
         }

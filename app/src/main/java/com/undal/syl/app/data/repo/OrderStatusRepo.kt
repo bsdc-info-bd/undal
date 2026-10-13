@@ -7,6 +7,7 @@ import com.undal.syl.app.core.background.NotifyRetryWorker
 import com.undal.syl.app.core.background.OrderAlertService
 import com.undal.syl.app.core.background.PrepTimerService
 import com.undal.syl.app.core.net.WorkerApi
+import com.undal.syl.app.core.telemetry.UndalTelemetry
 import com.undal.syl.app.core.util.OrderStateMachine
 import com.undal.syl.app.core.util.OrderStatus
 import com.undal.syl.app.core.util.UndalErrors
@@ -15,6 +16,7 @@ import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.callbackFlow
 import kotlinx.coroutines.tasks.await
+import java.time.Duration
 import java.time.Instant
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -38,6 +40,7 @@ import dagger.hilt.android.qualifiers.ApplicationContext
 class OrderStatusRepo @Inject constructor(
     private val firestore: FirebaseFirestore,
     private val workerApi: WorkerApi,
+    private val telemetry: UndalTelemetry,
     @ApplicationContext private val context: Context
 ) {
 
@@ -46,6 +49,7 @@ class OrderStatusRepo @Inject constructor(
         val shortId: String,
         val status: OrderStatus,
         val totalAmountPaisa: Long,
+        val createdAt: Instant?,
         val prepEndsAt: Instant?,
         val customerName: String,
         val phone: String,
@@ -80,6 +84,7 @@ class OrderStatusRepo @Inject constructor(
                         shortId = snapshot.getString("shortId").orEmpty(),
                         status = status,
                         totalAmountPaisa = snapshot.getLong("totalAmountPaisa") ?: 0L,
+                        createdAt = snapshot.getTimestamp("createdAt")?.toDate()?.toInstant(),
                         prepEndsAt = snapshot.getTimestamp("prepEndsAt")?.toDate()?.toInstant(),
                         customerName = snapshot.getString("customerName").orEmpty(),
                         phone = snapshot.getString("phone").orEmpty(),
@@ -96,13 +101,20 @@ class OrderStatusRepo @Inject constructor(
         awaitClose { registration.remove() }
     }
 
-    /** Accept with a real prep promise; the rules demand both fields. */
-    suspend fun accept(orderId: String, prepMinutes: Int): UndalResult<Unit> =
-        transition(
+    /**
+     * Accept with a real prep promise; the rules demand both fields.
+     *
+     * The moment it succeeds, the phone reports how long the order waited — the
+     * one number that says whether this kitchen is coping (P-024).
+     */
+    suspend fun accept(orderId: String, prepMinutes: Int): UndalResult<Unit> {
+        var placedAt: Instant? = null
+        val outcome = transition(
             orderId = orderId,
             target = OrderStatus.ACCEPTED,
             localPrepMinutes = prepMinutes,
-            build = { _ ->
+            build = { view ->
+                placedAt = view.createdAt
                 val prepEndsAt = com.google.firebase.Timestamp(
                     java.util.Date.from(Instant.now().plusSeconds(prepMinutes * 60L))
                 )
@@ -114,6 +126,13 @@ class OrderStatusRepo @Inject constructor(
                 )
             }
         )
+        return outcome.onSuccess {
+            val placed = placedAt
+            if (placed != null) {
+                telemetry.orderAccepted(Duration.between(placed, Instant.now()).toMillis())
+            }
+        }
+    }
 
     suspend fun reject(orderId: String, reason: String): UndalResult<Unit> =
         transition(
@@ -200,6 +219,7 @@ class OrderStatusRepo @Inject constructor(
                     shortId = snapshot.getString("shortId").orEmpty(),
                     status = current,
                     totalAmountPaisa = snapshot.getLong("totalAmountPaisa") ?: 0L,
+                    createdAt = snapshot.getTimestamp("createdAt")?.toDate()?.toInstant(),
                     prepEndsAt = snapshot.getTimestamp("prepEndsAt")?.toDate()?.toInstant(),
                     customerName = snapshot.getString("customerName").orEmpty(),
                     phone = snapshot.getString("phone").orEmpty(),

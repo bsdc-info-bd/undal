@@ -11,6 +11,7 @@ import com.google.firebase.firestore.Query
 import com.undal.syl.app.core.background.NotifyRetryWorker
 import com.undal.syl.app.core.cart.CartLine
 import com.undal.syl.app.core.maps.UndalLocation
+import com.undal.syl.app.core.telemetry.UndalTelemetry
 import com.undal.syl.app.core.model.MenuSnapshot
 import com.undal.syl.app.core.model.StoreConfig
 import com.undal.syl.app.core.util.Money
@@ -53,6 +54,7 @@ class OrderRepo @Inject constructor(
     private val firestore: FirebaseFirestore,
     private val database: FirebaseDatabase,
     private val auth: FirebaseAuth,
+    private val telemetry: UndalTelemetry,
     @ApplicationContext private val context: Context
 ) {
 
@@ -130,7 +132,28 @@ class OrderRepo @Inject constructor(
     private class OrderBlocked(message: String) : IllegalStateException(message)
 
     // ------------------------------------------------------------------ write
+
+    /**
+     * Places an order and tells the owner's dashboard how it went (P-024, P-025).
+     * The trace covers the whole write — the counter, the live price re-read, the
+     * order document, the coupon — because that is the stretch a customer spends
+     * watching a spinner.
+     */
     suspend fun placeOrder(draft: OrderDraft): UndalResult<PlacedOrder> {
+        val trace = telemetry.beginOrderSubmit()
+        val outcome = placeOrderTraced(draft)
+        outcome.onSuccess { placed ->
+            telemetry.placeOrder(placed.orderId, draft.lines.sumOf { it.quantity }, placed.totalAmountPaisa)
+            telemetry.stopTrace(trace, succeeded = true)
+        }
+        if (outcome is UndalResult.Failure) {
+            telemetry.recordNonFatal("place_order", outcome.cause)
+            telemetry.stopTrace(trace, succeeded = false)
+        }
+        return outcome
+    }
+
+    private suspend fun placeOrderTraced(draft: OrderDraft): UndalResult<PlacedOrder> {
         val uid = auth.currentUser?.uid
             ?: return UndalResult.Failure("Please sign in again — your session expired.")
         if (draft.lines.isEmpty()) return UndalResult.Failure("Your cart is empty.")

@@ -28,6 +28,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
@@ -38,6 +39,7 @@ import androidx.compose.ui.unit.dp
 import coil3.compose.AsyncImage
 import com.undal.syl.app.R
 import com.undal.syl.app.core.design.UndalStatusPill
+import com.undal.syl.app.core.design.undalTouchTarget
 import com.undal.syl.app.core.model.MenuCard
 import com.undal.syl.app.core.model.MenuItem
 import com.undal.syl.app.core.theme.UndalDimens
@@ -261,12 +263,18 @@ fun QuantityStepper(
     enabled: Boolean = true
 ) {
     Surface(
-        modifier = modifier,
+        modifier = modifier.semantics {
+            stateDescription = "$quantity in the basket"
+        },
         shape = RoundedCornerShape(UndalDimens.radiusSm),
         color = MaterialTheme.colorScheme.primaryContainer
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            TextButton(onClick = onRemove, enabled = enabled) {
+            TextButton(
+                onClick = onRemove,
+                enabled = enabled,
+                modifier = Modifier.undalTouchTarget()
+            ) {
                 Icon(
                     Icons.Filled.Clear,
                     contentDescription = "One less",
@@ -280,7 +288,11 @@ fun QuantityStepper(
                 color = MaterialTheme.colorScheme.onPrimaryContainer,
                 modifier = Modifier.width(20.dp)
             )
-            TextButton(onClick = onAdd, enabled = enabled) {
+            TextButton(
+                onClick = onAdd,
+                enabled = enabled,
+                modifier = Modifier.undalTouchTarget()
+            ) {
                 Icon(
                     Icons.Filled.Add,
                     contentDescription = "One more",
