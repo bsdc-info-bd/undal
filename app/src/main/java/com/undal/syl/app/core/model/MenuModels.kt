@@ -67,7 +67,8 @@ data class MenuItem(
     val categoryId: String,
     val subcategoryId: String,
     val imageUrl: String,
-    val prepMinutes: Int
+    val prepMinutes: Int,
+    val featured: Boolean = false
 ) {
 
     val hasDiscount: Boolean get() = discountAmountPaisa > 0 && discountAmountPaisa < amountPaisa
@@ -103,7 +104,8 @@ data class MenuItem(
             categoryId = (map["categoryId"] as? String).orEmpty(),
             subcategoryId = (map["subcategoryId"] as? String).orEmpty(),
             imageUrl = (map["imageUrl"] as? String).orEmpty(),
-            prepMinutes = (map["prepMinutes"] as? Number)?.toInt() ?: 20
+            prepMinutes = (map["prepMinutes"] as? Number)?.toInt() ?: 20,
+            featured = map["featured"] as? Boolean ?: false
         )
     }
 }
@@ -236,7 +238,9 @@ enum class MenuSort(val label: String) {
     POPULAR("Most ordered");
 
     fun apply(cards: List<MenuCard>, popularity: Map<String, Long>): List<MenuCard> = when (this) {
-        RECOMMENDED -> cards
+        RECOMMENDED -> cards.sortedByDescending { card ->
+            if ((card as? MenuCard.Dish)?.item?.featured == true) 1 else 0
+        }
         PRICE_LOW -> cards.sortedBy { it.amountPaisa }
         PRICE_HIGH -> cards.sortedByDescending { it.amountPaisa }
         POPULAR -> cards.sortedByDescending { card -> popularity[card.id] ?: 0L }

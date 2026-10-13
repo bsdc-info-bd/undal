@@ -296,10 +296,12 @@ data class Campaign(
     val startAt: Timestamp?,
     val endAt: Timestamp?,
     val bannerUrl: String,
-    val code: String
+    val code: String,
+    val active: Boolean = true
 ) {
 
     fun isLive(nowMillis: Long = System.currentTimeMillis()): Boolean {
+        if (!active) return false
         val start = startAt?.toDate()?.time ?: return false
         val end = endAt?.toDate()?.time ?: return false
         return nowMillis in start..end
@@ -323,7 +325,8 @@ data class Campaign(
                 startAt = map["startAt"] as? Timestamp,
                 endAt = map["endAt"] as? Timestamp,
                 bannerUrl = (map["bannerUrl"] as? String).orEmpty(),
-                code = (map["code"] as? String).orEmpty()
+                code = (map["code"] as? String).orEmpty(),
+                active = map["active"] as? Boolean ?: true
             )
         }
     }

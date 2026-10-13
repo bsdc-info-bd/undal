@@ -40,7 +40,10 @@ class CloudinaryUploader @Inject constructor(
      * refusing an 80 MB video mis-picked as a photo is friendlier than a
      * five-minute upload on mobile data.
      */
-    suspend fun uploadImage(uri: Uri): UndalResult<UploadedImage> {
+    suspend fun uploadImage(
+        uri: Uri,
+        onProgress: (Float) -> Unit = {}
+    ): UndalResult<UploadedImage> {
         if (!UndalBuildInfo.isCloudinaryConfigured) {
             return UndalResult.Failure(
                 "Photo upload is not configured in this build yet — the kitchen can still see your name " +
@@ -51,7 +54,12 @@ class CloudinaryUploader @Inject constructor(
             val callback = object : UploadCallback {
                 override fun onStart(requestId: String) = Unit
 
-                override fun onProgress(requestId: String, bytes: Long, totalBytes: Long) = Unit
+                override fun onProgress(requestId: String, bytes: Long, totalBytes: Long) {
+                // Cloudinary compresses on its side; the phone only needs to show
+                // how far the bytes have travelled.
+                val fraction = if (totalBytes > 0L) bytes.toFloat() / totalBytes.toFloat() else 0f
+                onProgress(fraction.coerceIn(0f, 1f))
+            }
 
                 override fun onSuccess(requestId: String, resultData: MutableMap<Any?, Any?>?) {
                     val url = resultData?.get("secure_url") as? String

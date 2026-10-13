@@ -15,6 +15,7 @@ import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.callbackFlow
 import kotlinx.coroutines.flow.catch
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.tasks.await
 import javax.inject.Inject
@@ -132,6 +133,113 @@ class ChatRepo @Inject constructor(
         )
     }
 
+    // ------------------------------------------------------------- kitchen side
+
+    /** The customer's typing flag, as the kitchen reads it (V-100). */
+    fun observeCustomerTyping(orderId: String): Flow<Boolean> = callbackFlow {
+        val reference = database.getReference(CHATS).child(orderId).child(TYPING).child(SENDER_CUSTOMER)
+        val listener = object : ValueEventListener {
+            override fun onDataChange(snapshot: DataSnapshot) {
+                trySend(snapshot.getValue(Boolean::class.java) ?: false)
+            }
+
+            override fun onCancelled(error: DatabaseError) {
+                trySend(false)
+            }
+        }
+        reference.addValueEventListener(listener)
+        awaitClose { reference.removeEventListener(listener) }
+    }.catch { emit(false) }
+
+    /** Publishes the kitchen's typing flag; the customer reads it under `typing/vendor`. */
+    suspend fun setVendorTyping(orderId: String, typing: Boolean): UndalResult<Unit> = runCatching {
+        database.getReference(CHATS).child(orderId).child(TYPING).child(SENDER_VENDOR)
+            .setValue(typing).await()
+        Unit
+    }.fold(
+        onSuccess = { UndalResult.Success(Unit) },
+        onFailure = { UndalResult.Failure(it.message ?: "Could not update the typing indicator.", it) }
+    )
+
+    /** The kitchen's reply. The caller queues the push to the customer afterwards. */
+    suspend fun sendAsVendor(orderId: String, text: String): UndalResult<Unit> {
+        auth.currentUser?.uid ?: return UndalResult.Failure("Please sign in again — your session expired.")
+        val body = text.trim()
+        if (body.isEmpty()) return UndalResult.Failure("Type a message first.")
+        if (body.length > MAX_MESSAGE_LENGTH) {
+            return UndalResult.Failure("A message can hold up to $MAX_MESSAGE_LENGTH characters.")
+        }
+        return runCatching {
+            database.getReference(CHATS).child(orderId).child(MESSAGES)
+                .push()
+                .setValue(
+                    mapOf(
+                        "sender" to SENDER_VENDOR,
+                        "text" to body,
+                        "ts" to ServerValue.TIMESTAMP
+                    )
+                )
+                .await()
+            setVendorTyping(orderId, false)
+            Unit
+        }.fold(
+            onSuccess = { UndalResult.Success(Unit) },
+            onFailure = {
+                UndalResult.Failure(
+                    "The message did not send: ${it.message ?: "check your connection and try again"}. ",
+                    it
+                )
+            }
+        )
+    }
+
+    /** How many customer messages arrived after the kitchen last looked (V-037, V-097). */
+    fun unreadFromCustomer(messages: List<Message>, lastReadMillis: Long): Int =
+        messages.count { message -> !message.fromKitchen && message.tsMillis > lastReadMillis }
+
+    fun vendorLastReadFlow(orderId: String): Flow<Long> = dataStore.data.map { preferences ->
+        preferences[vendorReadKey(orderId)] ?: 0L
+    }
+
+    /** The kitchen's read mark right now, for the unread badge. */
+    suspend fun vendorLastRead(orderId: String): Long =
+        dataStore.data.first()[vendorReadKey(orderId)] ?: 0L
+
+    /**
+     * Publishes "I have seen up to this message" on the shared thread, so the
+     * other side can show a read receipt (V-101). The customer's own mark stays
+     * local as well, because a badge must survive a dead spot in the signal.
+     */
+    suspend fun publishRead(orderId: String, role: String, atMillis: Long): UndalResult<Unit> = runCatching {
+        database.getReference(CHATS).child(orderId).child(READ).child(role)
+            .setValue(atMillis)
+            .await()
+        Unit
+    }.fold(
+        onSuccess = { UndalResult.Success(Unit) },
+        onFailure = { UndalResult.Failure(it.message ?: "Could not publish the read mark.", it) }
+    )
+
+    /** The other side's read mark in epoch millis; 0 means they have not looked yet. */
+    fun observeReadMark(orderId: String, role: String): Flow<Long> = callbackFlow {
+        val reference = database.getReference(CHATS).child(orderId).child(READ).child(role)
+        val listener = object : ValueEventListener {
+            override fun onDataChange(snapshot: DataSnapshot) {
+                trySend(snapshot.getValue(Long::class.java) ?: 0L)
+            }
+
+            override fun onCancelled(error: DatabaseError) {
+                trySend(0L)
+            }
+        }
+        reference.addValueEventListener(listener)
+        awaitClose { reference.removeEventListener(listener) }
+    }.catch { emit(0L) }
+
+    suspend fun markVendorRead(orderId: String, atMillis: Long = System.currentTimeMillis()) {
+        dataStore.edit { preferences -> preferences[vendorReadKey(orderId)] = atMillis }
+    }
+
     /** Milliseconds of the last moment this phone looked at the conversation. */
     fun lastReadFlow(orderId: String): Flow<Long> = dataStore.data.map { preferences ->
         preferences[readKey(orderId)] ?: 0L
@@ -155,6 +263,8 @@ class ChatRepo @Inject constructor(
 
     private fun readKey(orderId: String) = longPreferencesKey("chat_last_read_$orderId")
 
+    private fun vendorReadKey(orderId: String) = longPreferencesKey("chat_vendor_read_$orderId")
+
     companion object {
         const val MAX_MESSAGE_LENGTH = 1000
         const val SENDER_CUSTOMER = "customer"
@@ -163,5 +273,6 @@ class ChatRepo @Inject constructor(
         private const val CHATS = "chats"
         private const val MESSAGES = "messages"
         private const val TYPING = "typing"
+        private const val READ = "read"
     }
 }

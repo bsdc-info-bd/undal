@@ -116,6 +116,7 @@ fun UndalMenuCard(
                 val badges = buildList {
                     if (card is MenuCard.Bundle) add("Combo")
                     val dish = (card as? MenuCard.Dish)?.item
+                    if (dish?.featured == true) add("Chef's pick")
                     if (dish?.isPopular == true) add("Popular")
                 }
                 if (badges.isNotEmpty()) {

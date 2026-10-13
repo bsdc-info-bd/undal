@@ -53,6 +53,19 @@ def scan(text: str) -> tuple[list[int], int, int]:
                 line += text.count("\n", i, end + 3)
                 i = end + 3
             continue
+        if char == "'":
+            # A character literal — `','`, `'"'`, `'\\n'` — may contain a quote
+            # that must not be mistaken for the start of a string.
+            i += 1
+            while i < n:
+                if text[i] == "\\":
+                    i += 2
+                    continue
+                if text[i] == "'" or text[i] == "\n":
+                    i += 1
+                    break
+                i += 1
+            continue
         if char == '"':
             opened_on = line
             i += 1
