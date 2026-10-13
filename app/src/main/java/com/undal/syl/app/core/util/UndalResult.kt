@@ -86,10 +86,16 @@ object UndalErrors {
             else -> error.message?.takeIf { it.isNotBlank() } ?: "Something went wrong. Please try again."
         }
         val code = (error as? FirebaseFirestoreException)?.code
-        val needsReference = code == null ||
-            code == FirebaseFirestoreException.Code.PERMISSION_DENIED ||
-            code == FirebaseFirestoreException.Code.UNAUTHENTICATED
-        if (!needsReference) return sentence
+        if (code == null) {
+            // Not a Firestore failure at all — still worth the reference, because
+            // this is the path an unexpected error takes.
+            return sentence + "\n\nKitchen reference: " + reference("UNKNOWN", operation)
+        }
+        if (code != FirebaseFirestoreException.Code.PERMISSION_DENIED &&
+            code != FirebaseFirestoreException.Code.UNAUTHENTICATED
+        ) {
+            return sentence
+        }
         return sentence + "\n\nKitchen reference: " + reference(code.name, operation)
     }
 
