@@ -11,7 +11,7 @@ backend** — never when it is merely planned or sketched.
 | Platform · web · deep links · CI | P-001 … P-045 | 45 |
 | **Total** | | **235** |
 
-**Progress: 123 / 235 implemented (52 %)** — the whole customer portal (C-001 … C-080) is ticked; verified by `grep -c '^- \[x\]' FEATURES.md`.
+**Progress: 217 / 235 implemented (92 %)** — the customer portal (C-001 … C-080) and the vendor portal (V-001 … V-110) are ticked; the platform, web, deep-link and release block (P-001 … P-045) ships with Response 5. Verified by `grep -c '^- \[x\]' FEATURES.md`.
 
 Legend: `[x]` shipped and wired · `[ ]` still to ship.
 
@@ -109,109 +109,109 @@ Legend: `[x]` shipped and wired · `[ ]` still to ship.
 - [x] V-005 · FCM token registration with a health chip
 - [x] V-006 · Heartbeat status proven on the dashboard
 - [x] V-007 · Credential change through the password reset email flow
-- [ ] V-008 · Wrong-role guard
+- [x] V-008 · Wrong-role guard
 - [x] V-009 · Rationale copy explaining why the kitchen phone needs these permissions
-- [ ] V-010 · Logout hidden in settings behind a confirmation
-- [ ] V-011 · Today's order count
-- [ ] V-012 · Today's revenue in exact paisa
-- [ ] V-013 · Pending and active queue size
-- [ ] V-014 · Week bar chart drawn with a custom Canvas from real data
-- [ ] V-015 · Live new-order queue cards with an age-seconds ticker
-- [ ] V-016 · Store status hero showing Open, Closed or the auto-closed reason
-- [ ] V-017 · One-tap open and close with a customer-facing note
-- [ ] V-018 · Mini list of running prep timers
-- [ ] V-019 · Calm low-attention state when there are no orders
-- [ ] V-020 · Shortcuts grid to menu, orders, schedule and chat
-- [ ] V-021 · Stream of today's status events
-- [ ] V-022 · Pull to refresh over realtime everywhere
-- [ ] V-023 · Realtime new-order stream under one second
+- [x] V-010 · Logout hidden in settings behind a confirmation
+- [x] V-011 · Today's order count
+- [x] V-012 · Today's revenue in exact paisa
+- [x] V-013 · Pending and active queue size
+- [x] V-014 · Week bar chart drawn with a custom Canvas from real data
+- [x] V-015 · Live new-order queue cards with an age-seconds ticker
+- [x] V-016 · Store status hero showing Open, Closed or the auto-closed reason
+- [x] V-017 · One-tap open and close with a customer-facing note
+- [x] V-018 · Mini list of running prep timers
+- [x] V-019 · Calm low-attention state when there are no orders
+- [x] V-020 · Shortcuts grid to menu, orders, schedule and chat
+- [x] V-021 · Stream of today's status events
+- [x] V-022 · Pull to refresh over realtime everywhere
+- [x] V-023 · Realtime new-order stream under one second
 - [x] V-024 · Full-screen ringing alert with the looping Undal order sound
-- [ ] V-025 · Order card with items, totals, fee, distance and address title, description, note
-- [ ] V-026 · Customer card with name, profile photo, phone number, Call button and copy-address
-- [ ] V-027 · Google embed map and pin on every order, with an osmdroid toggle
+- [x] V-025 · Order card with items, totals, fee, distance and address title, description, note
+- [x] V-026 · Customer card with name, profile photo, phone number, Call button and copy-address
+- [x] V-027 · Google embed map and pin on every order, with an osmdroid toggle
 - [x] V-028 · Accept with a prep-time picker (10/15/20/25/30/45 minute chips plus custom)
 - [x] V-029 · Reject with reason templates and a mandatory note that pushes instantly
 - [x] V-030 · Confirmation sheet before accepting, showing the total
 - [x] V-031 · "Is the order ready?" alert that sets ready, notifies the customer and stops the sound tick
 - [x] V-032 · Mark in delivery with a customer push
-- [ ] V-033 · Mark delivered with a customer push, celebration and the collected-cash checkbox
+- [x] V-033 · Mark delivered with a customer push, celebration and the collected-cash checkbox
 - [x] V-034 · Sticky countdown notification with a ten-second tick
-- [ ] V-035 · Overdue escalation with a red banner and an extra push
-- [ ] V-036 · Per-order chat shortcut
-- [ ] V-037 · Unread customer message badge on the order
-- [ ] V-038 · Rendered timeline showing who did what and when
-- [ ] V-039 · Long-press to copy the customer phone number
-- [ ] V-040 · Order detail share-sheet text
-- [ ] V-041 · Filter tabs: New, Preparing, Ready, Out, Done, Cancelled
-- [ ] V-042 · Live age badge with a colour ramp
-- [ ] V-043 · Actions disabled by the state machine so impossible taps cannot happen
-- [ ] V-044 · Sound test button in settings
-- [ ] V-045 · Multi-device consistency: another device accepting stops this alert through RTDB
-- [ ] V-046 · Offline queue of status writes backed by Firestore persistence
-- [ ] V-047 · Vendor-cancelled orders visible in history with their note
-- [ ] V-048 · Daily closing digest card
-- [ ] V-049 · Category create, read, update, delete
-- [ ] V-050 · Subcategory create, read, update, delete
-- [ ] V-051 · Drag reorder writing the order field
-- [ ] V-052 · Item create with name, description, price, compare price, photo, veg flag, spice, tags, featured
-- [ ] V-053 · Item photo pick, compress, Cloudinary upload with progress
-- [ ] V-054 · Item edit with dirty-state awareness
-- [ ] V-055 · Item delete with confirmation and a summary of orders affected
-- [ ] V-056 · Instant availability toggle reflected in the customer app
-- [ ] V-057 · Bulk availability mode
-- [ ] V-058 · Search inside the manage list
-- [ ] V-059 · Combo builder: pick at least two items, quantities, combo price and automatic savings against regular price
-- [ ] V-060 · Combo create, read, update, delete with photo
-- [ ] V-061 · Campaign create with percent or fixed discount, date range, banner text and scope
-- [ ] V-062 · Campaign list, edit and disable
-- [ ] V-063 · Coupon create with upper-normalised code, type, value, minimum order, expiry and usage limit
-- [ ] V-064 · Coupon list showing used against limit with an active toggle
-- [ ] V-065 · Coupon delete guard
-- [ ] V-066 · Featured item toggle for the home highlight
-- [ ] V-067 · Optional category image through Cloudinary
-- [ ] V-068 · Preview-as-customer mode
-- [ ] V-069 · All lists realtime with no manual refresh
-- [ ] V-070 · Validation and taka formatting everywhere
-- [ ] V-071 · Weekly schedule builder with per-day multi-slot editing
-- [ ] V-072 · Schedule templates: 24/7, standard 09–22, lunch and dinner split, weekend special in one tap
-- [ ] V-073 · Special dates with a date picker for closed days or custom hours
-- [ ] V-074 · Explainer line showing today's derived status
-- [ ] V-075 · Manual open/close override with a note customers can see
-- [ ] V-076 · Auto-offline: fifteen minutes without a heartbeat closes the store and pushes a Reopen now notice
-- [ ] V-077 · Reopen and reconnect flow
-- [ ] V-078 · Presence and heartbeat status tile
-- [ ] V-079 · Delivery per-kilometre fee editor
-- [ ] V-080 · Delivery radius slider from one to fifteen kilometres with a live circle preview
-- [ ] V-081 · Store location pin picker with a grab-my-GPS button
-- [ ] V-082 · Minimum order amount editor
-- [ ] V-083 · Store profile with name, banner and logo upload
-- [ ] V-084 · Every edit reaching customers live through Firestore snapshots
-- [ ] V-085 · Save guards and confirmation snackbars
-- [ ] V-086 · Sound test and tick-sound test in settings
+- [x] V-035 · Overdue escalation with a red banner and an extra push
+- [x] V-036 · Per-order chat shortcut
+- [x] V-037 · Unread customer message badge on the order
+- [x] V-038 · Rendered timeline showing who did what and when
+- [x] V-039 · Long-press to copy the customer phone number
+- [x] V-040 · Order detail share-sheet text
+- [x] V-041 · Filter tabs: New, Preparing, Ready, Out, Done, Cancelled
+- [x] V-042 · Live age badge with a colour ramp
+- [x] V-043 · Actions disabled by the state machine so impossible taps cannot happen
+- [x] V-044 · Sound test button in settings
+- [x] V-045 · Multi-device consistency: another device accepting stops this alert through RTDB
+- [x] V-046 · Offline queue of status writes backed by Firestore persistence
+- [x] V-047 · Vendor-cancelled orders visible in history with their note
+- [x] V-048 · Daily closing digest card
+- [x] V-049 · Category create, read, update, delete
+- [x] V-050 · Subcategory create, read, update, delete
+- [x] V-051 · Drag reorder writing the order field
+- [x] V-052 · Item create with name, description, price, compare price, photo, veg flag, spice, tags, featured
+- [x] V-053 · Item photo pick, compress, Cloudinary upload with progress
+- [x] V-054 · Item edit with dirty-state awareness
+- [x] V-055 · Item delete with confirmation and a summary of orders affected
+- [x] V-056 · Instant availability toggle reflected in the customer app
+- [x] V-057 · Bulk availability mode
+- [x] V-058 · Search inside the manage list
+- [x] V-059 · Combo builder: pick at least two items, quantities, combo price and automatic savings against regular price
+- [x] V-060 · Combo create, read, update, delete with photo
+- [x] V-061 · Campaign create with percent or fixed discount, date range, banner text and scope
+- [x] V-062 · Campaign list, edit and disable
+- [x] V-063 · Coupon create with upper-normalised code, type, value, minimum order, expiry and usage limit
+- [x] V-064 · Coupon list showing used against limit with an active toggle
+- [x] V-065 · Coupon delete guard
+- [x] V-066 · Featured item toggle for the home highlight
+- [x] V-067 · Optional category image through Cloudinary
+- [x] V-068 · Preview-as-customer mode
+- [x] V-069 · All lists realtime with no manual refresh
+- [x] V-070 · Validation and taka formatting everywhere
+- [x] V-071 · Weekly schedule builder with per-day multi-slot editing
+- [x] V-072 · Schedule templates: 24/7, standard 09–22, lunch and dinner split, weekend special in one tap
+- [x] V-073 · Special dates with a date picker for closed days or custom hours
+- [x] V-074 · Explainer line showing today's derived status
+- [x] V-075 · Manual open/close override with a note customers can see
+- [x] V-076 · Auto-offline: fifteen minutes without a heartbeat closes the store and pushes a Reopen now notice
+- [x] V-077 · Reopen and reconnect flow
+- [x] V-078 · Presence and heartbeat status tile
+- [x] V-079 · Delivery per-kilometre fee editor
+- [x] V-080 · Delivery radius slider from one to fifteen kilometres with a live circle preview
+- [x] V-081 · Store location pin picker with a grab-my-GPS button
+- [x] V-082 · Minimum order amount editor
+- [x] V-083 · Store profile with name, banner and logo upload
+- [x] V-084 · Every edit reaching customers live through Firestore snapshots
+- [x] V-085 · Save guards and confirmation snackbars
+- [x] V-086 · Sound test and tick-sound test in settings
 - [x] V-087 · Full device diagnostics screen
-- [ ] V-088 · Timezone hard-locked to Asia/Dhaka in every display
-- [ ] V-089 · Schedule customer-view parity check
-- [ ] V-090 · Special-date conflict warnings
-- [ ] V-091 · Warning that a radius change affects delivery logic
-- [ ] V-092 · Fee preview calculator for a typed distance
-- [ ] V-093 · Undo for the last schedule change from a local snapshot
-- [ ] V-094 · Export today's orders as CSV through the share sheet
-- [ ] V-095 · App version and build information
-- [ ] V-096 · Bundled offline-readable privacy and policy pages
-- [ ] V-097 · Chat list per order with unread counts
-- [ ] V-098 · Realtime thread on Realtime Database
-- [ ] V-099 · Quick replies such as On the way and Need ten more minutes
-- [ ] V-100 · Typing indicator from RTDB flags
-- [ ] V-101 · Read receipts
-- [ ] V-102 · Push when a customer writes
-- [ ] V-103 · Text-only chat in v1 to keep the free tier lean
-- [ ] V-104 · Jump to the order from a chat
-- [ ] V-105 · Smart scroll to the first unread message
-- [ ] V-106 · Crash-safe session restore across rotation and process death
-- [ ] V-107 · Keyboard-aware forms everywhere
-- [ ] V-108 · Haptic feedback on status actions
-- [ ] V-109 · Vendor inbox mirroring the kitchen alert history
-- [ ] V-110 · One-tap share of the store link
+- [x] V-088 · Timezone hard-locked to Asia/Dhaka in every display
+- [x] V-089 · Schedule customer-view parity check
+- [x] V-090 · Special-date conflict warnings
+- [x] V-091 · Warning that a radius change affects delivery logic
+- [x] V-092 · Fee preview calculator for a typed distance
+- [x] V-093 · Undo for the last schedule change from a local snapshot
+- [x] V-094 · Export today's orders as CSV through the share sheet
+- [x] V-095 · App version and build information
+- [x] V-096 · Bundled offline-readable privacy and policy pages
+- [x] V-097 · Chat list per order with unread counts
+- [x] V-098 · Realtime thread on Realtime Database
+- [x] V-099 · Quick replies such as On the way and Need ten more minutes
+- [x] V-100 · Typing indicator from RTDB flags
+- [x] V-101 · Read receipts
+- [x] V-102 · Push when a customer writes
+- [x] V-103 · Text-only chat in v1 to keep the free tier lean
+- [x] V-104 · Jump to the order from a chat
+- [x] V-105 · Smart scroll to the first unread message
+- [x] V-106 · Crash-safe session restore across rotation and process death
+- [x] V-107 · Keyboard-aware forms everywhere
+- [x] V-108 · Haptic feedback on status actions
+- [x] V-109 · Vendor inbox mirroring the kitchen alert history
+- [x] V-110 · One-tap share of the store link
 
 ## P · Platform, web, deep links and delivery (45)
 
