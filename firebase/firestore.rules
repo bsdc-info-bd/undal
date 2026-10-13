@@ -45,10 +45,6 @@ service cloud.firestore {
       return changedKeys().hasOnly(keys);
     }
 
-    function isInt(value) {
-      return value is int;
-    }
-
     function isPositiveInt(value) {
       return value is int && value > 0;
     }
