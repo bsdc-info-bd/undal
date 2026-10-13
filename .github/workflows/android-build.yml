@@ -228,6 +228,9 @@ jobs:
               echo '```'
             fi
           } > "$OUT"
+          # A failing unit test says nothing useful in the log itself, so the
+          # JUnit XML — test class, test name, assertion message — is appended.
+          python3 tools/read-test-results.py app/build/test-results/testReleaseUnitTest >> "$OUT" || true
           cat "$OUT" >> "$GITHUB_STEP_SUMMARY"
           echo "::error::Gradle stopped — see the comment on the pull request or the job summary."
           if [ "${{ github.event_name }}" = "pull_request" ]; then
