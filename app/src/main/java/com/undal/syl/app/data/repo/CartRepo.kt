@@ -46,6 +46,17 @@ class CartRepo @Inject constructor(
     suspend fun clear(): Cart = mutate { it.cleared() }
 
     /**
+     * Writes a cart that was reconciled against the live menu (price updates,
+     * removed dishes) without touching its coupon.
+     */
+    suspend fun replaceLines(cart: Cart): Cart = mutate { current ->
+        current.copy(
+            lines = cart.lines.take(Cart.MAX_LINES),
+            updatedAtMillis = System.currentTimeMillis()
+        )
+    }
+
+    /**
      * Reads, changes and writes the cart in one place so two fast taps on the
      * quantity stepper can never lose each other's update.
      */

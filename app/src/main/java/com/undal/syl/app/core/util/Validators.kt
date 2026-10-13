@@ -36,6 +36,23 @@ object Validators {
         }
     }
 
+    /**
+     * Turns anything a customer typed — `+880 1712-345678`, `8801712345678`,
+     * `01712 345678` — into the `01XXXXXXXXX` shape the security rules require.
+     * Returns null when it cannot be a Bangladeshi mobile number.
+     */
+    fun normalizeBdMobile(raw: String): String? {
+        val digits = raw.filter { it.isDigit() }
+        val local = when {
+            digits.length == 14 && digits.startsWith("880") -> digits.substring(3)
+            digits.length == 13 && digits.startsWith("880") -> digits.substring(2)
+            digits.length == 12 && digits.startsWith("88") -> digits.substring(2)
+            digits.length == 11 -> digits
+            else -> return null
+        }
+        return local.takeIf { BD_MOBILE.matches(it) }
+    }
+
     /** Bangladesh mobile numbers: 11 digits starting 013–019. */
     fun bdMobile(raw: String): String? {
         val value = raw.filter { it.isDigit() }

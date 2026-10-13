@@ -1,6 +1,8 @@
 package com.undal.syl.app.data.repo
 
+import com.google.firebase.auth.EmailAuthProvider
 import com.google.firebase.auth.FirebaseAuth
+import com.google.firebase.auth.FirebaseAuthInvalidCredentialsException
 import com.google.firebase.auth.UserProfileChangeRequest
 import com.google.firebase.firestore.FieldValue
 import com.google.firebase.firestore.FirebaseFirestore
@@ -8,6 +10,7 @@ import com.undal.syl.app.core.maps.UndalLocation
 import com.undal.syl.app.core.session.OnboardingProgress
 import com.undal.syl.app.core.util.UndalErrors
 import com.undal.syl.app.core.util.UndalResult
+import com.undal.syl.app.core.util.Validators
 import kotlinx.coroutines.tasks.await
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -154,6 +157,17 @@ class AuthRepo @Inject constructor(
         }.getOrNull()
     }
 
+    /** The phone number the rider will call, as saved on the profile. */
+    suspend fun loadProfilePhone(): String? {
+        val uid = auth.currentUser?.uid ?: return null
+        return runCatching {
+            firestore.collection(USERS).document(uid).get().await().getString("phone")
+        }.getOrNull()
+    }
+
+    /** True when a profile document exists with a complete address. */
+    suspend fun hasCompleteProfile(): Boolean = loadProfileLocation()?.isValid == true
+
     /**
      * Full account deletion for the customer (C-080): the profile document, the
      * FCM token documents and the auth account itself, in that order, so no
@@ -179,6 +193,101 @@ class AuthRepo @Inject constructor(
                         "If this keeps happening, sign out and sign in again, then retry.",
                     it
                 )
+            }
+        )
+    }
+
+    /** Whether the verification link sent at registration has been confirmed. */
+    fun isEmailVerified(): Boolean = auth.currentUser?.isEmailVerified ?: false
+
+    /** The signed-in email; shown read-only on the profile screen (C-079). */
+    fun currentEmail(): String? = auth.currentUser?.email
+
+    /** The Cloudinary photo link saved on the profile, if there is one. */
+    suspend fun loadProfilePhoto(): String? {
+        val uid = auth.currentUser?.uid ?: return null
+        return runCatching {
+            firestore.collection(USERS).document(uid).get().await().getString("photoUrl")
+        }.getOrNull()
+    }
+
+    /**
+     * Saves a new profile photo URL (C-079).
+     *
+     * The document update keeps `role` and the address untouched, which is what
+     * the security rules insist on: a profile write may never lose the pinned
+     * address the kitchen delivers to.
+     */
+    suspend fun saveProfilePhoto(url: String): UndalResult<Unit> {
+        val uid = auth.currentUser?.uid
+            ?: return UndalResult.Failure("Please sign in again — your session expired.")
+        return runCatching {
+            firestore.collection(USERS).document(uid).update("photoUrl", url.trim()).await()
+            Unit
+        }.fold(
+            onSuccess = { UndalResult.Success(Unit) },
+            onFailure = { UndalResult.Failure(UndalErrors.firestore(it), it) }
+        )
+    }
+
+    /**
+     * Edits the name and the phone number (C-079).
+     *
+     * Both are written together because both are what the rider works from, and
+     * a half-saved pair ("new name, old number") is worse than no save at all.
+     */
+    suspend fun saveProfileBasics(name: String, phone: String): UndalResult<Unit> {
+        val uid = auth.currentUser?.uid
+            ?: return UndalResult.Failure("Please sign in again — your session expired.")
+
+        val cleanName = name.trim()
+        if (cleanName.length < 2 || cleanName.length > 80) {
+            return UndalResult.Failure("Please enter the name the rider should ask for (2–80 characters).")
+        }
+        val cleanPhone = Validators.normalizeBdMobile(phone)
+            ?: return UndalResult.Failure("Please enter a Bangladeshi mobile number like 01712345678.")
+
+        return runCatching {
+            firestore.collection(USERS).document(uid)
+                .update(mapOf("name" to cleanName, "phone" to cleanPhone))
+                .await()
+            Unit
+        }.fold(
+            onSuccess = { UndalResult.Success(Unit) },
+            onFailure = { UndalResult.Failure(UndalErrors.firestore(it), it) }
+        )
+    }
+
+    /**
+     * Changes the password after re-authenticating with the current one (C-079).
+     *
+     * Firebase requires a recent sign-in for a password change, so the current
+     * password is not decoration: it is the proof that the person holding the
+     * unlocked phone is the account holder.
+     */
+    suspend fun changePassword(currentPassword: String, newPassword: String): UndalResult<Unit> {
+        val user = auth.currentUser
+            ?: return UndalResult.Failure("Please sign in again — your session expired.")
+        val email = user.email
+            ?: return UndalResult.Failure("This account has no email address, so the password cannot be changed here.")
+        if (currentPassword.isBlank()) return UndalResult.Failure("Enter your current password.")
+        if (newPassword.length < 6) return UndalResult.Failure("Choose a new password with at least 6 characters.")
+        if (newPassword == currentPassword) {
+            return UndalResult.Failure("The new password is the same as the old one.")
+        }
+        return runCatching {
+            user.reauthenticate(EmailAuthProvider.getCredential(email, currentPassword)).await()
+            user.updatePassword(newPassword).await()
+            Unit
+        }.fold(
+            onSuccess = { UndalResult.Success(Unit) },
+            onFailure = { error ->
+                val message = if (error is FirebaseAuthInvalidCredentialsException) {
+                    "Your current password is not correct."
+                } else {
+                    UndalErrors.auth(error)
+                }
+                UndalResult.Failure(message, error)
             }
         )
     }

@@ -81,7 +81,7 @@ class MoneyTest {
 
     @Test
     fun couponDiscountIsCappedAtTheSubtotal() {
-        assertEquals(5_000L, Money.applicableDiscount(45_000, "fixed", 20_000).let { 5_000L })
+        assertEquals(20_000L, Money.applicableDiscount(45_000, "fixed", 20_000))
         assertEquals(45_000L, Money.applicableDiscount(45_000, "fixed", 90_000))
         assertEquals(9_000L, Money.applicableDiscount(45_000, "percent", 20))
         assertEquals(0L, Money.applicableDiscount(45_000, "unknown", 20))
