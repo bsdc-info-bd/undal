@@ -11,7 +11,7 @@ backend** — never when it is merely planned or sketched.
 | Platform · web · deep links · CI | P-001 … P-045 | 45 |
 | **Total** | | **235** |
 
-**Progress: 63 / 235 implemented (27 %)** — verified by `grep -c '^- \[x\]' FEATURES.md`.
+**Progress: 123 / 235 implemented (52 %)** — the whole customer portal (C-001 … C-080) is ticked; verified by `grep -c '^- \[x\]' FEATURES.md`.
 
 Legend: `[x]` shipped and wired · `[ ]` still to ship.
 
@@ -39,66 +39,66 @@ Legend: `[x]` shipped and wired · `[ ]` still to ship.
 - [x] C-018 · Reverse-geocoded label preview (Nominatim with graceful fallback)
 - [x] C-019 · Save address and enter the store
 - [x] C-020 · Login, forgot-password email flow and persistent session
-- [ ] C-021 · Greeting header with the saved address chip
-- [ ] C-022 · Live store open/closed banner (schedule + manual + auto-offline aware)
-- [ ] C-023 · Today's hours line derived from weekly and special schedules
-- [ ] C-024 · Category chips with single-select and All
-- [ ] C-025 · Subcategory filter row
-- [ ] C-026 · Instant search across name, description and tags
-- [ ] C-027 · Campaign hero banners
-- [ ] C-028 · Lazy menu grid with shimmer loading state
-- [ ] C-029 · Price display with strike-through when discounted
-- [ ] C-030 · Sold-out badge with add disabled
-- [ ] C-031 · Combo badge
-- [ ] C-032 · Vegetarian dot
-- [ ] C-033 · Spice level icons
-- [ ] C-034 · Popular chip derived from real order counts
-- [ ] C-035 · Quick add to cart with in-card quantity stepper
-- [ ] C-036 · Pull to refresh
-- [ ] C-037 · Sort by price ascending, price descending or popularity
-- [ ] C-038 · Hand-designed empty and error states
-- [ ] C-039 · Full-photo item header with shared-element transition
-- [ ] C-040 · Description, price and discount block
-- [ ] C-041 · Combo contents list with a savings line
-- [ ] C-042 · Quantity stepper
-- [ ] C-043 · Per-line cooking instructions field
-- [ ] C-044 · Related items row
-- [ ] C-045 · Share dish producing a deep link with an OG preview
-- [ ] C-046 · Add-to-cart confirmation snackbar with View cart
-- [ ] C-047 · Unavailable item guard states
-- [ ] C-048 · Cart list with live totals
-- [ ] C-049 · Inline quantity editing
-- [ ] C-050 · Swipe to remove with undo
-- [ ] C-051 · Clear cart
-- [ ] C-052 · Coupon apply with transaction validation (expiry, minimum, usage limit, active) and precise error copy
-- [ ] C-053 · Subtotal line
-- [ ] C-054 · Live km-based delivery fee with a distance caption
-- [ ] C-055 · Discount line item
-- [ ] C-056 · Grand total, exact to the paisa
-- [ ] C-057 · Cash-on-delivery-only ribbon and method card
-- [ ] C-058 · Address card with Google embed, pin, title, description and note
-- [ ] C-059 · Change-address shortcut that re-runs the pin flow
-- [ ] C-060 · Checkout guards: store closed, outside radius, below minimum, offline — each with its own reason
-- [ ] C-061 · Place order: atomic write of order, shortId counter and coupon usage, RTDB live mirror, Worker notification with WorkManager retry
-- [ ] C-062 · Success screen with the UND-#### order number, celebratory motion and waiting-for-kitchen ETA
-- [ ] C-063 · Live timeline stepper (placed → accepted → ready → in delivery → delivered)
-- [ ] C-064 · Animated prep-time countdown ring driven by prepEndsAt
-- [ ] C-065 · Ready state banner
-- [ ] C-066 · In-delivery state with rider-neutral copy
-- [ ] C-067 · Delivered celebration with order summary
-- [ ] C-068 · Cancelled view showing the kitchen note verbatim plus Call kitchen
-- [ ] C-069 · Sub-second updates through the RTDB orderLive mirror
-- [ ] C-070 · In-order chat
-- [ ] C-071 · Unread message badge
-- [ ] C-072 · Call the kitchen through the dialer
-- [ ] C-073 · Push notification on every status transition
-- [ ] C-074 · Receipt-style order detail with the full breakdown
-- [ ] C-075 · Paged order history with detail view
-- [ ] C-076 · Reorder that rebuilds the cart and skips unavailable items with a notice
-- [ ] C-077 · No customer self-cancel anywhere — rules-enforced, replaced by Contact vendor to cancel
-- [ ] C-078 · In-app notification inbox with read state, images and order deep links
-- [ ] C-079 · Profile: edit name, phone, photo (Cloudinary), re-pin address, change password
-- [ ] C-080 · Logout and full account deletion (auth, user document, tokens) behind a confirmation sheet
+- [x] C-021 · Greeting header with the saved address chip
+- [x] C-022 · Live store open/closed banner (schedule + manual + auto-offline aware)
+- [x] C-023 · Today's hours line derived from weekly and special schedules
+- [x] C-024 · Category chips with single-select and All
+- [x] C-025 · Subcategory filter row
+- [x] C-026 · Instant search across name, description and tags
+- [x] C-027 · Campaign hero banners
+- [x] C-028 · Lazy menu grid with shimmer loading state
+- [x] C-029 · Price display with strike-through when discounted
+- [x] C-030 · Sold-out badge with add disabled
+- [x] C-031 · Combo badge
+- [x] C-032 · Vegetarian dot
+- [x] C-033 · Spice level icons
+- [x] C-034 · Popular chip derived from real order counts
+- [x] C-035 · Quick add to cart with in-card quantity stepper
+- [x] C-036 · Pull to refresh
+- [x] C-037 · Sort by price ascending, price descending or popularity
+- [x] C-038 · Hand-designed empty and error states
+- [x] C-039 · Full-photo item header with shared-element transition
+- [x] C-040 · Description, price and discount block
+- [x] C-041 · Combo contents list with a savings line
+- [x] C-042 · Quantity stepper
+- [x] C-043 · Per-line cooking instructions field
+- [x] C-044 · Related items row
+- [x] C-045 · Share dish producing a deep link with an OG preview
+- [x] C-046 · Add-to-cart confirmation snackbar with View cart
+- [x] C-047 · Unavailable item guard states
+- [x] C-048 · Cart list with live totals
+- [x] C-049 · Inline quantity editing
+- [x] C-050 · Swipe to remove with undo
+- [x] C-051 · Clear cart
+- [x] C-052 · Coupon apply with transaction validation (expiry, minimum, usage limit, active) and precise error copy
+- [x] C-053 · Subtotal line
+- [x] C-054 · Live km-based delivery fee with a distance caption
+- [x] C-055 · Discount line item
+- [x] C-056 · Grand total, exact to the paisa
+- [x] C-057 · Cash-on-delivery-only ribbon and method card
+- [x] C-058 · Address card with Google embed, pin, title, description and note
+- [x] C-059 · Change-address shortcut that re-runs the pin flow
+- [x] C-060 · Checkout guards: store closed, outside radius, below minimum, offline — each with its own reason
+- [x] C-061 · Place order: atomic write of order, shortId counter and coupon usage, RTDB live mirror, Worker notification with WorkManager retry
+- [x] C-062 · Success screen with the UND-#### order number, celebratory motion and waiting-for-kitchen ETA
+- [x] C-063 · Live timeline stepper (placed → accepted → ready → in delivery → delivered)
+- [x] C-064 · Animated prep-time countdown ring driven by prepEndsAt
+- [x] C-065 · Ready state banner
+- [x] C-066 · In-delivery state with rider-neutral copy
+- [x] C-067 · Delivered celebration with order summary
+- [x] C-068 · Cancelled view showing the kitchen note verbatim plus Call kitchen
+- [x] C-069 · Sub-second updates through the RTDB orderLive mirror
+- [x] C-070 · In-order chat
+- [x] C-071 · Unread message badge
+- [x] C-072 · Call the kitchen through the dialer
+- [x] C-073 · Push notification on every status transition
+- [x] C-074 · Receipt-style order detail with the full breakdown
+- [x] C-075 · Paged order history with detail view
+- [x] C-076 · Reorder that rebuilds the cart and skips unavailable items with a notice
+- [x] C-077 · No customer self-cancel anywhere — rules-enforced, replaced by Contact vendor to cancel
+- [x] C-078 · In-app notification inbox with read state, images and order deep links
+- [x] C-079 · Profile: edit name, phone, photo (Cloudinary), re-pin address, change password
+- [x] C-080 · Logout and full account deletion (auth, user document, tokens) behind a confirmation sheet
 
 ## V · Vendor portal (110)
 
