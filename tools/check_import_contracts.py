@@ -138,6 +138,64 @@ CALL_REFERENCE = re.compile(r"(?<![\w.])([A-Z][A-Za-z0-9_]*)\s*\(")
 GENERATED_TYPES = frozenset({"R", "BuildConfig"})
 
 
+def templated_expression(text: str, i: int, n: int) -> int:
+    """Index just past the `${ … }` that starts at [i] (which is the `$`).
+
+    A Kotlin string template holds real code: `"${UndalBuildInfo.workerHost}"`
+    is a reference to a top-level type in another package, and a gate that blanks
+    whole string literals would never see it. The expression is copied through
+    verbatim — nested braces, nested string literals and all — while the literal
+    text around it stays blanked.
+    """
+    depth = 0
+    j = i + 1  # sitting on '{'
+    while j < n:
+        char = text[j]
+        if char == "{":
+            depth += 1
+            j += 1
+            continue
+        if char == "}":
+            depth -= 1
+            j += 1
+            if depth == 0:
+                return j
+            continue
+        if text[j : j + 3] == '"""':
+            end = text.find('"""', j + 3)
+            j = n if end == -1 else end + 3
+            continue
+        if char == '"':
+            j += 1
+            while j < n:
+                if text[j] == "\\":
+                    j += 2
+                    continue
+                if text[j] == '"' or text[j] == "\n":
+                    j += 1
+                    break
+                j += 1
+            continue
+        if char == "'":
+            j += 1
+            while j < n:
+                if text[j] == "\\":
+                    j += 2
+                    continue
+                if text[j] == "'" or text[j] == "\n":
+                    j += 1
+                    break
+                j += 1
+            continue
+        j += 1
+    return n
+
+
+def blank(text: str) -> str:
+    """Spaces, keeping newlines, so line numbers do not move."""
+    return "".join(c if c == "\n" else " " for c in text)
+
+
 def strip_comments_and_literals(text: str) -> str:
     """Blank out comments and string/char literals, keeping every newline.
 
@@ -168,10 +226,23 @@ def strip_comments_and_literals(text: str) -> str:
             i = end
             continue
         if text[i : i + 3] == '"""':
-            end = text.find('"""', i + 3)
-            end = n if end == -1 else end + 3
-            out.append("".join(c if c == "\n" else " " for c in text[i:end]))
-            i = end
+            j = i + 3
+            pieces: list[str] = []
+            while j < n:
+                if text[j : j + 3] == '"""':
+                    pieces.append(blank(text[j : j + 3]))
+                    j += 3
+                    break
+                if text[j : j + 2] == "${":
+                    end = templated_expression(text, j, n)
+                    pieces.append(text[j:end])
+                    j = end
+                    continue
+                pieces.append(text[j])
+                j += 1
+            for piece in pieces:
+                out.append(piece if piece.startswith("${") else blank(piece))
+            i = j
             continue
         if char == "'":
             # A character literal — `','`, `'"'`, `'\n'` — may hold a quote.
@@ -198,8 +269,18 @@ def strip_comments_and_literals(text: str) -> str:
                     break
                 if text[j] == "\n":
                     break
+                if text[j : j + 2] == "${":
+                    # Real code inside a string literal: keep it visible, then
+                    # carry on blanking the rest of the literal.
+                    out.append(blank(text[i:j]))
+                    end = templated_expression(text, j, n)
+                    out.append(text[j:end])
+                    i = end
+                    j = end
+                    continue
                 j += 1
-            out.append("".join(c if c == "\n" else " " for c in text[i:j]))
+            if i < j:
+                out.append(blank(text[i:j]))
             i = j
             continue
         out.append(char)

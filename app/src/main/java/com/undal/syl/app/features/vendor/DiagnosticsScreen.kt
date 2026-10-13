@@ -37,6 +37,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
+import com.undal.syl.app.core.config.UndalBuildInfo
 import com.undal.syl.app.core.design.UndalAlertBanner
 import com.undal.syl.app.core.design.UndalCard
 import com.undal.syl.app.core.design.UndalPrimaryButton
@@ -258,6 +259,14 @@ fun DiagnosticsScreen(
                     style = MaterialTheme.typography.bodyMedium
                 )
                 Text("Last heartbeat: ${state.heartbeatAgeLabel}", style = MaterialTheme.typography.bodyMedium)
+                // The project the app talks to. If this is ever not the project
+                // the kitchen's data lives in, every database call is refused and
+                // this one line is what says so.
+                Text(
+                    "Firebase project: ${UndalBuildInfo.firebaseProjectId.ifBlank { "not in this build" }}",
+                    style = MaterialTheme.typography.bodyMedium
+                )
+                Text("Worker: ${UndalBuildInfo.workerHost}", style = MaterialTheme.typography.bodyMedium)
                 Spacer(Modifier.height(UndalDimens.sm))
                 Text(
                     text = "The Worker closes the store automatically if this phone goes quiet for 15 " +

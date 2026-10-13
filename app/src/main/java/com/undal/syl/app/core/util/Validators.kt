@@ -16,6 +16,12 @@ object Validators {
     private const val MAX_NAME_LENGTH = 80
     private const val MIN_ADDRESS_TEXT = 3
 
+    /** The rules cap `address.desc` and `address.note` at 300 characters each. */
+    private const val MAX_ADDRESS_TEXT = 300
+
+    /** A title is a label the rider reads at a glance, not a paragraph. */
+    private const val MAX_ADDRESS_TITLE = 160
+
     fun name(raw: String): String? {
         val value = raw.trim()
         return when {
@@ -76,20 +82,30 @@ object Validators {
         else -> null
     }
 
-    fun requiredText(label: String, raw: String, minimum: Int = MIN_ADDRESS_TEXT): String? {
+    fun requiredText(label: String, raw: String, minimum: Int = MIN_ADDRESS_TEXT, maximum: Int = 0): String? {
         val value = raw.trim()
         return when {
             value.isEmpty() -> "Please add the $label."
             value.length < minimum -> "The $label needs at least $minimum characters."
+            maximum > 0 && value.length > maximum -> "Please keep the $label under $maximum characters."
             else -> null
         }
     }
 
-    fun addressTitle(raw: String): String? = requiredText("address title", raw)
+    /**
+     * The address fields the security rules store.
+     *
+     * The description and the delivery note are capped at the same 300
+     * characters the rules enforce, so a long note is answered with a sentence
+     * about the note instead of a permission refusal from the database. The
+     * title is a label, so it is held much shorter.
+     */
+    fun addressTitle(raw: String): String? = requiredText("address title", raw, maximum = MAX_ADDRESS_TITLE)
 
-    fun addressDescription(raw: String): String? = requiredText("address description", raw)
+    fun addressDescription(raw: String): String? =
+        requiredText("address description", raw, maximum = MAX_ADDRESS_TEXT)
 
-    fun deliveryNote(raw: String): String? = requiredText("delivery note", raw)
+    fun deliveryNote(raw: String): String? = requiredText("delivery note", raw, maximum = MAX_ADDRESS_TEXT)
 
     fun couponCode(raw: String): String? {
         val value = raw.trim().uppercase()

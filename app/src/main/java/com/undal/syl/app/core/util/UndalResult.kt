@@ -1,5 +1,6 @@
 package com.undal.syl.app.core.util
 
+import com.google.firebase.FirebaseApp
 import com.google.firebase.FirebaseNetworkException
 import com.google.firebase.auth.FirebaseAuthInvalidCredentialsException
 import com.google.firebase.auth.FirebaseAuthInvalidUserException
@@ -50,21 +51,64 @@ object UndalErrors {
         else -> error.message?.takeIf { it.isNotBlank() } ?: "Something went wrong. Please try again."
     }
 
-    fun firestore(error: Throwable): String = when (error) {
-        is FirebaseFirestoreException -> when (error.code) {
-            FirebaseFirestoreException.Code.PERMISSION_DENIED ->
-                "The kitchen has not published this yet, or your account cannot read it."
-            FirebaseFirestoreException.Code.UNAVAILABLE ->
-                "You appear to be offline. This will finish as soon as you reconnect."
-            FirebaseFirestoreException.Code.NOT_FOUND -> "That item is no longer available."
-            FirebaseFirestoreException.Code.ALREADY_EXISTS -> "That already exists."
-            FirebaseFirestoreException.Code.FAILED_PRECONDITION -> "This action is not allowed right now."
-            FirebaseFirestoreException.Code.DEADLINE_EXCEEDED -> "The connection is very slow. Please try again."
-            else -> error.message?.takeIf { it.isNotBlank() } ?: "The kitchen database rejected that request."
+    /**
+     * Translates a Firestore failure into a sentence.
+     *
+     * [operation] is the plain-language thing that was being attempted — "reading
+     * your profile", "saving your address". When the failure is one a person
+     * cannot act on by themselves (a permission refusal, a signed-out request,
+     * anything unrecognised) the sentence is followed by one line the kitchen can
+     * quote back: the Firebase project this build is configured with, what it was
+     * doing, and the database's own error code. Every other failure — offline,
+     * not found — is self-explanatory and gets no reference line, because nobody
+     * should have to read our diagnostics to understand a sentence.
+     */
+    fun firestore(error: Throwable, operation: String = ""): String {
+        val sentence = when (error) {
+            is FirebaseFirestoreException -> when (error.code) {
+                FirebaseFirestoreException.Code.PERMISSION_DENIED ->
+                    "The kitchen has not published this yet, or your account cannot read it."
+                FirebaseFirestoreException.Code.UNAUTHENTICATED ->
+                    "Your sign-in has expired. Please sign in again."
+                FirebaseFirestoreException.Code.UNAVAILABLE ->
+                    "You appear to be offline. This will finish as soon as you reconnect."
+                FirebaseFirestoreException.Code.NOT_FOUND -> "That item is no longer available."
+                FirebaseFirestoreException.Code.ALREADY_EXISTS -> "That already exists."
+                FirebaseFirestoreException.Code.FAILED_PRECONDITION ->
+                    "This action is not allowed right now."
+                FirebaseFirestoreException.Code.DEADLINE_EXCEEDED ->
+                    "The connection is very slow. Please try again."
+                else -> error.message?.takeIf { it.isNotBlank() }
+                    ?: "The kitchen database rejected that request."
+            }
+            is FirebaseNetworkException -> "No internet connection. Check your data or Wi-Fi and try again."
+            is IOException -> "You appear to be offline. Your changes are safe and will sync when you reconnect."
+            else -> error.message?.takeIf { it.isNotBlank() } ?: "Something went wrong. Please try again."
         }
-        is FirebaseNetworkException -> "No internet connection. Check your data or Wi-Fi and try again."
-        is IOException -> "You appear to be offline. Your changes are safe and will sync when you reconnect."
-        else -> error.message?.takeIf { it.isNotBlank() } ?: "Something went wrong. Please try again."
+        val code = (error as? FirebaseFirestoreException)?.code
+        val needsReference = code == null ||
+            code == FirebaseFirestoreException.Code.PERMISSION_DENIED ||
+            code == FirebaseFirestoreException.Code.UNAUTHENTICATED
+        if (!needsReference) return sentence
+        return sentence + "\n\nKitchen reference: " + reference(code.name, operation)
+    }
+
+    /**
+     * The three facts that turn "it does not work" into something fixable: the
+     * Firebase project this build was compiled against, what the app was doing,
+     * and the database's own error code. The project id is public — it names the
+     * `.firebaseapp.com` sign-in page — and knowing it is the difference between
+     * a one-line fix and a week of guessing.
+     */
+    private fun reference(code: String, operation: String): String {
+        val project = runCatching { FirebaseApp.getInstance().options.projectId }
+            .getOrNull()
+            ?.takeIf { it.isNotBlank() }
+            ?: "project not in this build"
+        val parts = mutableListOf(project)
+        if (operation.isNotBlank()) parts.add(operation)
+        parts.add(code)
+        return parts.joinToString(" · ")
     }
 
     fun generic(error: Throwable, fallback: String = "Something went wrong. Please try again."): String =

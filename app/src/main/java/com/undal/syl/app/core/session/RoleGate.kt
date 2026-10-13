@@ -50,7 +50,7 @@ class RoleGate @Inject constructor(
             RoleResolution.Routed(role = UndalRole.CUSTOMER, hasLocation = hasCoordinates && hasText)
         }.getOrElse { error ->
             RoleResolution.Failed(
-                com.undal.syl.app.core.util.UndalErrors.firestore(error)
+                com.undal.syl.app.core.util.UndalErrors.firestore(error, operation = "reading your profile")
             )
         }
     }

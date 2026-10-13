@@ -28,6 +28,22 @@ object UndalBuildInfo {
     val workerBaseUrl: String get() = BuildConfig.WORKER_BASE_URL
     val workerHost: String get() = BuildConfig.WORKER_HOST
 
+    /**
+     * The Firebase project this build was compiled against, read from
+     * google-services.json at runtime.
+     *
+     * It is public — it names the `.firebaseapp.com` sign-in page — and it is the
+     * one fact that makes a database refusal diagnosable: if this is not the
+     * project the kitchen's rules, accounts and menu were set up in, every read
+     * and write is refused with nothing but "Missing or insufficient
+     * permissions". The vendor Diagnostics screen prints it for that reason.
+     */
+    val firebaseProjectId: String
+        get() = runCatching { com.google.firebase.FirebaseApp.getInstance().options.projectId }
+            .getOrNull()
+            ?.takeIf { it.isNotBlank() }
+            ?: ""
+
     val firebaseWebApiKey: String get() = BuildConfig.FIREBASE_WEB_API_KEY
     val supportPhone: String get() = BuildConfig.SUPPORT_PHONE
 

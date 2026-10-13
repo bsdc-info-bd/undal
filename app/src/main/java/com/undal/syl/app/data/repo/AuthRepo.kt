@@ -101,6 +101,36 @@ class AuthRepo @Inject constructor(
             return UndalResult.Failure("The address still needs a title, a description and a delivery note.")
         }
 
+        // Everything below is checked here because the security rules check it
+        // too, and a rule that refuses a write answers with nothing but "Missing
+        // or insufficient permissions" — which reads to a customer as a broken
+        // kitchen. One concrete sentence at a time is the difference between a
+        // fixable field and a dead end.
+        val cleanName = name.trim().take(MAX_NAME_CHARS)
+        if (Validators.name(cleanName) != null) {
+            return UndalResult.Failure(
+                "Please add your full name before saving the address — the kitchen calls it out on the bag."
+            )
+        }
+        // The rules store the number as 01XXXXXXXXX, so the same normaliser the
+        // registration form uses is applied here: a number typed as +880 1712
+        // 345678 would otherwise be refused by the database.
+        val cleanPhone = Validators.normalizeBdMobile(phone)
+            ?: return UndalResult.Failure(
+                "We do not have a usable mobile number for this account, and the rider has to call you. " +
+                    "Add it as 01XXXXXXXXX and save again."
+            )
+        val cleanEmail = user.email?.takeIf { Validators.email(it) == null }
+            ?: return UndalResult.Failure(
+                "This account has no email address on it, so the profile cannot be saved. " +
+                    "Please sign out and create the account again with your email."
+            )
+        val descriptionProblem = Validators.addressDescription(location.desc)
+        val noteProblem = Validators.deliveryNote(location.note)
+        if (descriptionProblem != null || noteProblem != null) {
+            return UndalResult.Failure(descriptionProblem ?: noteProblem.orEmpty())
+        }
+
         return runCatching {
             val document = firestore.collection(USERS).document(user.uid)
             firestore.runTransaction { transaction ->
@@ -110,8 +140,8 @@ class AuthRepo @Inject constructor(
                     transaction.update(
                         document,
                         mapOf(
-                            "name" to name.trim(),
-                            "phone" to phone.filter { it.isDigit() },
+                            "name" to cleanName,
+                            "phone" to cleanPhone,
                             "address" to address
                         )
                     )
@@ -119,9 +149,9 @@ class AuthRepo @Inject constructor(
                     transaction.set(
                         document,
                         mapOf(
-                            "name" to name.trim(),
-                            "email" to (user.email ?: ""),
-                            "phone" to phone.filter { it.isDigit() },
+                            "name" to cleanName,
+                            "email" to cleanEmail,
+                            "phone" to cleanPhone,
                             "photoUrl" to "",
                             "role" to "customer",
                             "fcmSub" to mapOf("promos" to true),
@@ -136,7 +166,7 @@ class AuthRepo @Inject constructor(
             Unit
         }.fold(
             onSuccess = { UndalResult.Success(Unit) },
-            onFailure = { UndalResult.Failure(UndalErrors.firestore(it), it) }
+            onFailure = { UndalResult.Failure(UndalErrors.firestore(it, operation = "saving your address"), it) }
         )
     }
 
@@ -294,5 +324,8 @@ class AuthRepo @Inject constructor(
 
     private companion object {
         const val USERS = "users"
+
+        /** The security rules cap the stored name at 80 characters. */
+        const val MAX_NAME_CHARS = 80
     }
 }
