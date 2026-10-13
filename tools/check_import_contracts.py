@@ -23,13 +23,21 @@ Five shapes, each of which has already failed a real build:
 5. Any top-level type, function or property this repository declares in **another**
    package, used unqualified and unimported — `UndalBuildInfo.workerBaseUrl` in
    `di/AppModule.kt` being the original example.
+6. A framework symbol from the short list in `FRAMEWORK_SYMBOLS` — the AndroidX,
+   Compose and Android types this app uses that have exactly one (or two)
+   importable homes — used without its import. `KeyboardType.Phone` in a new text
+   field is the shape that motivated this one: written, used, not imported.
 
-The check is deliberately conservative: it never guesses about third-party code
-(the JDK, AndroidX, Firebase, osmdroid), it ignores comments and string literals,
-and it treats a wildcard import as covering its package. A clean run means the
-five bug shapes are gone, not that the project compiles — the compiler still is
-the compiler. It is written to say *one sentence per real problem*, with the file,
-the line and the exact import to add, so the fix is obvious from the log alone.
+Kotlin string templates count: `"${UndalBuildInfo.workerHost}"` is a real
+reference and is read as one, in both normal and raw strings. Comments and the
+literal parts of strings are ignored.
+
+The check is deliberately conservative: apart from that short list it never
+guesses about third-party code (the JDK, Firebase, osmdroid), and it treats a
+wildcard import as covering its package. A clean run means those bug shapes are
+gone, not that the project compiles — the compiler still is the compiler. It says
+*one sentence per real problem*, with the file, the line and the exact import to
+add, so the fix is obvious from the log alone.
 
 Run it from the repository root:
 
@@ -96,6 +104,50 @@ EXTENSION_CONTRACTS = (
         "why": "the theme extension property is ours, so it needs our import",
     },
 )
+
+# ---------------------------------------------------------------------------
+# Framework symbols with exactly one home.
+#
+# The app-side checks above only know about our own packages. These are the
+# AndroidX/Android/Compose symbols this codebase uses, each of which lives in
+# exactly one importable place: using one without its import is the same class of
+# mistake as a missing `await`, and it fails with the same "unresolved reference"
+# after a full Gradle run. `KeyboardType` in a new text field is the shape that
+# motivated this list — it was written, used, and not imported.
+#
+# A symbol is only listed when its name is unambiguous: `Text` (material3) is
+# not here because the app also declares its own helpers, and the list stays
+# deliberately short so a false positive can never block a build.
+# ---------------------------------------------------------------------------
+FRAMEWORK_SYMBOLS = {
+    "ImeAction": ("androidx.compose.ui.text.input",),
+    "KeyboardType": ("androidx.compose.ui.text.input",),
+    "VisualTransformation": ("androidx.compose.ui.text.input",),
+    "PasswordVisualTransformation": ("androidx.compose.ui.text.input",),
+    "TextAlign": ("androidx.compose.ui.text.style",),
+    "TextOverflow": ("androidx.compose.ui.text.style",),
+    "ContentScale": ("androidx.compose.ui.layout",),
+    "Alignment": ("androidx.compose.ui",),
+    "ImageVector": ("androidx.compose.ui.graphics.vector",),
+    "Color": ("androidx.compose.ui.graphics",),
+    "StrokeCap": ("androidx.compose.ui.graphics",),
+    "Offset": ("androidx.compose.ui.geometry",),
+    "Size": ("androidx.compose.ui.geometry",),
+    "LocalContext": ("androidx.compose.ui.platform",),
+    "LocalHapticFeedback": ("androidx.compose.ui.platform",),
+    # Two homes, both correct: 1.7 moved KeyboardOptions to foundation and
+    # LocalLifecycleOwner to lifecycle-runtime-compose, keeping the old ones as
+    # deprecated aliases. Either import resolves, so either is accepted.
+    "KeyboardOptions": ("androidx.compose.ui.text.input", "androidx.compose.foundation.text"),
+    "LocalLifecycleOwner": ("androidx.compose.ui.platform", "androidx.lifecycle.compose"),
+    "Uri": ("android.net",),
+    "Intent": ("android.content",),
+    "Context": ("android.content",),
+    "Manifest": ("android",),
+    "Build": ("android.os",),
+    "Settings": ("android.provider",),
+}
+
 
 IMPORT_LINE = re.compile(r"^\s*import\s+([A-Za-z_][\w.]*)(?:\.\*)?\s*(?:as\s+[A-Za-z_]\w*)?\s*$", re.MULTILINE)
 PACKAGE_LINE = re.compile(r"^\s*package\s+([\w.]+)\s*$", re.MULTILINE)
@@ -407,6 +459,27 @@ def check_unqualified_types(sources: list[Source], index: dict[str, str]) -> lis
     return problems
 
 
+
+def check_framework_symbols(sources: list[Source]) -> list[str]:
+    """`KeyboardType.Phone` used without importing KeyboardType — and its cousins."""
+    problems: list[str] = []
+    for source in sources:
+        for symbol, packages in sorted(FRAMEWORK_SYMBOLS.items()):
+            if source.declares_itself(symbol):
+                continue
+            if any(source.imported(package, symbol) for package in packages):
+                continue
+            match = re.search(r"(?<![\w.])" + symbol + r"\b", source.body)
+            if match is None:
+                continue
+            additions = "  or  ".join(f"import {package}.{symbol}" for package in packages)
+            problems.append(
+                f"{source.rel}:{source.at(match.start())}: `{symbol}` used without its import. Add:\n"
+                f"    {additions}"
+            )
+    return problems
+
+
 def main() -> int:
     if not SOURCE_ROOT.is_dir():
         print(f"check_import_contracts: {SOURCE_ROOT} not found")
@@ -417,6 +490,7 @@ def main() -> int:
 
     problems = check_extension_contracts(sources)
     problems += check_unqualified_types(sources, index)
+    problems += check_framework_symbols(sources)
 
     if problems:
         for problem in problems:

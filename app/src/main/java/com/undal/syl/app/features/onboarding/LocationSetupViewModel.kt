@@ -47,6 +47,8 @@ class LocationSetupViewModel @Inject constructor(
         val titleError: String? = null,
         val descError: String? = null,
         val noteError: String? = null,
+        val phone: String = "",
+        val phoneError: String? = null,
         val busy: Boolean = false,
         val locating: Boolean = false,
         val permissionNeeded: Boolean = false,
@@ -68,7 +70,6 @@ class LocationSetupViewModel @Inject constructor(
     val state: StateFlow<State> = _state.asStateFlow()
 
     private var displayName: String = ""
-    private var phone: String = ""
 
     init {
         viewModelScope.launch {
@@ -77,7 +78,17 @@ class LocationSetupViewModel @Inject constructor(
             // registration.
             val draftProfile = progress.draftProfile.first()
             displayName = draftProfile?.name ?: authRepo.loadProfileName().orEmpty()
-            phone = draftProfile?.phone.orEmpty()
+
+            // The rider has to be able to call. The number typed at registration
+            // is the usual source; an address re-pin falls back to the number
+            // already saved on the profile. If neither exists the customer types
+            // it in the field below — an empty number is refused by the security
+            // rules, and a walk to the door should not be what discovers that.
+            val knownPhone = draftProfile?.phone?.takeIf { it.isNotBlank() }
+                ?: authRepo.loadProfilePhone().orEmpty()
+            if (knownPhone.isNotBlank()) {
+                _state.value = _state.value.copy(phone = knownPhone)
+            }
 
             val draft = progress.draftAddress.first()
             val saved = if (draft == null) authRepo.loadProfileLocation() else null
@@ -173,6 +184,12 @@ class LocationSetupViewModel @Inject constructor(
         _state.value = _state.value.copy(note = value, noteError = null, banner = null)
     }
 
+    /** Digits only, eleven of them: what the rules store as 01XXXXXXXXX. */
+    fun onPhoneChange(value: String) {
+        val digits = value.filter { it.isDigit() }.take(11)
+        _state.value = _state.value.copy(phone = digits, phoneError = null, banner = null)
+    }
+
     fun toggleOsmFallback() {
         _state.value = _state.value.copy(showOsmFallback = !_state.value.showOsmFallback)
     }
@@ -182,15 +199,30 @@ class LocationSetupViewModel @Inject constructor(
         val titleError = Validators.addressTitle(current.title)
         val descError = Validators.addressDescription(current.desc)
         val noteError = Validators.deliveryNote(current.note)
-        if (titleError != null || descError != null || noteError != null) {
-            _state.value = current.copy(titleError = titleError, descError = descError, noteError = noteError)
+        val phoneError = Validators.bdMobile(current.phone)
+        if (titleError != null || descError != null || noteError != null || phoneError != null) {
+            _state.value = current.copy(
+                titleError = titleError,
+                descError = descError,
+                noteError = noteError,
+                phoneError = phoneError
+            )
             return
         }
 
         _state.value = current.copy(busy = true, banner = null)
         viewModelScope.launch {
             val name = displayName.ifBlank { auth.currentUser?.displayName.orEmpty() }
-            when (val result = authRepo.saveCustomerProfile(name, phone, current.location)) {
+            // Keep the number on the device as well, so an interrupted save (a
+            // call, a flat battery) does not lose it.
+            progress.saveDraftProfile(
+                OnboardingProgress.DraftProfile(
+                    name = name,
+                    email = auth.currentUser?.email.orEmpty(),
+                    phone = current.phone
+                )
+            )
+            when (val result = authRepo.saveCustomerProfile(name, current.phone, current.location)) {
                 is UndalResult.Success -> {
                     progress.clearDraftAddress()
                     _state.value = _state.value.copy(busy = false, saved = true)

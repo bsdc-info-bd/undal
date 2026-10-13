@@ -18,6 +18,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.LocationOn
+import androidx.compose.material.icons.filled.Phone
 import androidx.compose.material.icons.filled.Place
 import androidx.compose.material.icons.filled.Done
 import androidx.compose.material3.MaterialTheme
@@ -32,6 +33,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.undal.syl.app.core.design.UndalAlertBanner
 import com.undal.syl.app.core.design.UndalCard
@@ -196,9 +198,23 @@ fun LocationSetupScreen(
                 Text("2 · How should we describe it?", style = MaterialTheme.typography.titleMedium)
                 Spacer(Modifier.height(UndalDimens.xs))
                 Text(
-                    text = "All three lines are required: the rider reads them in this order on the way.",
+                    text = "The number is how the rider reaches you; the three lines below are what they " +
+                        "read on the way. All four are required.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Spacer(Modifier.height(UndalDimens.md))
+                UndalTextField(
+                    value = state.phone,
+                    onValueChange = viewModel::onPhoneChange,
+                    label = "Mobile number the rider will call",
+                    hint = "01XXXXXXXXX",
+                    error = state.phoneError,
+                    helper = "The phone in your pocket when the food is at the door.",
+                    leadingIcon = Icons.Filled.Phone,
+                    keyboardType = KeyboardType.Phone,
+                    imeAction = ImeAction.Next,
+                    enabled = !state.busy
                 )
                 Spacer(Modifier.height(UndalDimens.md))
                 UndalTextField(
