@@ -461,8 +461,20 @@ fun VendorDashboardScreen(
                 item {
                     VendorSection(
                         title = "Closing time",
-                        subtitle = "Take the day away from the phone."
+                        subtitle = "The day's numbers, then the switch."
                     ) {
+                        Text(
+                            text = "Today: ${state.stats.orders} order(s), " +
+                                "${Money.format(state.stats.revenuePaisa)} collected, " +
+                                "${state.stats.delivered} delivered, ${state.stats.cancelled} cancelled. " +
+                                if (state.stats.topDish.isBlank()) {
+                                    "No dish has been ordered yet."
+                                } else {
+                                    "Most cooked: ${state.stats.topDish}."
+                                },
+                            style = MaterialTheme.typography.bodyMedium
+                        )
+                        Spacer(Modifier.height(UndalDimens.xs))
                         UndalSecondaryButton(
                             text = "Export today's orders (CSV)",
                             onClick = viewModel::exportToday,

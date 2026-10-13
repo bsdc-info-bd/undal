@@ -115,8 +115,20 @@ class VendorOrderRepo @Inject constructor(
         }
     }
 
+    /**
+     * The customer's profile photo, when they uploaded one (V-026). The security
+     * rules let the kitchen read any user document, so no extra plumbing is
+     * needed for one extra picture on the order card.
+     */
+    suspend fun customerPhoto(customerId: String): String? = runCatching {
+        if (customerId.isBlank()) return@runCatching null
+        firestore.collection(USERS).document(customerId).get().await().getString(PHOTO)
+    }.getOrNull()
+
     companion object {
         private const val ORDERS = "orders"
+        private const val USERS = "users"
+        private const val PHOTO = "photoUrl"
         private const val WEEK_BACK_MILLIS = 6L * 24L * 60L * 60L * 1000L
         private const val HISTORY_LIMIT = 60
         private val ALERT_IDS = stringSetPreferencesKey("vendor_alert_ids")

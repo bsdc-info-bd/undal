@@ -68,7 +68,8 @@ class VendorOrderDetailViewModel @Inject constructor(
         val overlayMap: Boolean = false,
         val shareText: String = "",
         val overdueNoticeSent: Boolean = false,
-        val fromCache: Boolean = false
+        val fromCache: Boolean = false,
+        val customerPhotoUrl: String = ""
     )
 
     private val _state = MutableStateFlow(State())
@@ -101,7 +102,13 @@ class VendorOrderDetailViewModel @Inject constructor(
                     order = order,
                     rejectTemplate = _state.value.rejectTemplate.ifBlank { REJECT_TEMPLATES.first() }
                 )
-                order?.let { escalateIfOverdue(it) }
+                order?.let { current ->
+                    escalateIfOverdue(current)
+                    if (_state.value.customerPhotoUrl.isBlank() && current.customerId.isNotBlank()) {
+                        val photo = vendorOrderRepo.customerPhoto(current.customerId).orEmpty()
+                        _state.value = _state.value.copy(customerPhotoUrl = photo)
+                    }
+                }
             }
         }
 
