@@ -15,17 +15,24 @@ class MoneyTest {
     fun formatsWholeTakaWithoutDecimals() {
         assertEquals("৳ 250", Money.format(25_000))
         assertEquals("৳ 0", Money.format(0))
+        assertEquals("৳ 1", Money.format(100))
     }
 
     @Test
     fun groupsThousandTakaInTheLakhPattern() {
         assertEquals("৳ 1,250", Money.format(125_000))
         assertEquals("৳ 12,500", Money.format(1_250_000))
+        // Bangladesh groups by lakh, not by millions: ৳1,00,000 — never ৳100,000.
+        assertEquals("৳ 1,00,000", Money.format(10_000_000))
+        assertEquals("৳ 1,23,456.78", Money.format(12_345_678))
+        assertEquals("৳ 12,500.5", Money.format(1_250_050))
     }
 
     @Test
     fun keepsPaisaOnlyWhenTheyExist() {
-        assertEquals("৳ 250.50", Money.format(25_050))
+        // Trailing zeros of the paisa are dropped: ৳250.5, never ৳250.50.
+        assertEquals("৳ 250.5", Money.format(25_050))
+        assertEquals("৳ 250.1", Money.format(25_010))
         assertEquals("৳ 250.05", Money.format(25_005))
     }
 
@@ -77,6 +84,11 @@ class MoneyTest {
         assertEquals(4_500L, Money.percentDiscount(45_000, 10))
         assertEquals(0L, Money.percentDiscount(45_000, 0))
         assertEquals(45_000L, Money.percentDiscount(45_000, 100))
+        // The floor is a paisa floor, not a taka floor: ৳450.55 × 10% = ৳45.05.
+        assertEquals(4_505L, Money.percentDiscount(45_055, 10))
+        // A percent outside 0–100 is clamped, never multiplied.
+        assertEquals(45_000L, Money.percentDiscount(45_000, 150))
+        assertEquals(0L, Money.percentDiscount(45_000, -5))
     }
 
     @Test
@@ -85,5 +97,8 @@ class MoneyTest {
         assertEquals(45_000L, Money.applicableDiscount(45_000, "fixed", 90_000))
         assertEquals(9_000L, Money.applicableDiscount(45_000, "percent", 20))
         assertEquals(0L, Money.applicableDiscount(45_000, "unknown", 20))
+        // A fixed coupon keeps its paisa; only a percent coupon has a floor to take.
+        assertEquals(20_050L, Money.applicableDiscount(45_055, "fixed", 20_050))
+        assertEquals(4_505L, Money.applicableDiscount(45_055, "percent", 10))
     }
 }

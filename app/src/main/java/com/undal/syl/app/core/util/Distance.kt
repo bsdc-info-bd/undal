@@ -34,6 +34,11 @@ object Distance {
      * The gate the checkout uses. Returns null when the store pin is unknown,
      * so the caller can explain "our kitchen location is not published yet"
      * instead of pretending the customer is out of range.
+     *
+     * Zero on either axis counts as unknown: the unset marker the seed document
+     * writes is 0,0, and no kitchen in Sylhet sits on the equator or the
+     * Greenwich meridian — so a half-published pin is refused rather than
+     * measured from the wrong point. The web checkout applies the same rule.
      */
     fun distanceFromStore(
         storeLat: Double?,
@@ -42,7 +47,7 @@ object Distance {
         customerLng: Double
     ): Double? {
         if (storeLat == null || storeLng == null) return null
-        if (storeLat == 0.0 && storeLng == 0.0) return null
+        if (storeLat == 0.0 || storeLng == 0.0) return null
         return haversineKm(storeLat, storeLng, customerLat, customerLng)
     }
 

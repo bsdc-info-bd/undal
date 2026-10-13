@@ -40,6 +40,16 @@ class ValidatorsTest {
     }
 
     @Test
+    fun mobileNumbersNormaliseToTheLocalElevenDigits() {
+        // Every shape a customer might paste, landing on 01XXXXXXXXX.
+        assertEquals("01712345678", Validators.normalizeBdMobile("+880 1712-345678"))
+        assertEquals("01712345678", Validators.normalizeBdMobile("8801712345678"))
+        assertEquals("01712345678", Validators.normalizeBdMobile("01712 345678"))
+        assertNull(Validators.normalizeBdMobile("0171234567"))
+        assertNull(Validators.normalizeBdMobile("++880 9999"))
+    }
+
+    @Test
     fun passwordsNeedLengthAndVariety() {
         assertNull(Validators.password("undal123"))
         assertNotNull(Validators.password(""))

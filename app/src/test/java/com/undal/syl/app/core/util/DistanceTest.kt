@@ -44,6 +44,8 @@ class DistanceTest {
     fun distanceFromStoreReturnsNullWhenThePinIsUnpublished() {
         assertNull(Distance.distanceFromStore(null, 91.8687, 24.89, 91.87))
         assertNull(Distance.distanceFromStore(24.8949, null, 24.89, 91.87))
+        assertNull(Distance.distanceFromStore(0.0, 91.8687, 24.89, 91.87))
+        assertNull(Distance.distanceFromStore(24.8949, 0.0, 24.89, 91.87))
         // A zero pin is the unset marker used by the seed document.
         assertNull(Distance.distanceFromStore(0.0, 0.0, 24.89, 91.87))
         assertEquals(
@@ -65,7 +67,9 @@ class DistanceTest {
     @Test
     fun kmFormattingIsReadable() {
         assertEquals("5 km", Distance.formatKm(5.0))
+        assertEquals("12 km", Distance.formatKm(12.0))
         assertEquals("2.4 km", Distance.formatKm(2.44))
+        assertEquals("2 km", Distance.formatKm(1.96))
         assertEquals("0.4 km", Distance.formatKm(0.4))
     }
 
