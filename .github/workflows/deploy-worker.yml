@@ -1,0 +1,152 @@
+# ===========================================================================
+# Undal HomeKitchen — deploy-worker
+#
+# Deploys the Cloudflare Worker (FCM v1 relay, crons, web store, deep links).
+# The KV namespace is looked up by title and created automatically, so the owner
+# only ever pastes a Cloudflare API token and account id.
+# ===========================================================================
+name: deploy-worker
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "worker/**"
+      - "firebase/**"
+      - ".github/workflows/deploy-worker.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-worker
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    name: Deploy the Undal Worker
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Preflight secrets
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          FIREBASE_SA_JSON: ${{ secrets.FIREBASE_SA_JSON }}
+          FIREBASE_RTDB_URL: ${{ secrets.FIREBASE_RTDB_URL }}
+          CLOUDINARY_CLOUD_NAME: ${{ secrets.CLOUDINARY_CLOUD_NAME }}
+        run: |
+          bash tools/preflight.sh \
+            CLOUDFLARE_API_TOKEN CLOUDFLARE_ACCOUNT_ID FIREBASE_SA_JSON FIREBASE_RTDB_URL CLOUDINARY_CLOUD_NAME
+
+      - name: Set up Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: worker/package-lock.json
+
+      - name: Install worker toolchain
+        working-directory: worker
+        run: npm ci --no-audit --no-fund
+
+      - name: Typecheck the worker
+        working-directory: worker
+        run: npm run typecheck
+
+      - name: Resolve the KV namespace id
+        id: kv
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          set -euo pipefail
+          API="https://api.cloudflare.com/client/v4/accounts/${CLOUDFLARE_ACCOUNT_ID}/storage/kv/namespaces"
+          ID=$(curl -sS "$API?per_page=100" -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" \
+            | python3 -c "import json,sys; d=json.load(sys.stdin); print(next((n['id'] for n in d.get('result',[]) if n['title']=='undal-kv'), ''))")
+          if [ -z "$ID" ]; then
+            ID=$(curl -sS -X POST "$API" -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" \
+              -H "content-type: application/json" -d '{"title":"undal-kv"}' \
+              | python3 -c "import json,sys; print(json.load(sys.stdin)['result']['id'])")
+            echo "created KV namespace undal-kv ($ID)"
+          else
+            echo "reusing KV namespace undal-kv ($ID)"
+          fi
+          echo "id=$ID" >> "$GITHUB_OUTPUT"
+
+      - name: Render wrangler.toml for this account
+        env:
+          CLOUDINARY_CLOUD_NAME: ${{ secrets.CLOUDINARY_CLOUD_NAME }}
+          GITHUB_REPO_SLUG: ${{ github.repository }}
+          KV_ID: ${{ steps.kv.outputs.id }}
+        run: |
+          sed -i "s|REPLACE_KV_NAMESPACE_ID|${KV_ID}|g" worker/wrangler.toml
+          sed -i "s|REPLACE_CLOUDINARY_CLOUD_NAME|${CLOUDINARY_CLOUD_NAME}|g" worker/wrangler.toml
+          sed -i "s|REPLACE_GITHUB_REPO_SLUG|${GITHUB_REPO_SLUG}|g" worker/wrangler.toml
+          grep -n "KV_NAMESPACE_ID\|CLOUDINARY_CLOUD_NAME\|GITHUB_REPO_SLUG" worker/wrangler.toml
+
+      - name: Push worker secrets
+        working-directory: worker
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          FIREBASE_SA_JSON: ${{ secrets.FIREBASE_SA_JSON }}
+          FIREBASE_RTDB_URL: ${{ secrets.FIREBASE_RTDB_URL }}
+          APP_SIGNING_SHA256: ${{ secrets.APP_SIGNING_SHA256 }}
+          RELEASE_WEBHOOK_SECRET: ${{ secrets.RELEASE_WEBHOOK_SECRET }}
+        run: |
+          set -euo pipefail
+          printf '%s' "$FIREBASE_SA_JSON" | npx wrangler secret put FIREBASE_SA_JSON --name undal
+          printf '%s' "$FIREBASE_RTDB_URL" | npx wrangler secret put FIREBASE_RTDB_URL --name undal
+          printf '%s' "${APP_SIGNING_SHA256:-}" | npx wrangler secret put APP_SIGNING_SHA256 --name undal
+          printf '%s' "${RELEASE_WEBHOOK_SECRET:-}" | npx wrangler secret put RELEASE_WEBHOOK_SECRET --name undal
+
+      - name: Dry-run bundle
+        working-directory: worker
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: npx wrangler deploy --dry-run --outdir dist
+
+      - name: Deploy
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          workingDirectory: worker
+          command: deploy
+
+      - name: Smoke test the deployment
+        env:
+          WORKER_BASE_URL: ${{ secrets.WORKER_BASE_URL }}
+        run: |
+          if [ -z "$WORKER_BASE_URL" ]; then
+            echo "WORKER_BASE_URL secret is not set yet — skipping the smoke test."
+            exit 0
+          fi
+          for i in 1 2 3 4 5; do
+            if curl -fsS "$WORKER_BASE_URL/healthz"; then
+              echo ""
+              echo "healthz responded."
+              exit 0
+            fi
+            sleep 6
+          done
+          echo "healthz did not respond in time — check the wrangler output above."
+          exit 1
+
+      - name: Summarise
+        env:
+          WORKER_BASE_URL: ${{ secrets.WORKER_BASE_URL }}
+        run: |
+          {
+            echo "## Undal Worker deployed"
+            echo ""
+            echo "- Cron 1: \`*/5 * * * *\` — vendor presence watchdog (auto-offline after 15 minutes)."
+            echo "- Cron 2: \`0 12 * * *\` = 18:00 Asia/Dhaka — daily offer broadcast to \`promos_all\`."
+            echo "- Health: ${WORKER_BASE_URL}/healthz"
+            echo "- Deep links: ${WORKER_BASE_URL}/dish/{id} · /combo/{id} · /order/{id} · /app"
+          } >> "$GITHUB_STEP_SUMMARY"

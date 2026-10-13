@@ -1,0 +1,398 @@
+rules_version = '2';
+
+// ===========================================================================
+// Undal HomeKitchen — Firestore security contract (PART G3)
+//
+// Principles
+//  1. Money is never trusted from the client shape alone: totals must equal
+//     subtotal + delivery - discount, every amount is a non-negative int (paisa).
+//  2. The customer writes their order exactly once, with status == 'placed'.
+//     There is no customer update path at all, so self-cancellation is
+//     impossible by construction (LAW / C-077).
+//  3. The vendor moves orders along the state machine only, appending exactly
+//     one timeline entry per transition, and never touches money fields.
+//  4. Everything the delivery radius, km-fee and schedule depend on is
+//     validated on write.
+// ===========================================================================
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ----------------------------------------------------------------------
+    // helpers
+    // ----------------------------------------------------------------------
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function uid() {
+      return request.auth.uid;
+    }
+
+    function isVendor() {
+      return signedIn() && request.auth.token.vendor == true;
+    }
+
+    function isOwner(userId) {
+      return signedIn() && uid() == userId;
+    }
+
+    function changedKeys() {
+      return request.resource.data.diff(resource.data).affectedKeys();
+    }
+
+    function onlyChanged(keys) {
+      return changedKeys().hasOnly(keys);
+    }
+
+    function isInt(value) {
+      return value is int;
+    }
+
+    function isPositiveInt(value) {
+      return value is int && value > 0;
+    }
+
+    function nonNegativeInt(value) {
+      return value is int && value >= 0;
+    }
+
+    function nonBlankString(value) {
+      return value is string && value.size() >= 3;
+    }
+
+    function fullAddress() {
+      return request.resource.data.address.keys().hasAll(['lat', 'lng', 'title', 'desc', 'note'])
+        && request.resource.data.address.lat is number
+        && request.resource.data.address.lng is number
+        && request.resource.data.address.lat >= -90 && request.resource.data.address.lat <= 90
+        && request.resource.data.address.lng >= -180 && request.resource.data.address.lng <= 180
+        && nonBlankString(request.resource.data.address.title)
+        && nonBlankString(request.resource.data.address.desc)
+        && nonBlankString(request.resource.data.address.note);
+    }
+
+    // --- order state machine (PART G4) --------------------------------------
+    function statusTransitionAllowed(from, to) {
+      return (from == 'placed' && (to == 'accepted' || to == 'cancelled'))
+        || (from == 'accepted' && (to == 'ready' || to == 'cancelled'))
+        || (from == 'ready' && to == 'in_delivery')
+        || (from == 'in_delivery' && to == 'delivered');
+    }
+
+    function timelineAppendedOneFor(newStatus) {
+      let timeline = request.resource.data.timeline;
+      return timeline.size() == resource.data.timeline.size() + 1
+        && timeline[timeline.size() - 1].status == newStatus
+        && timeline[timeline.size() - 1].ts == request.time;
+    }
+
+    function acceptTransitionValid() {
+      return request.resource.data.prepMinutes is int
+        && request.resource.data.prepMinutes > 0
+        && request.resource.data.prepMinutes <= 180
+        && request.resource.data.prepEndsAt is timestamp
+        && request.resource.data.prepEndsAt > request.time;
+    }
+
+    function cancelTransitionValid() {
+      return nonBlankString(request.resource.data.cancelNote);
+    }
+
+    function deliverTransitionValid() {
+      return request.resource.data.collectedAmountPaisa is int
+        && request.resource.data.collectedAmountPaisa == resource.data.totalAmountPaisa;
+    }
+
+    function vendorTransitionValid() {
+      let to = request.resource.data.status;
+      let from = resource.data.status;
+      return from != 'delivered'
+        && from != 'cancelled'
+        && statusTransitionAllowed(from, to)
+        && timelineAppendedOneFor(to)
+        && request.resource.data.updatedAt == request.time
+        && (to != 'accepted' || acceptTransitionValid())
+        && (to != 'cancelled' || cancelTransitionValid())
+        && (to != 'delivered' || deliverTransitionValid())
+        && onlyChanged([
+             'status', 'prepMinutes', 'prepEndsAt', 'cancelNote', 'vendorNote',
+             'timeline', 'updatedAt', 'collectedAmountPaisa',
+             'acceptedAt', 'readyAt', 'inDeliveryAt', 'deliveredAt'
+           ]);
+    }
+
+    // ======================================================================
+    // users/{uid} — the customer profile, one document per customer
+    // ======================================================================
+    match /users/{userId} {
+      allow read: if isOwner(userId) || isVendor();
+      allow create: if isOwner(userId)
+        && request.resource.data.keys().hasAll([
+             'name', 'email', 'phone', 'address', 'role', 'fcmSub', 'createdAt'
+           ])
+        && nonBlankString(request.resource.data.name)
+        && request.resource.data.name.size() <= 80
+        && request.resource.data.email is string
+        && request.resource.data.email.matches('^[^@\\s]+@[^@\\s]+\\.[^@\\s]{2,}$')
+        && request.resource.data.phone is string
+        && request.resource.data.phone.matches('^01[3-9][0-9]{8}$')
+        && request.resource.data.role == 'customer'
+        && fullAddress()
+        && request.resource.data.createdAt == request.time
+        && request.resource.data.address.note.size() <= 300
+        && request.resource.data.address.desc.size() <= 300;
+      allow update: if isOwner(userId)
+        && !changedKeys().hasAny(['role', 'createdAt'])
+        && request.resource.data.role == 'customer'
+        && request.resource.data.name.size() <= 80
+        && request.resource.data.address.keys().hasAll(['lat', 'lng', 'title', 'desc', 'note'])
+        && nonBlankString(request.resource.data.address.title)
+        && nonBlankString(request.resource.data.address.desc)
+        && nonBlankString(request.resource.data.address.note)
+        && request.resource.data.address.lat is number
+        && request.resource.data.address.lng is number;
+      allow delete: if isOwner(userId);
+    }
+
+    // ======================================================================
+    // vendor/{vendorUid} — the single kitchen identity
+    // ======================================================================
+    match /vendor/{vendorId} {
+      allow read: if signedIn();
+      allow create, update: if isVendor() && isOwner(vendorId)
+        && request.resource.data.role == 'vendor'
+        && nonBlankString(request.resource.data.name);
+      allow delete: if false;
+    }
+
+    // ======================================================================
+    // fcmTokens/{uid}/tokens/{token} — device registration, self-serve only
+    // ======================================================================
+    match /fcmTokens/{userId}/tokens/{token} {
+      allow read, delete: if isOwner(userId);
+      allow create, update: if isOwner(userId)
+        && request.resource.data.keys().hasAll(['platform', 'updatedAt', 'appVersion'])
+        && request.resource.data.platform == 'android'
+        && request.resource.data.updatedAt == request.time;
+    }
+
+    // ======================================================================
+    // Menu catalogue — public to read (the web store renders it), vendor writes
+    // ======================================================================
+    match /categories/{categoryId} {
+      allow read: if true;
+      allow create, update: if isVendor()
+        && nonBlankString(request.resource.data.name)
+        && request.resource.data.order is int;
+      allow delete: if isVendor();
+    }
+
+    match /subcategories/{subcategoryId} {
+      allow read: if true;
+      allow create, update: if isVendor()
+        && request.resource.data.categoryId is string
+        && nonBlankString(request.resource.data.name)
+        && request.resource.data.order is int;
+      allow delete: if isVendor();
+    }
+
+    match /menuItems/{itemId} {
+      allow read: if true;
+      allow create: if isVendor()
+        && nonBlankString(request.resource.data.name)
+        && request.resource.data.categoryId is string
+        && isPositiveInt(request.resource.data.amountPaisa)
+        && request.resource.data.amountPaisa <= 1000000
+        && request.resource.data.available is bool
+        && request.resource.data.veg is bool
+        && request.resource.data.spiceLevel is int
+        && request.resource.data.spiceLevel >= 0
+        && request.resource.data.spiceLevel <= 3
+        && request.resource.data.tags is list
+        && request.resource.data.orderCount is int
+        && request.resource.data.createdAt == request.time;
+      allow update: if isVendor()
+        && isPositiveInt(request.resource.data.amountPaisa)
+        && request.resource.data.amountPaisa <= 1000000
+        && request.resource.data.available is bool
+        && request.resource.data.updatedAt == request.time;
+      allow delete: if isVendor();
+    }
+
+    match /combos/{comboId} {
+      allow read: if true;
+      allow create: if isVendor()
+        && nonBlankString(request.resource.data.name)
+        && request.resource.data.itemRefs is list
+        && request.resource.data.itemRefs.size() >= 2
+        && request.resource.data.itemRefs.all(ref,
+             ref.keys().hasAll(['menuItemId', 'qty'])
+             && ref.menuItemId is string
+             && isPositiveInt(ref.qty))
+        && isPositiveInt(request.resource.data.amountPaisa)
+        && isPositiveInt(request.resource.data.regularAmountPaisa)
+        && request.resource.data.amountPaisa <= request.resource.data.regularAmountPaisa;
+      allow update: if isVendor()
+        && request.resource.data.itemRefs is list
+        && request.resource.data.itemRefs.size() >= 2
+        && request.resource.data.itemRefs.all(ref, ref.keys().hasAll(['menuItemId', 'qty']))
+        && isPositiveInt(request.resource.data.amountPaisa)
+        && isPositiveInt(request.resource.data.regularAmountPaisa)
+        && request.resource.data.amountPaisa <= request.resource.data.regularAmountPaisa;
+      allow delete: if isVendor();
+    }
+
+    // ======================================================================
+    // Campaigns — vendor owned, public to read (home banners follow instantly)
+    // ======================================================================
+    match /campaigns/{campaignId} {
+      allow read: if true;
+      allow create, update: if isVendor()
+        && nonBlankString(request.resource.data.title)
+        && (request.resource.data.type == 'percent' || request.resource.data.type == 'fixed')
+        && isPositiveInt(request.resource.data.value)
+        && !(request.resource.data.type == 'percent' && request.resource.data.value > 90)
+        && request.resource.data.startAt is timestamp
+        && request.resource.data.endAt is timestamp
+        && request.resource.data.endAt > request.resource.data.startAt;
+      allow delete: if isVendor();
+    }
+
+    // ======================================================================
+    // Coupons — never listable: read a code only while signed in.
+    // Customers may perform the ONE atomic usage increment the checkout
+    // transaction performs; the vendor owns every other field.
+    // ======================================================================
+    match /coupons/{code} {
+      allow get: if signedIn();
+      allow list: if isVendor();
+      allow create, delete: if isVendor();
+      allow update: if isVendor()
+        || (signedIn()
+             && code == code.upper()
+             && onlyChanged(['usedCount'])
+             && resource.data.active == true
+             && request.resource.data.usedCount == resource.data.usedCount + 1
+             && resource.data.usedCount < resource.data.usageLimit
+             && (resource.data.expiresAt == null || resource.data.expiresAt > request.time));
+    }
+
+    // ======================================================================
+    // Orders — create once as the customer, advance as the vendor
+    // ======================================================================
+    match /orders/{orderId} {
+      allow get: if isVendor() || (signedIn() && resource.data.customerId == uid());
+      allow list: if isVendor()
+        || (signedIn() && request.query.limit <= 50);
+      allow create: if signedIn()
+        && request.resource.data.customerId == uid()
+        && request.resource.data.status == 'placed'
+        && request.resource.data.payment == 'COD'
+        && request.resource.data.keys().hasAll([
+             'shortId', 'customerId', 'customerName', 'phone', 'items',
+             'subtotalAmountPaisa', 'deliveryAmountPaisa', 'discountAmountPaisa',
+             'totalAmountPaisa', 'payment', 'address', 'distanceKm', 'status',
+             'timeline', 'chatId', 'createdAt', 'updatedAt'
+           ])
+        && request.resource.data.shortId is string
+        && request.resource.data.shortId.matches('^UND-[0-9]{4,6}$')
+        && nonBlankString(request.resource.data.customerName)
+        && request.resource.data.phone is string
+        && request.resource.data.phone.matches('^01[3-9][0-9]{8}$')
+        && nonNegativeInt(request.resource.data.subtotalAmountPaisa)
+        && nonNegativeInt(request.resource.data.deliveryAmountPaisa)
+        && nonNegativeInt(request.resource.data.discountAmountPaisa)
+        && request.resource.data.totalAmountPaisa == request.resource.data.subtotalAmountPaisa
+             + request.resource.data.deliveryAmountPaisa
+             - request.resource.data.discountAmountPaisa
+        && request.resource.data.totalAmountPaisa > 0
+        && request.resource.data.discountAmountPaisa <= request.resource.data.subtotalAmountPaisa
+        && request.resource.data.items is list
+        && request.resource.data.items.size() > 0
+        && request.resource.data.items.size() <= 40
+        && request.resource.data.items.all(item,
+             item.keys().hasAll(['name', 'qty', 'unitAmountPaisa', 'lineTotalAmountPaisa'])
+             && nonBlankString(item.name)
+             && isInt(item.qty) && item.qty >= 1 && item.qty <= 50
+             && nonNegativeInt(item.unitAmountPaisa)
+             && item.lineTotalAmountPaisa == item.qty * item.unitAmountPaisa)
+        && request.resource.data.address.keys().hasAll(['lat', 'lng', 'title', 'desc', 'note'])
+        && request.resource.data.address.lat is number
+        && request.resource.data.address.lng is number
+        && nonBlankString(request.resource.data.address.title)
+        && nonBlankString(request.resource.data.address.desc)
+        && nonBlankString(request.resource.data.address.note)
+        && request.resource.data.distanceKm is number
+        && request.resource.data.distanceKm >= 0
+        && request.resource.data.distanceKm <= 30
+        && request.resource.data.timeline is list
+        && request.resource.data.timeline.size() == 1
+        && request.resource.data.timeline[0].status == 'placed'
+        && request.resource.data.chatId == orderId
+        && request.resource.data.createdAt == request.time
+        && request.resource.data.updatedAt == request.time;
+      allow update: if isVendor() && vendorTransitionValid();
+      allow delete: if false;
+    }
+
+    // ======================================================================
+    // chats/{orderId} — Firestore-side metadata only; messages live in RTDB
+    // ======================================================================
+    match /chats/{orderId} {
+      allow read: if isVendor() || (signedIn() && resource.data.customerId == uid());
+      allow create: if signedIn()
+        && request.resource.data.customerId == uid()
+        && request.resource.data.orderId == orderId
+        && request.resource.data.createdAt == request.time;
+      allow update: if isVendor() || (signedIn() && resource.data.customerId == uid());
+      allow delete: if false;
+    }
+
+    // ======================================================================
+    // notifInbox/{uid}/items/{itemId} — in-app history, owner only
+    // ======================================================================
+    match /notifInbox/{userId}/items/{itemId} {
+      allow read: if isOwner(userId);
+      allow create: if isOwner(userId)
+        && nonBlankString(request.resource.data.title)
+        && request.resource.data.read is bool
+        && request.resource.data.createdAt == request.time;
+      allow update: if isOwner(userId) && onlyChanged(['read']);
+      allow delete: if isOwner(userId);
+    }
+
+    // ======================================================================
+    // config/store · config/promos — world readable, vendor writable
+    // ======================================================================
+    match /config/{docId} {
+      allow read: if true;
+      allow create, update: if isVendor();
+      allow delete: if false;
+    }
+
+    // ======================================================================
+    // counters/orders — the shortId generator (atomic +1 inside checkout)
+    // ======================================================================
+    match /counters/{counterId} {
+      allow read: if signedIn();
+      allow create: if signedIn()
+        && counterId == 'orders'
+        && request.resource.data.keys().hasOnly(['value'])
+        && request.resource.data.value is int
+        && request.resource.data.value >= 1000
+        && request.resource.data.value <= 99999;
+      allow update: if signedIn()
+        && counterId == 'orders'
+        && onlyChanged(['value'])
+        && request.resource.data.value == resource.data.value + 1
+        && request.resource.data.value <= 999999;
+      allow delete: if false;
+    }
+
+    // Everything not declared above is closed.
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

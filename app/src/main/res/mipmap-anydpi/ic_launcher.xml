@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Legacy launcher icon for API 24-25, where adaptive icons do not exist.
+  The brand background and the pot mark are drawn inline so no bitmap asset
+  is needed anywhere in the repository.
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+
+    <path
+        android:fillColor="@color/undal_brand"
+        android:pathData="M14,0 L94,0 C101.7,0 108,6.3 108,14 L108,94 C108,101.7 101.7,108 94,108 L14,108 C6.3,108 0,101.7 0,94 L0,14 C0,6.3 6.3,0 14,0 Z" />
+
+    <path
+        android:fillColor="@color/undal_mark_light"
+        android:pathData="M28,56 L80,56 C80,74 69,84 54,84 C39,84 28,74 28,56 Z" />
+    <path
+        android:fillColor="@color/undal_accent"
+        android:pathData="M33,52 C35,38 43,31 54,31 C65,31 73,38 75,52 Z" />
+    <path
+        android:fillColor="@color/undal_mark_light"
+        android:pathData="M50,24 L58,24 L58,31 L50,31 Z" />
+    <path
+        android:fillColor="@color/undal_mark_light"
+        android:pathData="M44,14 L48,14 L48,22 L44,22 Z" />
+    <path
+        android:fillColor="@color/undal_mark_light"
+        android:pathData="M53,17 L57,17 L57,23 L53,23 Z" />
+    <path
+        android:fillColor="@color/undal_mark_light"
+        android:pathData="M37,86 L71,86 L71,90 L37,90 Z" />
+</vector>

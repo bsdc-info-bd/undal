@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Undal HomeKitchen</string>
+    <string name="store_city">Sylhet</string>
+
+    <!-- Launch shell (replaced by the full navigation graph in Response 2) -->
+    <string name="shell_tagline">Home-cooked food from our kitchen to your door, across Sylhet.</string>
+    <string name="shell_cod_badge">Cash on delivery</string>
+    <string name="shell_status_line">Kitchen console is warming up.</string>
+    <string name="shell_version_label">Version %1$s</string>
+
+    <!-- Notification channel ids (values are referenced by the manifest) -->
+    <string name="channel_customer_orders">customer_orders</string>
+    <string name="channel_customer_promos">customer_promos</string>
+    <string name="channel_vendor_new_order">vendor_new_order</string>
+    <string name="channel_vendor_general">vendor_general</string>
+
+    <!-- Notification channel display names -->
+    <string name="channel_customer_orders_title">Order updates</string>
+    <string name="channel_customer_orders_desc">Live status of your Undal orders.</string>
+    <string name="channel_customer_promos_title">Offers from Undal</string>
+    <string name="channel_customer_promos_desc">Today\'s deals from the Undal kitchen.</string>
+    <string name="channel_vendor_new_order_title">New order alerts</string>
+    <string name="channel_vendor_new_order_desc">Rings the Undal order sound until the order is accepted or rejected.</string>
+    <string name="channel_vendor_general_title">Kitchen updates</string>
+    <string name="channel_vendor_general_desc">Prep timers, store status and device health notices.</string>
+</resources>
