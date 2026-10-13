@@ -91,8 +91,9 @@ class UndalApp : Application(), Configuration.Provider {
 
     /**
      * Cloudinary is initialised with the *cloud name only*: mobile apps must never
-     * hold the account secret. Uploads go through the unsigned preset
-     * `undal_unsigned`, which the Cloudinary console restricts to image formats.
+     * hold the account secret. Uploads go through the unsigned preset named in
+     * the CLOUDINARY_UPLOAD_PRESET secret, which the Cloudinary console restricts
+     * to image formats.
      */
     private fun configureCloudinary() {
         val config: Map<String, Any> = mapOf(

@@ -2,7 +2,6 @@ package com.undal.syl.app.core.util
 
 import java.math.BigDecimal
 import java.math.RoundingMode
-import java.text.NumberFormat
 import java.util.Locale
 
 /**
@@ -22,15 +21,39 @@ object Money {
     fun format(amountPaisa: Long): String {
         val taka = amountPaisa / PAISA_PER_TAKA
         val paisa = (amountPaisa % PAISA_PER_TAKA).toInt()
-        val formatter = NumberFormat.getNumberInstance(Locale("en", "IN"))
-        formatter.maximumFractionDigits = 0
-        val whole = formatter.format(taka)
+        val whole = groupLakh(taka.toString())
         return if (paisa == 0) {
             "৳ $whole"
         } else {
             val fraction = paisa.toString().padStart(2, '0').trimEnd('0')
             "৳ $whole.$fraction"
         }
+    }
+
+    /**
+     * `৳ 1,00,000`, never `৳ 100,000`: the last three digits stay together and
+     * everything left of them is counted off in pairs.
+     *
+     * The grouping is worked out here instead of being asked of a locale. This
+     * is a money rule, not a regional preference, and a runtime's locale data is
+     * not a contract: `NumberFormat.getNumberInstance(Locale("en", "IN"))`
+     * answered `৳ 100,000` in CI while the same call renders the lakh pattern on
+     * a phone. The Worker's `groupIndian` in `worker/src/util/money.ts` is the
+     * same algorithm by hand for the same reason, so the two can never disagree
+     * about a total a customer is reading.
+     *
+     * 1250 → "1,250" · 100000 → "1,00,000" · 12345678 → "1,23,45,678".
+     */
+    private fun groupLakh(digits: String): String {
+        val negative = digits.startsWith("-")
+        val body = if (negative) digits.substring(1) else digits
+        val grouped = if (body.length <= 3) {
+            body
+        } else {
+            val head = body.dropLast(3).reversed().chunked(2).joinToString(",").reversed()
+            "$head,${body.takeLast(3)}"
+        }
+        return if (negative) "-$grouped" else grouped
     }
 
     /** Plain number without the symbol, for CSV export and share text. */

@@ -42,7 +42,8 @@ Add each one on your phone:
   VENDOR_EMAIL               The kitchen login email, e.g. kitchen@undal.local
   VENDOR_PASSWORD            The kitchen login password (12+ characters)
   CLOUDINARY_CLOUD_NAME      Cloudinary dashboard → top bar cloud name
-  CLOUDINARY_UPLOAD_PRESET   Cloudinary → Settings → Upload → Upload presets → undal_unsigned (must be Unsigned)
+  CLOUDINARY_UPLOAD_PRESET   Cloudinary → Settings → Upload → Upload presets → the exact name of
+                             your Unsigned preset (this project's account uses bsdc_unsigned)
   WORKER_HOST                Cloudflare → Workers & Pages → undal → the workers.dev host, without https://
                              (looks like undal.your-subdomain.workers.dev)
   WORKER_BASE_URL            The same host WITH https://
