@@ -36,6 +36,9 @@ object UndalDimens {
     val elevationCard: Dp = 2.dp
     val elevationRaised: Dp = 6.dp
 
+    /** Bottom bars and sheets: raised enough to read as a separate surface. */
+    val elevationBar: Dp = 8.dp
+
     val avatarSm: Dp = 32.dp
     val avatarMd: Dp = 48.dp
     val avatarLg: Dp = 72.dp

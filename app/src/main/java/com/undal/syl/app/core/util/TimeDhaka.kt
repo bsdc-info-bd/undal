@@ -46,6 +46,21 @@ object TimeDhaka {
 
     fun minutesFromHhMm(value: String): Int? = parseHhMm(value)?.let(::minutesOfDay)
 
+    /** "09:00" → "9:00 AM", the form the owner and the customer both read. */
+    fun prettyHhMm(value: String): String =
+        parseHhMm(value)?.format(timeFormatter) ?: value
+
+    /** "Mon", "Tue" … for the schedule screens and the next-opening line. */
+    fun weekdayLabel(date: LocalDate): String = when (WEEKDAY_KEYS[date.dayOfWeek.value - 1]) {
+        "mon" -> "Monday"
+        "tue" -> "Tuesday"
+        "wed" -> "Wednesday"
+        "thu" -> "Thursday"
+        "fri" -> "Friday"
+        "sat" -> "Saturday"
+        else -> "Sunday"
+    }
+
     /** True when `minutes` falls inside a slot, handling windows past midnight. */
     fun isWithinSlot(openMinutes: Int, closeMinutes: Int, minutes: Int): Boolean {
         if (openMinutes == closeMinutes) return false
