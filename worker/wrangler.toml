@@ -1,0 +1,44 @@
+# ---------------------------------------------------------------------------
+# Undal HomeKitchen — single-worker deployment (PART F · PART J · PART P)
+#
+# One Worker serves: the FCM v1 relay, both cron triggers, the web store,
+# deep-link smart open, OG cards and the APK download route.
+#
+# Values marked REPLACE_* are substituted by .github/workflows/deploy-worker.yml
+# from repository secrets. Secrets themselves (FIREBASE_SA_JSON,
+# FIREBASE_RTDB_URL, APP_SIGNING_SHA256, RELEASE_WEBHOOK_SECRET) are pushed with
+# `wrangler secret put` by the same workflow and never appear in this file.
+# ---------------------------------------------------------------------------
+
+name = "undal"
+main = "src/index.ts"
+compatibility_date = "2026-10-01"
+workers_dev = true
+
+[vars]
+# Non-secret, owner-facing configuration.
+CLOUDINARY_CLOUD_NAME = "REPLACE_CLOUDINARY_CLOUD_NAME"
+# Firebase Web API key (Project settings -> General -> Web API Key). It is a
+# public client key used for anonymous web sign-in on /checkout; leaving the
+# GitHub secret blank keeps the storefront readable and turns ordering on the
+# web into "install the app" — never a broken button.
+FIREBASE_WEB_API_KEY = "REPLACE_FIREBASE_WEB_API_KEY"
+APP_PACKAGE_NAME = "com.undal.syl.app"
+GITHUB_REPO_SLUG = "REPLACE_GITHUB_REPO_SLUG"
+PROMO_TOPIC = "promos_all"
+
+[[kv_namespaces]]
+binding = "UNDAL_KV"
+id = "REPLACE_KV_NAMESPACE_ID"
+
+[triggers]
+crons = [
+  "*/5 * * * *",
+  "0 12 * * *"
+]
+
+[observability]
+enabled = true
+
+[placement]
+mode = "smart"

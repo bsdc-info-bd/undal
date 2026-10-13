@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Undal brand palette. The Compose colour system in Response 2 reads these. -->
+    <color name="undal_brand">#0B5A2B</color>
+    <color name="undal_brand_dark">#073D1D</color>
+    <color name="undal_brand_light">#E4F3E7</color>
+    <color name="undal_accent">#E8871E</color>
+    <color name="undal_accent_light">#FFF1DE</color>
+    <color name="undal_danger">#B3261E</color>
+    <color name="undal_success">#1E7B43</color>
+
+    <color name="undal_splash_background">#0B5A2B</color>
+    <color name="undal_window_background">#FFFBF4</color>
+    <color name="undal_mark_light">#FFFDF7</color>
+    <color name="undal_mark_dark">#073D1D</color>
+</resources>

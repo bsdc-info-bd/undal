@@ -1,0 +1,408 @@
+package com.undal.syl.app.features.cart
+
+import androidx.lifecycle.ViewModel
+import androidx.lifecycle.viewModelScope
+import com.undal.syl.app.core.cart.Cart
+import com.undal.syl.app.core.cart.CartLine
+import com.undal.syl.app.core.maps.UndalLocation
+import com.undal.syl.app.core.model.MenuSnapshot
+import com.undal.syl.app.core.model.StoreConfig
+import com.undal.syl.app.core.model.StoreOpenState
+import com.undal.syl.app.core.util.Distance
+import com.undal.syl.app.core.util.Money
+import com.undal.syl.app.core.util.UndalResult
+import com.undal.syl.app.data.repo.AuthRepo
+import com.undal.syl.app.data.repo.CartRepo
+import com.undal.syl.app.data.repo.CouponRepo
+import com.undal.syl.app.data.repo.MenuRepo
+import com.undal.syl.app.data.repo.OrderRepo
+import com.undal.syl.app.data.repo.StoreRepo
+import dagger.hilt.android.lifecycle.HiltViewModel
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.launch
+import javax.inject.Inject
+
+/**
+ * Cart and checkout (C-046 … C-062).
+ *
+ * The cart is the customer's, the prices are the kitchen's, and this screen is
+ * where the two are reconciled: the moment it opens, every line is compared with
+ * the live menu, prices are brought up to date with an explanation, and a dish
+ * that has been switched off is flagged instead of silently ordered.
+ *
+ * Nothing is hidden behind the button: each reason the order cannot be placed is
+ * listed with its own sentence, and the button says which one is blocking.
+ */
+@HiltViewModel
+class CartViewModel @Inject constructor(
+    private val cartRepo: CartRepo,
+    private val storeRepo: StoreRepo,
+    private val menuRepo: MenuRepo,
+    private val couponRepo: CouponRepo,
+    private val orderRepo: OrderRepo,
+    private val authRepo: AuthRepo
+) : ViewModel() {
+
+    data class State(
+        val loading: Boolean = true,
+        val lines: List<CartLine> = emptyList(),
+        val unavailableLineIds: Set<String> = emptySet(),
+        val priceNotes: List<String> = emptyList(),
+        val store: StoreConfig = StoreConfig.unloaded(),
+        val openState: StoreOpenState = StoreOpenState.of(StoreConfig.unloaded()),
+        val address: UndalLocation? = null,
+        val distanceKm: Double? = null,
+        val deliveryPaisa: Long = 0L,
+        val subtotalPaisa: Long = 0L,
+        val discountPaisa: Long = 0L,
+        val totalPaisa: Long = 0L,
+        val couponCode: String = "",
+        val couponMessage: String? = null,
+        val couponIsError: Boolean = false,
+        val couponChecking: Boolean = false,
+        val note: String = "",
+        val blockers: List<String> = emptyList(),
+        val placing: Boolean = false,
+        val placedOrderId: String? = null,
+        val placedShortId: String? = null,
+        val placedTotalLabel: String = "",
+        val message: String? = null,
+        val lastRemoved: CartLine? = null
+    ) {
+
+        val itemCount: Int get() = lines.sumOf { it.quantity }
+
+        val subtotalLabel: String get() = Money.format(subtotalPaisa)
+
+        val deliveryLabel: String get() = Money.format(deliveryPaisa)
+
+        val discountLabel: String get() = "- ${Money.format(discountPaisa)}"
+
+        val totalLabel: String get() = Money.format(totalPaisa)
+
+        val canPlace: Boolean get() = blockers.isEmpty() && !placing && lines.isNotEmpty()
+
+        val distanceCaption: String
+            get() = distanceKm?.let { "Billed whole kilometres · ${Distance.formatKm(it)} from the kitchen" }
+                ?: "Add your address to see the exact delivery fee."
+    }
+
+    private val _state = MutableStateFlow(State())
+    val state: StateFlow<State> = _state.asStateFlow()
+
+    private val addressFlow = MutableStateFlow<UndalLocation?>(null)
+    private val noteFlow = MutableStateFlow("")
+    private val priceNotes = mutableListOf<String>()
+
+    /** The coupon as the server described it, kept so the discount tracks the subtotal. */
+    private var appliedCoupon: CouponRepo.Coupon? = null
+
+    init {
+        viewModelScope.launch { refreshAddress() }
+        viewModelScope.launch {
+            combine(
+                storeRepo.observeStore(),
+                menuRepo.observeMenu(),
+                cartRepo.cart,
+                addressFlow,
+                noteFlow
+            ) { store, menu, cart, address, note ->
+                buildState(store, menu, cart, address, note)
+            }.collect { next -> _state.value = next }
+        }
+    }
+
+    fun refreshAddress() {
+        viewModelScope.launch { addressFlow.value = authRepo.loadProfileLocation() }
+    }
+
+    private suspend fun buildState(
+        store: StoreConfig,
+        menu: MenuSnapshot,
+        cart: Cart,
+        address: UndalLocation?,
+        note: String
+    ): State {
+        // Reconcile the cart with the live menu before showing anything.
+        val unavailable = mutableSetOf<String>()
+        var reconciled = cart
+        cart.lines.forEach { line ->
+            val livePrice = when {
+                line.isCombo -> menu.combo(line.id)?.takeIf { it.available }?.amountPaisa
+                else -> menu.dish(line.id)?.takeIf { it.available }?.payablePaisa
+            }
+            if (livePrice == null) {
+                unavailable += line.id
+            } else if (livePrice != line.unitAmountPaisa) {
+                reconciled = reconciled.withQuantity(line.id, line.note, line.quantity)
+                    .let { current ->
+                        current.copy(
+                            lines = current.lines.map { candidate ->
+                                if (candidate.id == line.id && candidate.note == line.note) {
+                                    candidate.copy(unitAmountPaisa = livePrice)
+                                } else {
+                                    candidate
+                                }
+                            }
+                        )
+                    }
+                priceNotes += "${line.name} is now ${Money.format(livePrice)} — your cart has been updated."
+            }
+        }
+        reconciled.lines.forEach { line ->
+            val stillThere = when {
+                line.isCombo -> menu.combo(line.id) != null
+                else -> menu.dish(line.id) != null
+            }
+            if (!stillThere) unavailable += line.id
+        }
+        if (reconciled.lines != cart.lines) {
+            cartRepo.replaceLines(reconciled)
+            reconciled = cartRepo.current()
+        }
+
+        val discount = appliedCoupon?.discountFor(reconciled.subtotalPaisa) ?: 0L
+        val effectiveDiscount = if (unavailable.isEmpty()) discount else 0L
+
+        val distance = if (address != null) store.distanceFrom(address.lat, address.lng) else null
+        val delivery = distance?.let { store.deliveryFeeFor(it) } ?: 0L
+        val subtotal = reconciled.subtotalPaisa
+        val total = Money.grandTotal(subtotal, delivery, effectiveDiscount)
+        val openState = StoreOpenState.of(store)
+
+        return State(
+            loading = false,
+            lines = reconciled.lines,
+            unavailableLineIds = unavailable,
+            priceNotes = priceNotes.toList(),
+            store = store,
+            openState = openState,
+            address = address,
+            distanceKm = distance,
+            deliveryPaisa = delivery,
+            subtotalPaisa = subtotal,
+            discountPaisa = effectiveDiscount,
+            totalPaisa = total,
+            couponCode = reconciled.couponCode,
+            couponMessage = _state.value.couponMessage,
+            couponIsError = _state.value.couponIsError,
+            couponChecking = false,
+            note = note,
+            blockers = blockersFor(openState, store, address, distance, subtotal, unavailable, reconciled),
+            placing = _state.value.placing,
+            placedOrderId = _state.value.placedOrderId,
+            placedShortId = _state.value.placedShortId,
+            placedTotalLabel = _state.value.placedTotalLabel,
+            message = _state.value.message,
+            lastRemoved = _state.value.lastRemoved
+        )
+    }
+
+    /**
+     * Every reason the order cannot be placed, in the order the customer should
+     * fix them (C-060).
+     */
+    private fun blockersFor(
+        openState: StoreOpenState,
+        store: StoreConfig,
+        address: UndalLocation?,
+        distance: Double?,
+        subtotal: Long,
+        unavailable: Set<String>,
+        cart: Cart
+    ): List<String> = buildList {
+        if (!openState.serviceable) {
+            add(
+                if (store.autoClosed) {
+                    "The kitchen is offline, so it is not taking orders. Your cart is saved."
+                } else {
+                    "The kitchen is closed: ${store.manualOverrideNote.ifBlank { "check back soon" }}"
+                }
+            )
+        }
+        if (address == null) {
+            add("Add your delivery address so we can calculate the ride.")
+        }
+        if (distance != null && !store.isServiceable(distance)) {
+            add(
+                "That address is ${Distance.formatKm(distance)} away — outside the " +
+                    "${Distance.formatKm(store.radiusKm)} we can deliver."
+            )
+        }
+        if (unavailable.isNotEmpty()) {
+            val names = cart.lines.filter { it.id in unavailable }.joinToString(", ") { it.name }
+            add("Finished for today: $names. Remove those lines to continue.")
+        }
+        if (subtotal < store.minOrderAmountPaisa && subtotal > 0) {
+            add(
+                "The kitchen's minimum order is ${Money.format(store.minOrderAmountPaisa)} — " +
+                    "add ${Money.format(store.minOrderAmountPaisa - subtotal)} more."
+            )
+        }
+        if (cart.lines.isEmpty()) {
+            add("Your cart is empty.")
+        }
+    }
+
+    fun increment(line: CartLine) {
+        viewModelScope.launch { cartRepo.setQuantity(line.id, line.note, line.quantity + 1) }
+    }
+
+    fun decrement(line: CartLine) {
+        viewModelScope.launch {
+            if (line.quantity <= 1) {
+                _state.value = _state.value.copy(lastRemoved = line)
+            }
+            cartRepo.setQuantity(line.id, line.note, line.quantity - 1)
+        }
+    }
+
+    fun remove(line: CartLine) {
+        viewModelScope.launch {
+            _state.value = _state.value.copy(lastRemoved = line)
+            cartRepo.remove(line.id, line.note)
+        }
+    }
+
+    fun undoRemove() {
+        val line = _state.value.lastRemoved ?: return
+        viewModelScope.launch {
+            cartRepo.add(line)
+            _state.value = _state.value.copy(lastRemoved = null)
+        }
+    }
+
+    fun dismissUndo() {
+        _state.value = _state.value.copy(lastRemoved = null)
+    }
+
+    fun clearCart() {
+        viewModelScope.launch {
+            appliedCoupon = null
+            cartRepo.clear()
+            _state.value = _state.value.copy(
+                couponCode = "",
+                couponMessage = "Cart cleared.",
+                couponIsError = false
+            )
+        }
+    }
+
+    fun onNoteChange(value: String) {
+        noteFlow.value = value.take(200)
+    }
+
+    /** Validates the code against the live coupon document (C-052). */
+    fun applyCoupon(code: String) {
+        val current = _state.value
+        if (current.subtotalPaisa <= 0L) {
+            _state.value = current.copy(couponMessage = "Add something to the cart first.", couponIsError = true)
+            return
+        }
+        _state.value = current.copy(couponChecking = true, couponMessage = null)
+        viewModelScope.launch {
+            when (val outcome = couponRepo.validate(code, current.subtotalPaisa)) {
+                is CouponRepo.Outcome.Valid -> {
+                    appliedCoupon = outcome.coupon
+                    cartRepo.applyCoupon(outcome.coupon.code)
+                    _state.value = _state.value.copy(
+                        couponCode = outcome.coupon.code,
+                        couponChecking = false,
+                        couponMessage = "${outcome.coupon.code} applied — ${Money.format(outcome.discountPaisa)} off. " +
+                            outcome.coupon.description,
+                        couponIsError = false,
+                        discountPaisa = outcome.discountPaisa
+                    )
+                }
+
+                is CouponRepo.Outcome.Rejected -> {
+                    _state.value = _state.value.copy(
+                        couponChecking = false,
+                        couponMessage = outcome.message,
+                        couponIsError = true
+                    )
+                }
+            }
+        }
+    }
+
+    fun removeCoupon() {
+        viewModelScope.launch {
+            appliedCoupon = null
+            cartRepo.clearCoupon()
+            _state.value = _state.value.copy(
+                couponCode = "",
+                couponMessage = "Coupon removed.",
+                couponIsError = false,
+                discountPaisa = 0L
+            )
+        }
+    }
+
+    /** Places the order (C-061) and keeps the result for the success screen. */
+    fun placeOrder() {
+        val current = _state.value
+        val address = current.address
+        if (address == null) {
+            _state.value = current.copy(message = "Add your delivery address before ordering.")
+            return
+        }
+        if (!address.isValid) {
+            _state.value = current.copy(
+                message = "Your address needs a title, a description and a delivery note before ordering."
+            )
+            return
+        }
+        if (!current.canPlace) {
+            _state.value = current.copy(
+                message = current.blockers.firstOrNull() ?: "The order cannot be placed yet."
+            )
+            return
+        }
+
+        _state.value = current.copy(placing = true, message = null)
+        viewModelScope.launch {
+            val draft = OrderRepo.OrderDraft(
+                store = current.store,
+                address = address,
+                distanceKm = current.distanceKm ?: 0.0,
+                customerName = authRepo.loadProfileName().orEmpty().ifBlank { "Undal customer" },
+                phone = authRepo.loadProfilePhone().orEmpty(),
+                lines = current.lines,
+                couponCode = current.couponCode,
+                note = current.note
+            )
+            when (val result = orderRepo.placeOrder(draft)) {
+                is UndalResult.Success -> {
+                    cartRepo.clear()
+                    appliedCoupon = null
+                    priceNotes.clear()
+                    _state.value = _state.value.copy(
+                        placing = false,
+                        placedOrderId = result.value.orderId,
+                        placedShortId = result.value.shortId,
+                        placedTotalLabel = Money.format(result.value.totalAmountPaisa),
+                        lines = emptyList(),
+                        couponCode = "",
+                        message = null
+                    )
+                }
+
+                is UndalResult.Failure -> {
+                    _state.value = _state.value.copy(placing = false, message = result.message)
+                }
+            }
+        }
+    }
+
+    fun clearMessage() {
+        _state.value = _state.value.copy(message = null)
+    }
+
+    fun dismissSuccess() {
+        _state.value = _state.value.copy(placedOrderId = null, placedShortId = null, placedTotalLabel = "")
+    }
+}

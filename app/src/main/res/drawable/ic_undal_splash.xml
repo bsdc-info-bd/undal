@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Launch splash mark: the Undal pot in brand colours on the splash background. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+
+    <path
+        android:fillColor="@color/undal_mark_light"
+        android:pathData="M24,54 L84,54 C84,76 71,88 54,88 C37,88 24,76 24,54 Z" />
+    <path
+        android:fillColor="@color/undal_accent"
+        android:pathData="M29,50 C31,33 41,25 54,25 C67,25 77,33 79,50 Z" />
+    <path
+        android:fillColor="@color/undal_mark_light"
+        android:pathData="M50,17 L58,17 L58,24 L50,24 Z" />
+    <path
+        android:fillColor="@color/undal_mark_light"
+        android:pathData="M43,4 L47,4 L47,13 L43,13 Z" />
+    <path
+        android:fillColor="@color/undal_mark_light"
+        android:pathData="M53,8 L57,8 L57,14 L53,14 Z" />
+    <path
+        android:fillColor="@color/undal_mark_light"
+        android:pathData="M34,90 L74,90 L74,94 L34,94 Z" />
+</vector>

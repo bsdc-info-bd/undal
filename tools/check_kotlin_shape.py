@@ -1,0 +1,290 @@
+#!/usr/bin/env python3
+"""Shape guards for the Undal Kotlin sources (LAW-11 helpers, no compiler needed).
+
+Two mistakes are cheap to make and expensive to find on a phone:
+
+1. a normal string literal split across two source lines — Kotlin only allows
+   that inside a raw `\"\"\"` string, so the file will not compile;
+2. a stray or missing `{` `(` — a whole screen silently stops being a screen.
+
+This script walks `app/src` and fails loudly on either. Run it before every
+commit; it is deliberately dependency-free so it also runs inside Actions.
+"""
+
+from __future__ import annotations
+
+import pathlib
+import re
+import sys
+
+ROOT = pathlib.Path(__file__).resolve().parent.parent
+SOURCE_ROOT = ROOT / "app" / "src"
+
+
+def scan(text: str) -> tuple[list[int], int, int]:
+    """Return (lines opening an unterminated normal string, brace delta, paren delta)."""
+    broken_lines: list[int] = []
+    shapes: list[str] = []
+    i = 0
+    n = len(text)
+    line = 1
+    while i < n:
+        char = text[i]
+        if char == "\n":
+            line += 1
+            i += 1
+            continue
+        if char == "/" and text[i : i + 2] == "//":
+            end = text.find("\n", i)
+            i = n if end == -1 else end
+            continue
+        if char == "/" and text[i : i + 2] == "/*":
+            end = text.find("*/", i + 2)
+            if end == -1:
+                i = n
+            else:
+                line += text.count("\n", i, end + 2)
+                i = end + 2
+            continue
+        if text[i : i + 3] == '"""':
+            end = text.find('"""', i + 3)
+            if end == -1:
+                i = n
+            else:
+                line += text.count("\n", i, end + 3)
+                i = end + 3
+            continue
+        if char == "'":
+            # A character literal — `','`, `'"'`, `'\\n'` — may contain a quote
+            # that must not be mistaken for the start of a string.
+            i += 1
+            while i < n:
+                if text[i] == "\\":
+                    i += 2
+                    continue
+                if text[i] == "'" or text[i] == "\n":
+                    i += 1
+                    break
+                i += 1
+            continue
+        if char == '"':
+            opened_on = line
+            i += 1
+            closed = False
+            while i < n:
+                if text[i] == "\\":
+                    i += 2
+                    continue
+                if text[i] == "\n":
+                    break
+                if text[i] == '"':
+                    i += 1
+                    closed = True
+                    break
+                i += 1
+            if not closed:
+                broken_lines.append(opened_on)
+            continue
+        if char in "{}()":
+            shapes.append(char)
+        i += 1
+
+    braces = shapes.count("{") - shapes.count("}")
+    parens = shapes.count("(") - shapes.count(")")
+    return broken_lines, braces, parens
+
+
+DECLARATION = re.compile(
+    r"^(\s*)"
+    r"(?:@[A-Za-z0-9_.]+\([^)]*\)\s*)*"
+    r"(?:public |internal |private |abstract |open |sealed |data |value |enum |annotation |external )*"
+    r"(class|interface|object|typealias)\s+([A-Za-z_][A-Za-z0-9_]*)"
+)
+# Top-level functions, including extensions: `fun Modifier.undalSemantics(…)`,
+# `internal fun HapticFeedback.tick()` — the name is the last identifier before
+# the parameter list, after any `<generics>` and any `Receiver.` prefix.
+TOP_LEVEL_FUNCTION = re.compile(
+    r"^(?:@[A-Za-z0-9_.]+\([^)]*\)\s*)*"
+    r"(?:public |internal |private |suspend |inline |operator |tailrec |external )*fun\s+"
+    r"(?:<[^>]+>\s*)?"
+    r"(?:[A-Za-z_][A-Za-z0-9_]*(?:<[^>]*>)?\s*\.\s*)?"
+    r"([A-Za-z_][A-Za-z0-9_]*)\s*\("
+)
+# `val MaterialTheme.undalSemantics: UndalSemanticColors` is an extension
+# property: importable, and named by the last identifier before the colon.
+TOP_LEVEL_PROPERTY = re.compile(
+    r"^(?:@[A-Za-z0-9_.]+\([^)]*\)\s*)*"
+    r"(?:public |internal |private |const |lateinit |override )*(?:const\s+)?(?:val|var)\s+"
+    r"(?:[A-Za-z_][A-Za-z0-9_]*(?:<[^>]*>)?\s*\.\s*)?"
+    r"([A-Za-z_][A-Za-z0-9_]*)\s*(?::|=)"
+)
+MEMBER_FUNCTION = re.compile(
+    r"^\s+(?:@[A-Za-z0-9_.]+\([^)]*\)\s*)*"
+    r"(?:public |internal |private |protected |suspend |inline |operator |override |tailrec |abstract )*fun\s+"
+    r"(?:<[^>]+>\s*)?"
+    r"(?:[A-Za-z_][A-Za-z0-9_]*(?:<[^>]*>)?\s*\.\s*)?"
+    r"([A-Za-z_][A-Za-z0-9_]*)\s*\("
+)
+APP_IMPORT = re.compile(r"^\s*import\s+(com\.undal\.syl\.app(?:\.[A-Za-z0-9_]+)*)\.([A-Za-z_][A-Za-z0-9_]*)\s*$")
+
+# Members the Kotlin compiler generates: never declared in source, always legal.
+GENERATED_MEMBERS = frozenset(
+    {
+        "copy", "toString", "equals", "hashCode", "compareTo", "iterator", "get", "set",
+        "component1", "component2", "component3", "component4", "component5", "valueOf",
+        "values", "entries", "invoke", "run", "let", "also", "apply", "with",
+    }
+)
+
+# Generated by the build, not written by hand: `R` and `BuildConfig`.
+GENERATED_TYPES = frozenset({"R", "BuildConfig"})
+
+HILT_VIEW_MODEL = "@HiltViewModel"
+
+
+def kotlin_sources() -> list[pathlib.Path]:
+    return sorted(SOURCE_ROOT.rglob("*.kt"))
+
+
+def package_of(text: str) -> str:
+    for line in text.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("package "):
+            return stripped[len("package ") :].strip()
+    return ""
+
+
+def declarations(path: pathlib.Path) -> tuple[str, set[str], set[str], set[str], set[str]]:
+    """(package, importable names, our own type names, function names, nested types)."""
+    text = path.read_text(encoding="utf-8")
+    names: set[str] = set()
+    types: set[str] = set()
+    members: set[str] = set()
+    nested: set[str] = set()
+    for line in text.splitlines():
+        declaration = DECLARATION.match(line)
+        if declaration:
+            # Indented types are nested; they are importable as `…Outer.Nested`,
+            # so they still have to resolve — but they cannot collide with a
+            # same-named type in another file of the package.
+            names.add(declaration.group(3))
+            types.add(declaration.group(3))
+            if declaration.group(1):
+                nested.add(declaration.group(3))
+            continue
+        if TOP_LEVEL_FUNCTION.match(line):
+            names.add(TOP_LEVEL_FUNCTION.match(line).group(1))
+            continue
+        if TOP_LEVEL_PROPERTY.match(line):
+            names.add(TOP_LEVEL_PROPERTY.match(line).group(1))
+            continue
+        member = MEMBER_FUNCTION.match(line)
+        if member:
+            members.add(member.group(1))
+    return package_of(text), names, types, members, nested
+
+
+def source_checks(files: list[pathlib.Path]) -> int:
+    """Cross-file guards the compiler would catch, runnable without a JDK.
+
+    Three mistakes are worth catching before the build machine does:
+
+    1. `import com.undal.syl.app.…` naming a symbol this repository does not
+       declare — a renamed class, a typo, a file that moved;
+    2. two top-level types with the same name in one package;
+    3. `Something.method(` where `Something` is one of our own types and `method`
+       is not a function declared anywhere in the project;
+    4. a `@HiltViewModel` without an `@Inject constructor`, which compiles and
+       then fails at runtime.
+    """
+    problems = 0
+    per_package: dict[str, dict[str, pathlib.Path]] = {}
+    global_names: set[str] = set()
+    repo_types: set[str] = set()
+    members: set[str] = set()
+    for path in files:
+        package, names, types, functions, nested = declarations(path)
+        global_names |= names
+        repo_types |= types
+        members |= functions
+        bucket = per_package.setdefault(package, {})
+        for name in names - nested:
+            if name in bucket and bucket[name] != path:
+                print(
+                    f"{path.relative_to(ROOT)}: {name} is already declared in "
+                    f"{bucket[name].relative_to(ROOT)} (same package {package})"
+                )
+                problems += 1
+            bucket[name] = path
+
+    for path in files:
+        text = path.read_text(encoding="utf-8")
+        rel = path.relative_to(ROOT)
+        for line in text.splitlines():
+            match = APP_IMPORT.match(line)
+            if not match:
+                continue
+            target_package, symbol = match.group(1), match.group(2)
+            if symbol in GENERATED_TYPES:
+                continue
+            declared_there = per_package.get(target_package, {})
+            if symbol not in declared_there and symbol not in global_names:
+                print(f"{rel}: import {target_package}.{symbol} resolves to nothing in this project")
+                problems += 1
+
+        for match in re.finditer(
+            r"(?<![A-Za-z0-9_.])([A-Z][A-Za-z0-9_]*)\.([a-z][A-Za-z0-9_]*)\s*\(", text
+        ):
+            owner, function = match.group(1), match.group(2)
+            # Only our own types: `LocalDate.ofEpochDay()` is the JDK's business.
+            if owner not in repo_types or owner == path.stem:
+                continue
+            if function in members or function in global_names or function in GENERATED_MEMBERS:
+                continue
+            line_number = text.count("\n", 0, match.start()) + 1
+            print(
+                f"{rel}:{line_number}: {owner}.{function}() — no such function is declared "
+                f"anywhere in the project"
+            )
+            problems += 1
+
+        if HILT_VIEW_MODEL in text and "@Inject constructor" not in text:
+            print(f"{rel}: @HiltViewModel without an @Inject constructor")
+            problems += 1
+    return problems
+
+
+def main() -> int:
+    if not SOURCE_ROOT.is_dir():
+        print(f"check_kotlin_shape: {SOURCE_ROOT} not found")
+        return 2
+
+    problems = 0
+    files = sorted(SOURCE_ROOT.rglob("*.kt"))
+    for path in files:
+        broken, braces, parens = scan(path.read_text(encoding="utf-8"))
+        rel = path.relative_to(ROOT)
+        for opened_on in broken:
+            print(f"{rel}:{opened_on}: string literal is not closed before the end of the line")
+            problems += 1
+        if braces:
+            print(f"{rel}: unbalanced braces (delta {braces:+d})")
+            problems += 1
+        if parens:
+            print(f"{rel}: unbalanced parentheses (delta {parens:+d})")
+            problems += 1
+
+    problems += source_checks(files)
+
+    if problems:
+        print(f"check_kotlin_shape: {problems} problem(s) in {len(files)} Kotlin files")
+        return 1
+    print(
+        f"check_kotlin_shape: {len(files)} Kotlin files balanced, no split string literals, "
+        f"imports and member calls resolve"
+    )
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

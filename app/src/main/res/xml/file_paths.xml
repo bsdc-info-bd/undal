@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Storage locations the app may hand to other apps through its FileProvider.
+  Used for the in-app update flow (download undal.apk, then open the installer).
+-->
+<paths>
+    <files-path
+        name="internal_updates"
+        path="updates/" />
+    <external-files-path
+        name="external_updates"
+        path="updates/" />
+    <cache-path
+        name="shared_cache"
+        path="shared/" />
+</paths>

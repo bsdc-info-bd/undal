@@ -1,0 +1,110 @@
+# ===========================================================================
+# Undal HomeKitchen — bootstrap (run ONCE, from the phone browser)
+#
+# 1. Preflights every required secret and fails with a human-readable checklist.
+# 2. Creates the Gradle wrapper (8.10.2) so later builds need no wrapper binary.
+# 3. Copies the official order sound into app/src/main/res/raw.
+# 4. Writes app/google-services.json from the GOOGLE_SERVICES_JSON secret.
+# 5. Provisions the vendor account: Firebase user + `vendor: true` claim +
+#    the vendor/{uid} Firestore document.
+# 6. Commits the wrapper and the order sound back to the branch.
+# ===========================================================================
+name: bootstrap
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: bootstrap
+  cancel-in-progress: false
+
+jobs:
+  bootstrap:
+    name: Provision Undal
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Preflight secrets
+        env:
+          GOOGLE_SERVICES_JSON: ${{ secrets.GOOGLE_SERVICES_JSON }}
+          FIREBASE_WEB_API_KEY: ${{ secrets.FIREBASE_WEB_API_KEY }}
+          FIREBASE_SA_JSON: ${{ secrets.FIREBASE_SA_JSON }}
+          VENDOR_EMAIL: ${{ secrets.VENDOR_EMAIL }}
+          VENDOR_PASSWORD: ${{ secrets.VENDOR_PASSWORD }}
+        run: |
+          bash tools/preflight.sh \
+            GOOGLE_SERVICES_JSON FIREBASE_WEB_API_KEY FIREBASE_SA_JSON VENDOR_EMAIL VENDOR_PASSWORD
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Set up Gradle 8.10.2
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.10.2"
+
+      - name: Create the Gradle wrapper
+        run: gradle wrapper --gradle-version 8.10.2 --distribution-type bin
+
+      - name: Copy the official order sound into res/raw
+        run: |
+          mkdir -p app/src/main/res/raw
+          cp assets/sound/undal_order_alert.mp3 app/src/main/res/raw/undal_order_alert.mp3
+          ls -l app/src/main/res/raw/undal_order_alert.mp3
+
+      - name: Write google-services.json
+        env:
+          GOOGLE_SERVICES_JSON: ${{ secrets.GOOGLE_SERVICES_JSON }}
+        run: |
+          printf '%s' "$GOOGLE_SERVICES_JSON" > app/google-services.json
+          python3 - <<'PY'
+          import json
+          with open("app/google-services.json") as handle:
+              data = json.load(handle)
+          package_name = data["client"][0]["client_info"]["android_client_info"]["package_name"]
+          project_id = data["project_info"]["project_id"]
+          print(f"google-services.json is valid for {package_name} (project {project_id})")
+          if package_name != "com.undal.syl.app":
+              raise SystemExit("google-services.json does not contain com.undal.syl.app — add the Android app to the Firebase project.")
+          PY
+
+      - name: Provision the vendor account
+        env:
+          FIREBASE_SA_JSON: ${{ secrets.FIREBASE_SA_JSON }}
+          FIREBASE_WEB_API_KEY: ${{ secrets.FIREBASE_WEB_API_KEY }}
+          VENDOR_EMAIL: ${{ secrets.VENDOR_EMAIL }}
+          VENDOR_PASSWORD: ${{ secrets.VENDOR_PASSWORD }}
+        run: node tools/provision-vendor.mjs
+
+      - name: Summarise
+        run: |
+          {
+            echo "## Undal bootstrap complete"
+            echo ""
+            echo "| Item | State |"
+            echo "| --- | --- |"
+            echo "| Gradle wrapper | 8.10.2 written to gradle/wrapper |"
+            echo "| Order sound | assets/sound/undal_order_alert.mp3 → app/src/main/res/raw/ |"
+            echo "| google-services.json | written from secret (not committed) |"
+            echo "| Vendor account | Firebase user created, vendor:true claim set, vendor/{uid} document written |"
+            echo ""
+            echo "Next: run **seed-config**, then **deploy-worker**, then **android-build**."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Commit wrapper and order sound
+        uses: stefanzweifel/git-auto-commit-action@v5
+        with:
+          commit_message: "chore(bootstrap): gradle wrapper 8.10.2 and order sound in res/raw"
+          file_pattern: "gradle/wrapper/* gradlew gradlew.bat app/src/main/res/raw/undal_order_alert.mp3"
+          commit_user_name: undal-bootstrap
+          commit_user_email: bootstrap@undal.local

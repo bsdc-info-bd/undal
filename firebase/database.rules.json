@@ -1,0 +1,90 @@
+{
+  "rules": {
+    ".read": false,
+    ".write": false,
+
+    "chats": {
+      "$orderId": {
+        ".read": "auth != null && (data.child('customerId').val() === auth.uid || auth.token.vendor === true)",
+        ".write": "auth != null && (auth.token.vendor === true || newData.child('customerId').val() === auth.uid || data.child('customerId').val() === auth.uid)",
+        "customerId": {
+          ".validate": "newData.isString() && newData.val().length > 0 && newData.val().length <= 128"
+        },
+        "createdAt": {
+          ".validate": "newData.isNumber()"
+        },
+        "messages": {
+          ".read": "auth != null && (data.parent().child('customerId').val() === auth.uid || auth.token.vendor === true)",
+          ".indexOn": ["ts"],
+          "$messageId": {
+            ".write": "auth != null && (auth.token.vendor === true || newData.child('sender').val() === 'customer') && (!data.exists() || data.child('sender').val() === newData.child('sender').val())",
+            ".validate": "newData.hasChildren(['sender', 'text', 'ts']) && newData.child('text').isString() && newData.child('text').val().length > 0 && newData.child('text').val().length <= 1000 && (newData.child('sender').val() === 'customer' || newData.child('sender').val() === 'vendor') && newData.child('ts').isNumber()",
+            "sender": {
+              ".validate": "newData.val() === 'customer' || newData.val() === 'vendor'"
+            },
+            "text": {
+              ".validate": "newData.isString() && newData.val().length > 0 && newData.val().length <= 1000"
+            },
+            "ts": {
+              ".validate": "newData.isNumber()"
+            },
+            "readBy": {
+              "customer": {
+                ".validate": "newData.isBoolean()"
+              },
+              "vendor": {
+                ".validate": "newData.isBoolean()"
+              }
+            }
+          }
+        },
+        "typing": {
+          "$role": {
+            ".read": "auth != null && (data.parent().parent().child('customerId').val() === auth.uid || auth.token.vendor === true)",
+            ".write": "auth != null && ((auth.token.vendor === true && $role === 'vendor') || (auth.token.vendor !== true && $role === 'customer'))",
+            ".validate": "newData.isBoolean()"
+          }
+        }
+      }
+    },
+
+    "presence": {
+      "vendor": {
+        ".read": true,
+        ".write": "auth != null && auth.token.vendor === true",
+        ".validate": "newData.hasChildren(['lastSeen', 'online', 'device'])",
+        "lastSeen": {
+          ".validate": "newData.isNumber()"
+        },
+        "online": {
+          ".validate": "newData.isBoolean()"
+        },
+        "device": {
+          ".validate": "newData.isString() && newData.val().length <= 64"
+        }
+      }
+    },
+
+    "orderLive": {
+      "$orderId": {
+        ".read": "auth != null && (data.child('customerId').val() === auth.uid || auth.token.vendor === true)",
+        ".write": "auth != null && (auth.token.vendor === true || newData.child('customerId').val() === auth.uid || data.child('customerId').val() === auth.uid)",
+        "customerId": {
+          ".validate": "newData.isString() && newData.val().length > 0 && newData.val().length <= 128"
+        },
+        "status": {
+          ".validate": "newData.val() === 'placed' || newData.val() === 'accepted' || newData.val() === 'ready' || newData.val() === 'in_delivery' || newData.val() === 'delivered' || newData.val() === 'cancelled'"
+        },
+        "prepEndsAt": {
+          ".validate": "newData.isNumber()"
+        },
+        "updatedAt": {
+          ".validate": "newData.isNumber()"
+        },
+        "vendorNote": {
+          ".validate": "newData.isString() && newData.val().length <= 300"
+        }
+      }
+    }
+  }
+}
