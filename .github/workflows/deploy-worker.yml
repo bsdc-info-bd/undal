@@ -56,7 +56,7 @@ jobs:
       - name: Typecheck the worker
         working-directory: worker
         run: npm run typecheck
-
+        
       - name: Resolve the KV namespace id
         id: kv
         env:
@@ -65,12 +65,83 @@ jobs:
         run: |
           set -euo pipefail
           API="https://api.cloudflare.com/client/v4/accounts/${CLOUDFLARE_ACCOUNT_ID}/storage/kv/namespaces"
-          ID=$(curl -sS "$API?per_page=100" -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" \
-            | python3 -c "import json,sys; d=json.load(sys.stdin); print(next((n['id'] for n in d.get('result',[]) if n['title']=='undal-kv'), ''))")
+
+          # Cloudflare answers HTTP 200 with `"result": null` when the token or
+          # the account id is wrong. Reading that as an empty list is what
+          # produced "TypeError: 'NoneType' object is not iterable" — a traceback
+          # is not an error message, least of all on a phone. This reads the
+          # answer properly and says what to repair.
+          #
+          # The reader lives in a file rather than a heredoc: `python3 -` takes
+          # its *program* from stdin, which would leave nothing for the JSON.
+          cat > "$RUNNER_TEMP/read-cloudflare.py" <<'PY'
+          import json
+          import sys
+
+          wanted = sys.argv[1]
+          raw = sys.stdin.read()
+          try:
+              payload = json.loads(raw)
+          except ValueError:
+              print("Cloudflare did not answer with JSON. Body starts: %s" % raw[:200], file=sys.stderr)
+              raise SystemExit(1)
+
+          if not payload.get("success"):
+              details = "; ".join(
+                  "%s %s" % (error.get("code"), error.get("message"))
+                  for error in (payload.get("errors") or [])
+              ) or "no detail given"
+              print("Cloudflare refused the KV request: %s" % details, file=sys.stderr)
+              print(
+                  "Repair: CLOUDFLARE_API_TOKEN needs the Workers KV Storage: Edit permission, "
+                  "and CLOUDFLARE_ACCOUNT_ID must be the account that owns this Worker.",
+                  file=sys.stderr,
+              )
+              raise SystemExit(1)
+
+          result = payload.get("result")
+          if wanted == "list":
+              for namespace in (result or []):
+                  if namespace.get("title") == "undal-kv":
+                      print(namespace.get("id") or "")
+                      break
+          else:
+              print((result or {}).get("id") or "")
+          PY
+
+          fetch() {
+            # $1 method · $2 url · $3 body file · $4 what we were doing
+            local status
+            if [ "$1" = "POST" ]; then
+              status=$(curl -sS -o "$3" -w "%{http_code}" -X POST "$2" \
+                -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" \
+                -H "content-type: application/json" -d '{"title":"undal-kv"}')
+            else
+              status=$(curl -sS -o "$3" -w "%{http_code}" "$2" \
+                -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}")
+            fi
+            if [ "$status" -ge 400 ]; then
+              echo "Cloudflare answered HTTP ${status} while ${4}." >&2
+              echo "Body: $(head -c 400 "$3")" >&2
+              if [ "$status" = "403" ]; then
+                echo "Repair: give CLOUDFLARE_API_TOKEN the Workers KV Storage: Edit permission." >&2
+              fi
+              exit 1
+            fi
+          }
+
+          fetch GET "${API}?per_page=100" "$RUNNER_TEMP/kv-list.json" "listing KV namespaces"
+          ID=$(python3 "$RUNNER_TEMP/read-cloudflare.py" list < "$RUNNER_TEMP/kv-list.json")
+
           if [ -z "$ID" ]; then
-            ID=$(curl -sS -X POST "$API" -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" \
-              -H "content-type: application/json" -d '{"title":"undal-kv"}' \
-              | python3 -c "import json,sys; print(json.load(sys.stdin)['result']['id'])")
+            fetch POST "$API" "$RUNNER_TEMP/kv-create.json" "creating the KV namespace"
+            ID=$(python3 "$RUNNER_TEMP/read-cloudflare.py" created < "$RUNNER_TEMP/kv-create.json")
+            if [ -z "$ID" ]; then
+              echo "Cloudflare accepted the request but returned no namespace id." >&2
+              echo "Repair: CLOUDFLARE_API_TOKEN needs Workers KV Storage: Edit on this account," >&2
+              echo "and CLOUDFLARE_ACCOUNT_ID must be the account id shown on the Workers dashboard." >&2
+              exit 1
+            fi
             echo "created KV namespace undal-kv ($ID)"
           else
             echo "reusing KV namespace undal-kv ($ID)"
