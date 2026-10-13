@@ -26,6 +26,9 @@ on:
 
 permissions:
   contents: write
+  # Only used by the failure reporter below: it puts the `e: file:///…` lines on
+  # the pull request, so a kotlin error is readable without opening the raw log.
+  pull-requests: write
 
 concurrency:
   group: android-build-${{ github.ref }}
@@ -98,16 +101,18 @@ jobs:
 
       - name: Unit tests
         run: |
+          set -o pipefail
           ./gradlew :app:testReleaseUnitTest --no-daemon --stacktrace \
             -PundalVersionCode=${{ github.run_number }} \
-            -PundalVersionName=1.0.${{ github.run_number }}
+            -PundalVersionName=1.0.${{ github.run_number }} 2>&1 | tee "$RUNNER_TEMP/gradle.log"
 
       - name: Assemble signed-ready release APK
         run: |
+          set -o pipefail
           ./gradlew :app:assembleRelease --no-daemon --stacktrace \
             -PundalVersionCode=${{ github.run_number }} \
             -PundalVersionName=1.0.${{ github.run_number }} \
-            -PundalMinify=${UNDAL_MINIFY}
+            -PundalMinify=${UNDAL_MINIFY} 2>&1 | tee -a "$RUNNER_TEMP/gradle.log"
 
       - name: Keystore fingerprint
         id: fingerprint
@@ -190,3 +195,42 @@ jobs:
             echo ""
             echo "Paste the SHA-256 into the **APP_SIGNING_SHA256** repository secret so App Links verify."
           } >> "$GITHUB_STEP_SUMMARY"
+
+      # A Gradle failure is only ever useful as its `e: file:///…` lines. This
+      # collects them into the job summary and onto the pull request, so the fix
+      # can be read on a phone in one place instead of scrolling a 20 MB log.
+      - name: Report what Gradle said
+        if: failure()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          LOG="$RUNNER_TEMP/gradle.log"
+          OUT="$RUNNER_TEMP/gradle-errors.md"
+          if [ ! -f "$LOG" ]; then
+            echo "::error::The run failed before Gradle wrote a log — read the failing step above."
+            exit 0
+          fi
+          mapfile -t LINES < <(
+            grep -aE '^e: |^w: .*(deprecat|never used)|^> Task .* FAILED|^FAILURE: |^Execution failed for task|The query requires an index|error:|^Caused by: ' "$LOG" \
+              | sed -e 's|file:///[^ ]*/java/com/|java/com/|' -e 's/[[:space:]]*$//' \
+              | sort -u | head -100
+          )
+          {
+            echo "## Gradle stopped this build"
+            echo ""
+            if [ "${#LINES[@]}" -eq 0 ]; then
+              echo "No Kotlin compiler line was printed — the cause is in the step above."
+            else
+              echo "${#LINES[@]} line(s) from the Gradle output:"
+              echo ""
+              echo '```'
+              printf '%s\n' "${LINES[@]}"
+              echo '```'
+            fi
+          } > "$OUT"
+          cat "$OUT" >> "$GITHUB_STEP_SUMMARY"
+          echo "::error::Gradle stopped — see the comment on the pull request or the job summary."
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            gh pr comment "${{ github.event.pull_request.number }}" \
+              --body-file "$OUT" --edit-last --create-if-none
+          fi
