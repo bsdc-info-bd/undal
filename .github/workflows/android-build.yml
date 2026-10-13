@@ -127,15 +127,47 @@ jobs:
           echo "sha256=$SHA" >> "$GITHUB_OUTPUT"
           echo "Signing certificate SHA-256: $SHA"
 
+      # zipalign + apksigner from the SDK this runner already has. The action this
+      # replaced looked for build-tools 29.0.3, which no current runner image
+      # installs, so the signing step failed after a good APK had been built.
       - name: Sign the release APK
         id: sign
-        uses: r0adkll/sign-android-release@v1
-        with:
-          releaseDirectory: app/build/outputs/apk/release
-          signingKeyBase64: ${{ secrets.KEYSTORE_BASE64 }}
-          alias: ${{ secrets.KEY_ALIAS }}
-          keyStorePassword: ${{ secrets.KEYSTORE_PASSWORD }}
-          keyPassword: ${{ secrets.KEY_PASSWORD }}
+        env:
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          SDK="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}}"
+          TOOLS=$(ls -d "$SDK"/build-tools/*/ 2>/dev/null | sort -V | tail -1) || true
+          if [ -z "$TOOLS" ]; then
+            echo "::error::No Android build-tools on this runner — cannot zipalign or sign."
+            exit 1
+          fi
+          echo "build-tools: $TOOLS"
+          UNSIGNED=""
+          for candidate in app/build/outputs/apk/release/*.apk; do
+            if [ -f "$candidate" ]; then UNSIGNED="$candidate"; break; fi
+          done
+          if [ -z "$UNSIGNED" ]; then
+            echo "::error::Gradle produced no release APK to sign."
+            exit 1
+          fi
+          echo "unsigned: $UNSIGNED"
+          KEYSTORE="$RUNNER_TEMP/undal-release.jks"
+          printf '%s' "$KEYSTORE_BASE64" | base64 -d > "$KEYSTORE"
+          "${TOOLS}zipalign" -f -p 4 "$UNSIGNED" "$RUNNER_TEMP/undal-aligned.apk"
+          "${TOOLS}apksigner" sign \
+            --ks "$KEYSTORE" \
+            --ks-key-alias "$KEY_ALIAS" \
+            --ks-pass "pass:$KEYSTORE_PASSWORD" \
+            --key-pass "pass:$KEY_PASSWORD" \
+            --out app/build/outputs/apk/release/undal-signed.apk \
+            "$RUNNER_TEMP/undal-aligned.apk"
+          "${TOOLS}apksigner" verify --print-certs \
+            app/build/outputs/apk/release/undal-signed.apk | sed -n '1,8p'
+          echo "signedReleaseFile=$PWD/app/build/outputs/apk/release/undal-signed.apk" >> "$GITHUB_OUTPUT"
 
       - name: Publish the fixed asset name
         run: |
