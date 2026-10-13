@@ -37,6 +37,8 @@ object UndalRoutes {
     const val VENDOR_CHAT_LIST = "vendor/chats"
 
     const val VENDOR_DIAGNOSTICS = "vendor/diagnostics"
+    const val VENDOR_INBOX = "vendor/inbox"
+    const val POLICY = "policy"
     const val VENDOR_ORDER_DETAIL = "vendor/order/{orderId}"
     const val VENDOR_CHAT = "vendor/chat/{orderId}"
     const val CUSTOMER_ORDER_DETAIL = "customer/order/{orderId}"
@@ -75,6 +77,10 @@ object UndalRoutes {
             path.startsWith("vendor/orders") -> VENDOR_ORDERS
             path.startsWith("vendor/menu") -> VENDOR_MENU
             path.startsWith("vendor/diagnostics") -> VENDOR_DIAGNOSTICS
+            path.startsWith("vendor/inbox") -> VENDOR_INBOX
+            path.startsWith("policy") -> POLICY
+            path.startsWith("vendor/schedule") -> VENDOR_SCHEDULE
+            path.startsWith("vendor/chats") -> VENDOR_CHAT_LIST
             path.startsWith("store") -> CUSTOMER_HOME
             path.startsWith("app") -> CUSTOMER_HOME
             path.startsWith("open") -> CUSTOMER_HOME

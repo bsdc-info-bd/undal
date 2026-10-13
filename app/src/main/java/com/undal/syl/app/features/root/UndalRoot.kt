@@ -34,8 +34,16 @@ import com.undal.syl.app.features.order.OrderTrackingScreen
 import com.undal.syl.app.features.portal.SupportScreen
 import com.undal.syl.app.features.profile.ProfileScreen
 import com.undal.syl.app.features.store.StoreScreen
-import com.undal.syl.app.features.portal.VendorConsoleStage
-import com.undal.syl.app.features.portal.VendorOrderStage
+import com.undal.syl.app.features.legal.PolicyScreen
+import com.undal.syl.app.features.vendor.chats.VendorChatListScreen
+import com.undal.syl.app.features.vendor.chats.VendorChatScreen
+import com.undal.syl.app.features.vendor.dashboard.VendorDashboardScreen
+import com.undal.syl.app.features.vendor.inbox.VendorInboxScreen
+import com.undal.syl.app.features.vendor.menu.VendorMenuScreen
+import com.undal.syl.app.features.vendor.orders.VendorOrderDetailScreen
+import com.undal.syl.app.features.vendor.orders.VendorOrdersScreen
+import com.undal.syl.app.features.vendor.schedule.VendorScheduleScreen
+import com.undal.syl.app.features.vendor.settings.VendorStoreScreen
 import com.undal.syl.app.features.vendor.DiagnosticsScreen
 
 /**
@@ -249,33 +257,87 @@ fun UndalRoot(
         }
 
         composable(UndalRoutes.VENDOR_CONSOLE) {
-            VendorConsoleStage(
+            VendorDashboardScreen(
+                onOpenOrders = { navController.navigate(UndalRoutes.VENDOR_ORDERS) },
+                onOpenMenu = { navController.navigate(UndalRoutes.VENDOR_MENU) },
+                onOpenPromos = { navController.navigate(UndalRoutes.VENDOR_MENU) },
+                onOpenSchedule = { navController.navigate(UndalRoutes.VENDOR_SCHEDULE) },
+                onOpenSettings = { navController.navigate(UndalRoutes.VENDOR_STORE) },
+                onOpenChats = { navController.navigate(UndalRoutes.VENDOR_CHAT_LIST) },
                 onOpenDiagnostics = { navController.navigate(UndalRoutes.VENDOR_DIAGNOSTICS) },
-                onOpenOrders = { navController.navigate(UndalRoutes.VENDOR_ORDERS) }
+                onOpenInbox = { navController.navigate(UndalRoutes.VENDOR_INBOX) },
+                onOpenOrder = { orderId -> navController.navigate(UndalRoutes.vendorOrderDetail(orderId)) },
+                onPreviewAsCustomer = { navController.navigate(UndalRoutes.CUSTOMER_HOME) }
             )
         }
 
         composable(UndalRoutes.VENDOR_ORDERS) {
-            VendorConsoleStage(
-                onOpenDiagnostics = { navController.navigate(UndalRoutes.VENDOR_DIAGNOSTICS) },
-                onOpenOrders = { }
+            VendorOrdersScreen(
+                onBack = { navController.popBackStack() },
+                onOpenOrder = { orderId -> navController.navigate(UndalRoutes.vendorOrderDetail(orderId)) }
             )
         }
 
         composable(UndalRoutes.VENDOR_ORDER_DETAIL) { backStackEntry ->
-            val orderId = backStackEntry.arguments?.getString("orderId").orEmpty()
-            VendorOrderStage(
+            val orderId = backStackEntry.arguments?.getString(UndalRoutes.ARG_ORDER_ID).orEmpty()
+            VendorOrderDetailScreen(
                 orderId = orderId,
+                sheet = requestedSheet,
                 onBack = { navController.popBackStack() },
-                sheet = requestedSheet
+                onOpenChats = { navController.navigate(UndalRoutes.vendorChat(orderId)) }
             )
         }
 
-        composable(UndalRoutes.VENDOR_STORE) {
-            VendorConsoleStage(
-                onOpenDiagnostics = { navController.navigate(UndalRoutes.VENDOR_DIAGNOSTICS) },
-                onOpenOrders = { navController.navigate(UndalRoutes.VENDOR_ORDERS) }
+        composable(UndalRoutes.VENDOR_MENU) {
+            VendorMenuScreen(
+                onBack = { navController.popBackStack() },
+                onPreviewAsCustomer = { navController.navigate(UndalRoutes.CUSTOMER_HOME) }
             )
+        }
+
+        composable(UndalRoutes.VENDOR_SCHEDULE) {
+            VendorScheduleScreen(onBack = { navController.popBackStack() })
+        }
+
+        composable(UndalRoutes.VENDOR_STORE) {
+            VendorStoreScreen(
+                onBack = { navController.popBackStack() },
+                onOpenPolicy = { navController.navigate(UndalRoutes.POLICY) },
+                onOpenDiagnostics = { navController.navigate(UndalRoutes.VENDOR_DIAGNOSTICS) },
+                onPreviewAsCustomer = { navController.navigate(UndalRoutes.CUSTOMER_HOME) },
+                onSignOut = {
+                    viewModel.signOut()
+                    navController.navigate(UndalRoutes.LOGIN) { popUpTo(0) }
+                }
+            )
+        }
+
+        composable(UndalRoutes.VENDOR_CHAT_LIST) {
+            VendorChatListScreen(
+                onBack = { navController.popBackStack() },
+                onOpenChat = { orderId -> navController.navigate(UndalRoutes.vendorChat(orderId)) },
+                onOpenOrder = { orderId -> navController.navigate(UndalRoutes.vendorOrderDetail(orderId)) }
+            )
+        }
+
+        composable(UndalRoutes.VENDOR_CHAT) { backStackEntry ->
+            val orderId = backStackEntry.arguments?.getString(UndalRoutes.ARG_ORDER_ID).orEmpty()
+            VendorChatScreen(
+                orderId = orderId,
+                onBack = { navController.popBackStack() },
+                onOpenOrder = { id -> navController.navigate(UndalRoutes.vendorOrderDetail(id)) }
+            )
+        }
+
+        composable(UndalRoutes.VENDOR_INBOX) {
+            VendorInboxScreen(
+                onBack = { navController.popBackStack() },
+                onOpenOrder = { orderId -> navController.navigate(UndalRoutes.vendorOrderDetail(orderId)) }
+            )
+        }
+
+        composable(UndalRoutes.POLICY) {
+            PolicyScreen(onBack = { navController.popBackStack() })
         }
       }
       }

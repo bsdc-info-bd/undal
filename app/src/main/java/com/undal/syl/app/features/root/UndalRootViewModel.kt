@@ -134,6 +134,14 @@ class UndalRootViewModel @Inject constructor(
         }
     }
 
+    /** The kitchen signs out from store settings; the role gate re-resolves immediately. */
+    fun signOut() {
+        viewModelScope.launch {
+            session.signOut()
+            resolveRole()
+        }
+    }
+
     fun onSignedIn() {
         resolveRole()
     }
