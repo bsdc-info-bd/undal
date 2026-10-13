@@ -86,6 +86,69 @@
             </intent-filter>
         </activity>
 
+        <!-- ================================================================ -->
+        <!-- Background services that make a locked phone ring (PART I)        -->
+        <!-- ================================================================ -->
+
+        <!-- Loops the official order sound at alarm volume until the order is
+             answered, with a full-screen intent and a partial wake lock. -->
+        <service
+            android:name=".core.background.OrderAlertService"
+            android:exported="false"
+            android:foregroundServiceType="mediaPlayback|specialUse"
+            android:stopWithTask="false">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="order-alerts" />
+        </service>
+
+        <!-- Sticky prep countdown with the ten-second tick. -->
+        <service
+            android:name=".core.background.PrepTimerService"
+            android:exported="false"
+            android:foregroundServiceType="specialUse"
+            android:stopWithTask="false">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="prep-countdown" />
+        </service>
+
+        <!-- Kitchen presence heartbeat: keeps the Worker's auto-offline rule honest. -->
+        <service
+            android:name=".core.background.PresenceHeartbeatService"
+            android:exported="false"
+            android:foregroundServiceType="specialUse"
+            android:stopWithTask="false">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="kitchen-presence" />
+        </service>
+
+        <!-- Brings the heartbeat, the token registration and the channels back
+             after a reboot, an app update or a timezone change. -->
+        <receiver
+            android:name=".core.background.BootReceiver"
+            android:enabled="true"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.LOCKED_BOOT_COMPLETED" />
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+                <action android:name="android.intent.action.TIMEZONE_CHANGED" />
+                <action android:name="android.intent.action.TIME_SET" />
+            </intent-filter>
+        </receiver>
+
+        <!-- Push entry point. Data-only messages mean this always runs, in the
+             foreground, in the background and on a locked screen. -->
+        <service
+            android:name=".core.fcm.UndalFcmService"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="com.google.firebase.MESSAGING_EVENT" />
+            </intent-filter>
+        </service>
+
         <!-- Exposes the downloaded APK to the system installer in Response 5. -->
         <provider
             android:name="androidx.core.content.FileProvider"

@@ -1,116 +1,122 @@
 package com.undal.syl.app
 
+import android.app.KeyguardManager
+import android.content.Context
+import android.content.Intent
+import android.net.Uri
+import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
-import androidx.compose.foundation.Image
-import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.safeDrawingPadding
-import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.widthIn
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Surface
-import androidx.compose.material3.Text
-import androidx.compose.runtime.Composable
-import androidx.compose.ui.Alignment
-import androidx.compose.ui.Modifier
-import androidx.compose.ui.res.painterResource
-import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.text.style.TextAlign
-import androidx.compose.ui.tooling.preview.Preview
-import androidx.compose.ui.unit.dp
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
-import com.undal.syl.app.core.config.UndalBuildInfo
+import com.undal.syl.app.core.background.OrderAlertController
+import com.undal.syl.app.core.fcm.AlarmChannels
+import com.undal.syl.app.core.theme.UndalTheme
+import com.undal.syl.app.features.root.UndalRoot
 import dagger.hilt.android.AndroidEntryPoint
 
 /**
- * Single entry activity for both portals.
+ * The single activity for both portals.
  *
- * Response 2 replaces [UndalLaunchScreen] with the real navigation graph
- * (splash -> role router -> customer or vendor portal). Everything below is the
- * installed, signed, launchable shell that Response 1 ships.
+ * Responsibilities beyond hosting Compose:
+ *  · receive deep links from push notifications, the Worker's smart-open pages
+ *    and shared dish links, and hand them to the navigation graph,
+ *  · when the kitchen phone was woken by an order alert, dismiss the keyguard so
+ *    the ringing order is on screen instead of behind a lock (PART I-2),
+ *  · keep `singleTask` behaviour so a second push does not stack a second copy
+ *    of the app.
  */
 @AndroidEntryPoint
 class MainActivity : ComponentActivity() {
 
+    private var deepLink by mutableStateOf<String?>(null)
+
     override fun onCreate(savedInstanceState: Bundle?) {
-        // Must run before super.onCreate so the branded splash is the first frame.
         installSplashScreen()
         enableEdgeToEdge()
         super.onCreate(savedInstanceState)
+
+        AlarmChannels.ensureChannels(this)
+        deepLink = extractDeepLink(intent)
+        showOverLockScreen()
+
         setContent {
-            UndalLaunchScreen()
+            UndalTheme {
+                UndalRoot(initialDeepLink = deepLink)
+            }
         }
     }
-}
 
-@Composable
-private fun UndalLaunchScreen() {
-    Surface(
-        modifier = Modifier.fillMaxSize(),
-        color = MaterialTheme.colorScheme.background
-    ) {
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .safeDrawingPadding()
-                .padding(horizontal = 28.dp),
-            verticalArrangement = Arrangement.Center,
-            horizontalAlignment = Alignment.CenterHorizontally
-        ) {
-            Image(
-                painter = painterResource(R.drawable.ic_undal_mark),
-                contentDescription = stringResource(R.string.app_name),
-                modifier = Modifier.size(132.dp)
-            )
-            Spacer(Modifier.height(20.dp))
-            Text(
-                text = stringResource(R.string.app_name),
-                style = MaterialTheme.typography.headlineMedium,
-                color = MaterialTheme.colorScheme.onBackground,
-                textAlign = TextAlign.Center
-            )
-            Spacer(Modifier.height(8.dp))
-            Text(
-                text = stringResource(R.string.store_city) + " · " + stringResource(R.string.shell_cod_badge),
-                style = MaterialTheme.typography.labelLarge,
-                color = MaterialTheme.colorScheme.primary,
-                textAlign = TextAlign.Center
-            )
-            Spacer(Modifier.height(18.dp))
-            Text(
-                text = stringResource(R.string.shell_tagline),
-                style = MaterialTheme.typography.bodyLarge,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                textAlign = TextAlign.Center,
-                modifier = Modifier.widthIn(max = 360.dp)
-            )
-            Spacer(Modifier.height(28.dp))
-            Text(
-                text = stringResource(R.string.shell_status_line),
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                textAlign = TextAlign.Center
-            )
-            Spacer(Modifier.height(10.dp))
-            Text(
-                text = stringResource(R.string.shell_version_label, UndalBuildInfo.versionName),
-                style = MaterialTheme.typography.labelMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                textAlign = TextAlign.Center
-            )
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        deepLink = extractDeepLink(intent)
+        showOverLockScreen()
+
+        // A ringing order takes over the screen even if the app was already open
+        // on another page: the kitchen must never have to hunt for it.
+        OrderAlertController.ringing.value?.let { ringing ->
+            OrderAlertController.requestRoute("vendor/order/${ringing.orderId}")
         }
     }
-}
 
-@Preview(showBackground = true)
-@Composable
-private fun UndalLaunchScreenPreview() {
-    UndalLaunchScreen()
+    /**
+     * A full-screen-intent launch (or a deep link that carries an order) may reach
+     * a locked phone. `setShowWhenLocked` plus a keyguard dismissal request makes
+     * the order visible immediately; Android still shows the lock screen for
+     * anything that is not an alarm-class alert, which is the correct behaviour
+     * for a customer status update.
+     */
+    private fun showOverLockScreen() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
+            setShowWhenLocked(true)
+            setTurnScreenOn(true)
+        } else {
+            @Suppress("DEPRECATION")
+            window.addFlags(
+                android.view.WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED or
+                    android.view.WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON
+            )
+        }
+        val keyguard = getSystemService(Context.KEYGUARD_SERVICE) as? KeyguardManager
+        if (keyguard?.isKeyguardLocked == true && OrderAlertController.ringing.value != null) {
+            runCatching { keyguard.requestDismissKeyguard(this, null) }
+        }
+    }
+
+    /**
+     * Deep links arrive in three shapes and all three mean the same thing:
+     *   · `undal://vendor/order/abc`
+     *   · `https://<worker-host>/dish/xyz` (App Link, verified through assetlinks)
+     *   · a push `clickAction` such as `customer/order/abc`
+     */
+    private fun extractDeepLink(intent: Intent?): String? {
+        val data: Uri = intent?.data ?: return intent?.getStringExtra(EXTRA_DEEP_LINK)
+        return when (data.scheme) {
+            "undal" -> (data.host ?: "").plus(data.path.orEmpty()).trimStart('/')
+            "https", "http" -> data.path?.trimStart('/')
+            else -> intent.getStringExtra(EXTRA_DEEP_LINK)
+        }
+    }
+
+    companion object {
+        const val EXTRA_DEEP_LINK = "undal.deepLink"
+
+        /**
+         * Builds the intent every notification, alert action and QR code uses.
+         * Keeping it in one place means the activity never has to guess which
+         * shape of link it was opened with.
+         */
+        fun intentFor(context: Context, deepLink: String): Intent =
+            Intent(context, MainActivity::class.java).apply {
+                action = Intent.ACTION_VIEW
+                data = Uri.parse("undal://" + deepLink.trimStart('/'))
+                putExtra(EXTRA_DEEP_LINK, deepLink)
+                flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP
+            }
+    }
 }

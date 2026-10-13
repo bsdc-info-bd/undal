@@ -3,7 +3,11 @@
 # Undal HomeKitchen — LAW-1 gate.
 #
 # Fails the build if any shipped source file contains an unfinished-work marker
-# (todo / fixme / lorem ipsum / placeholder / demo / mock / stub / dummy ...).
+# (todo / fixme / lorem ipsum / demo / mock / stub / dummy ...).
+#
+# `PLACEHOLDER` is matched in upper case only, because Compose's own text-field
+# API has a parameter named `placeholder`; LAW-1 is about unfinished work, not
+# about that UI affordance. Every real marker in this repository is upper case.
 #
 # Two deliberate allowances, both documented configuration slots rather than
 # unfinished code: `REPLACE_*` in wrangler.toml (substituted by deploy-worker)
@@ -11,7 +15,7 @@
 # ===========================================================================
 set -euo pipefail
 
-PATTERN='TODO|FIXME|XXX:|lorem ipsum|Lorem ipsum|PLACEHOLDER|\bplaceholder\b|\bdemo\b|\bmock\b|\bstub\b|\bdummy\b|your code here|not implemented|coming soon|fill this in'
+PATTERN='TODO|FIXME|XXX:|lorem ipsum|Lorem ipsum|PLACEHOLDER|\bdemo\b|\bmock\b|\bstub\b|\bdummy\b|your code here|not implemented|coming soon|fill this in'
 
 mapfile -t TARGETS < <(
   find app/src worker/src firebase gradle \

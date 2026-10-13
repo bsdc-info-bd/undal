@@ -80,11 +80,16 @@ service cloud.firestore {
         || (from == 'in_delivery' && to == 'delivered');
     }
 
+    // One new timeline entry per transition. Ordering is positional, and the
+    // machine-checked part is the last element's status. Per-step times live in
+    // the dedicated server-stamped fields (acceptedAt, readyAt, inDeliveryAt,
+    // deliveredAt) because a server-timestamp transform cannot be nested inside
+    // an arrayUnion element — so the rules do not ask for one there.
     function timelineAppendedOneFor(newStatus) {
       let timeline = request.resource.data.timeline;
       return timeline.size() == resource.data.timeline.size() + 1
-        && timeline[timeline.size() - 1].status == newStatus
-        && timeline[timeline.size() - 1].ts == request.time;
+        && timeline[timeline.size() - 1].keys().hasOnly(['status'])
+        && timeline[timeline.size() - 1].status == newStatus;
     }
 
     function acceptTransitionValid() {

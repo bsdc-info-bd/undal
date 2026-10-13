@@ -1,0 +1,185 @@
+package com.undal.syl.app.features.root
+
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.padding
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Info
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.hilt.navigation.compose.hiltViewModel
+import androidx.navigation.NavHostController
+import androidx.navigation.compose.NavHost
+import androidx.navigation.compose.composable
+import androidx.navigation.compose.rememberNavController
+import com.undal.syl.app.core.background.OrderAlertController
+import com.undal.syl.app.core.design.UndalAlertBanner
+import com.undal.syl.app.core.theme.UndalDimens
+import com.undal.syl.app.features.auth.LoginScreen
+import com.undal.syl.app.features.auth.RegisterScreen
+import com.undal.syl.app.features.onboarding.LocationSetupScreen
+import com.undal.syl.app.features.onboarding.UndalSplash
+import com.undal.syl.app.features.portal.CustomerHomeStage
+import com.undal.syl.app.features.portal.SupportScreen
+import com.undal.syl.app.features.portal.VendorConsoleStage
+import com.undal.syl.app.features.portal.VendorOrderStage
+import com.undal.syl.app.features.vendor.DiagnosticsScreen
+
+/**
+ * The app shell: one navigation graph, two portals, one authority on where a
+ * cold start lands (UndalRootViewModel).
+ *
+ * Deep links arriving from a push or a shared link are handed to the graph after
+ * the router has decided the portal, so a kitchen alert opens the order it is
+ * about and a customer status push opens the right order — never a blank screen.
+ */
+@Composable
+fun UndalRoot(
+    initialDeepLink: String?,
+    navController: NavHostController = rememberNavController(),
+    viewModel: UndalRootViewModel = hiltViewModel()
+) {
+    val destination by viewModel.destination.collectAsState()
+    val ringing by OrderAlertController.ringing.collectAsState()
+    val errorMessage by viewModel.errorMessage.collectAsState()
+
+    // The alert's Accept / Reject buttons open the order with the right sheet
+    // already raised, so the kitchen never has to hunt for the button.
+    val requestedSheet = initialDeepLink
+        ?.substringAfter("sheet=", "")
+        ?.takeIf { it.isNotBlank() }
+
+    // Portal routing: whenever the router changes its mind, the graph follows.
+    LaunchedEffect(destination) {
+        val target = when (destination) {
+            is UndalRootViewModel.Destination.Splash -> UndalRoutes.SPLASH
+            is UndalRootViewModel.Destination.Auth -> UndalRoutes.LOGIN
+            is UndalRootViewModel.Destination.CustomerLocation -> UndalRoutes.LOCATION_SETUP
+            is UndalRootViewModel.Destination.CustomerHome -> UndalRoutes.CUSTOMER_HOME
+            is UndalRootViewModel.Destination.VendorDiagnostics -> UndalRoutes.VENDOR_DIAGNOSTICS
+            is UndalRootViewModel.Destination.VendorConsole -> UndalRoutes.VENDOR_CONSOLE
+            is UndalRootViewModel.Destination.Error -> UndalRoutes.LOGIN
+        }
+        navController.navigate(target) {
+            popUpTo(0) { inclusive = true }
+            launchSingleTop = true
+        }
+    }
+
+    // A push deep link wins immediately: if the kitchen phone is ringing, the
+    // first thing it shows is the order that is ringing.
+    LaunchedEffect(initialDeepLink, ringing) {
+        val route = UndalRoutes.routeForDeepLink(initialDeepLink) ?: return@LaunchedEffect
+        if (route == UndalRoutes.SPLASH) return@LaunchedEffect
+        navController.navigate(route) { launchSingleTop = true }
+    }
+
+    LaunchedEffect(ringing) {
+        val active = ringing
+        if (active != null) {
+            navController.navigate(UndalRoutes.vendorOrderDetail(active.orderId)) { launchSingleTop = true }
+        }
+    }
+
+    Box(modifier = Modifier.fillMaxSize()) {
+      NavHost(
+        navController = navController,
+        startDestination = UndalRoutes.SPLASH
+      ) {
+        composable(UndalRoutes.SPLASH) {
+            UndalSplash(message = "Opening Undal HomeKitchen…")
+        }
+
+        composable(UndalRoutes.LOGIN) {
+            LoginScreen(
+                onSignedIn = viewModel::onSignedIn,
+                onGoToRegister = { navController.navigate(UndalRoutes.REGISTER) { launchSingleTop = true } },
+                onGoToSupport = { navController.navigate(UndalRoutes.SUPPORT) }
+            )
+        }
+
+        composable(UndalRoutes.REGISTER) {
+            RegisterScreen(
+                onRegistered = { navController.navigate(UndalRoutes.LOCATION_SETUP) { launchSingleTop = true } },
+                onBackToLogin = { navController.popBackStack() }
+            )
+        }
+
+        composable(UndalRoutes.LOCATION_SETUP) {
+            LocationSetupScreen(
+                onSaved = viewModel::onAddressSaved,
+                onSignOut = {
+                    viewModel.onSignedIn()
+                    navController.navigate(UndalRoutes.LOGIN) {
+                        popUpTo(0) { inclusive = true }
+                    }
+                }
+            )
+        }
+
+        composable(UndalRoutes.SUPPORT) {
+            SupportScreen(onBack = { navController.popBackStack() })
+        }
+
+        composable(UndalRoutes.CUSTOMER_HOME) {
+            CustomerHomeStage(
+                onOpenSupport = { navController.navigate(UndalRoutes.SUPPORT) }
+            )
+        }
+
+        composable(UndalRoutes.VENDOR_DIAGNOSTICS) {
+            DiagnosticsScreen(
+                onContinue = viewModel::onDiagnosticsFinished,
+                onOpenSupport = { navController.navigate(UndalRoutes.SUPPORT) }
+            )
+        }
+
+        composable(UndalRoutes.VENDOR_CONSOLE) {
+            VendorConsoleStage(
+                onOpenDiagnostics = { navController.navigate(UndalRoutes.VENDOR_DIAGNOSTICS) },
+                onOpenOrders = { navController.navigate(UndalRoutes.VENDOR_ORDERS) }
+            )
+        }
+
+        composable(UndalRoutes.VENDOR_ORDERS) {
+            VendorConsoleStage(
+                onOpenDiagnostics = { navController.navigate(UndalRoutes.VENDOR_DIAGNOSTICS) },
+                onOpenOrders = { }
+            )
+        }
+
+        composable(UndalRoutes.VENDOR_ORDER_DETAIL) { backStackEntry ->
+            val orderId = backStackEntry.arguments?.getString("orderId").orEmpty()
+            VendorOrderStage(
+                orderId = orderId,
+                onBack = { navController.popBackStack() },
+                sheet = requestedSheet
+            )
+        }
+
+        composable(UndalRoutes.VENDOR_STORE) {
+            VendorConsoleStage(
+                onOpenDiagnostics = { navController.navigate(UndalRoutes.VENDOR_DIAGNOSTICS) },
+                onOpenOrders = { navController.navigate(UndalRoutes.VENDOR_ORDERS) }
+            )
+        }
+    }
+
+      if (errorMessage != null) {
+          UndalAlertBanner(
+              text = errorMessage.orEmpty(),
+              icon = Icons.Filled.Info,
+              containerColour = MaterialTheme.colorScheme.errorContainer,
+              contentColour = MaterialTheme.colorScheme.onErrorContainer,
+              modifier = Modifier
+                  .align(Alignment.TopCenter)
+                  .padding(UndalDimens.md)
+          )
+      }
+    }
+}

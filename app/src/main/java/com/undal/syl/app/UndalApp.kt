@@ -9,8 +9,16 @@ import com.google.firebase.database.FirebaseDatabase
 import com.google.firebase.firestore.FirebaseFirestore
 import com.google.firebase.firestore.FirebaseFirestoreSettings
 import com.google.firebase.firestore.PersistentCacheSettings
+import com.undal.syl.app.core.background.PresenceHeartbeatWorker
+import com.undal.syl.app.core.session.AuthSession
+import com.undal.syl.app.core.session.VendorSessionKeeper
 import com.undal.syl.app.core.config.UndalBuildInfo
+import com.undal.syl.app.core.fcm.AlarmChannels
+import com.undal.syl.app.core.maps.UndalMaps
 import dagger.hilt.android.HiltAndroidApp
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import javax.inject.Inject
 
 /**
@@ -29,6 +37,20 @@ class UndalApp : Application(), Configuration.Provider {
     @Inject
     lateinit var workerFactory: HiltWorkerFactory
 
+    @Inject
+    lateinit var sessionKeeper: VendorSessionKeeper
+
+    @Inject
+    lateinit var session: AuthSession
+
+    /**
+     * Process-scoped coroutine scope for work that must outlive any screen — the
+     * kitchen session watchdog lives here (V-002). It is cancelled by the
+     * operating system when the process dies, which is exactly the intended
+     * lifetime: the watchdog re-starts with the process.
+     */
+    private val appScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+
     override val workManagerConfiguration: Configuration
         get() = Configuration.Builder()
             .setWorkerFactory(workerFactory)
@@ -40,6 +62,21 @@ class UndalApp : Application(), Configuration.Provider {
         configureCloudinary()
         configureFirestorePersistence()
         configureRealtimeDatabase()
+        // osmdroid needs its cache directory and its identifying user agent set
+        // before the first tile request, or the OSM tile policy is violated.
+        UndalMaps.initialize(this)
+        // Channels are created on every start: a ROM update can silently drop
+        // them, and a missing channel means a silent order alert.
+        AlarmChannels.ensureChannels(this)
+        // The kitchen's fifteen-minute heartbeat fallback must survive process
+        // death, so it is ensured at every start rather than only after login.
+        PresenceHeartbeatWorker.ensureScheduled(this)
+        // A kitchen phone must never be signed out by surprise: the watchdog
+        // refreshes the token and re-checks the vendor claim every 20 minutes
+        // for as long as the process lives (V-002).
+        if (session.isSignedIn()) {
+            sessionKeeper.start(appScope)
+        }
     }
 
     /**

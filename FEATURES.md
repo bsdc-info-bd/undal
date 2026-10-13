@@ -11,7 +11,7 @@ backend** — never when it is merely planned or sketched.
 | Platform · web · deep links · CI | P-001 … P-045 | 45 |
 | **Total** | | **235** |
 
-**Progress: 25 / 235 implemented (11 %)** — verified by `grep -c '^- \[x\]' FEATURES.md`.
+**Progress: 63 / 235 implemented (27 %)** — verified by `grep -c '^- \[x\]' FEATURES.md`.
 
 Legend: `[x]` shipped and wired · `[ ]` still to ship.
 
@@ -19,26 +19,26 @@ Legend: `[x]` shipped and wired · `[ ]` still to ship.
 
 ## C · Customer portal (80)
 
-- [ ] C-001 · Branded splash with animated logo (core-splashscreen)
-- [ ] C-002 · Role auto-router from auth state plus Firestore role document
-- [ ] C-003 · Registration: full name field with validation
-- [ ] C-004 · Email format validation
-- [ ] C-005 · Bangladesh mobile validation `^01[3-9]\d{8}$`
-- [ ] C-006 · Password length, confirmation and strength meter
-- [ ] C-007 · Inline field errors on every form
-- [ ] C-008 · Firebase account creation plus users document in one transaction
-- [ ] C-009 · Verify-email banner with resend action
-- [ ] C-010 · Location permission rationale sheet
-- [ ] C-011 · Runtime permission flow with deny → app settings deep link
-- [ ] C-012 · GPS auto-capture with accuracy indicator
-- [ ] C-013 · Drag-pin fine adjustment on the osmdroid picker
-- [ ] C-014 · Google embed confirmation view of the pinned point
-- [ ] C-015 · Address title as a required field
-- [ ] C-016 · Address description as a required field
-- [ ] C-017 · Delivery note as a required field
-- [ ] C-018 · Reverse-geocoded label preview (Nominatim with graceful fallback)
-- [ ] C-019 · Save address and enter the store
-- [ ] C-020 · Login, forgot-password email flow and persistent session
+- [x] C-001 · Branded splash with animated logo (core-splashscreen)
+- [x] C-002 · Role auto-router from auth state plus Firestore role document
+- [x] C-003 · Registration: full name field with validation
+- [x] C-004 · Email format validation
+- [x] C-005 · Bangladesh mobile validation `^01[3-9]\d{8}$`
+- [x] C-006 · Password length, confirmation and strength meter
+- [x] C-007 · Inline field errors on every form
+- [x] C-008 · Firebase account creation plus users document in one transaction
+- [x] C-009 · Verify-email banner with resend action
+- [x] C-010 · Location permission rationale sheet
+- [x] C-011 · Runtime permission flow with deny → app settings deep link
+- [x] C-012 · GPS auto-capture with accuracy indicator
+- [x] C-013 · Drag-pin fine adjustment on the osmdroid picker
+- [x] C-014 · Google embed confirmation view of the pinned point
+- [x] C-015 · Address title as a required field
+- [x] C-016 · Address description as a required field
+- [x] C-017 · Delivery note as a required field
+- [x] C-018 · Reverse-geocoded label preview (Nominatim with graceful fallback)
+- [x] C-019 · Save address and enter the store
+- [x] C-020 · Login, forgot-password email flow and persistent session
 - [ ] C-021 · Greeting header with the saved address chip
 - [ ] C-022 · Live store open/closed banner (schedule + manual + auto-offline aware)
 - [ ] C-023 · Today's hours line derived from weekly and special schedules
@@ -102,15 +102,15 @@ Legend: `[x]` shipped and wired · `[ ]` still to ship.
 
 ## V · Vendor portal (110)
 
-- [ ] V-001 · Kitchen login using the account provisioned from repository secrets at bootstrap
-- [ ] V-002 · Stay logged in for a year: persisted session, token refresh, session keeper watchdog and role re-check
-- [ ] V-003 · `vendor=true` custom claim gate on every vendor surface
-- [ ] V-004 · First-login device diagnostics wizard (notifications, battery exemption, autostart hints)
-- [ ] V-005 · FCM token registration with a health chip
-- [ ] V-006 · Heartbeat status proven on the dashboard
-- [ ] V-007 · Credential change through the password reset email flow
+- [x] V-001 · Kitchen login using the account provisioned from repository secrets at bootstrap
+- [x] V-002 · Stay logged in for a year: persisted session, token refresh, session keeper watchdog and role re-check
+- [x] V-003 · `vendor=true` custom claim gate on every vendor surface
+- [x] V-004 · First-login device diagnostics wizard (notifications, battery exemption, autostart hints)
+- [x] V-005 · FCM token registration with a health chip
+- [x] V-006 · Heartbeat status proven on the dashboard
+- [x] V-007 · Credential change through the password reset email flow
 - [ ] V-008 · Wrong-role guard
-- [ ] V-009 · Rationale copy explaining why the kitchen phone needs these permissions
+- [x] V-009 · Rationale copy explaining why the kitchen phone needs these permissions
 - [ ] V-010 · Logout hidden in settings behind a confirmation
 - [ ] V-011 · Today's order count
 - [ ] V-012 · Today's revenue in exact paisa
@@ -125,17 +125,17 @@ Legend: `[x]` shipped and wired · `[ ]` still to ship.
 - [ ] V-021 · Stream of today's status events
 - [ ] V-022 · Pull to refresh over realtime everywhere
 - [ ] V-023 · Realtime new-order stream under one second
-- [ ] V-024 · Full-screen ringing alert with the looping Undal order sound
+- [x] V-024 · Full-screen ringing alert with the looping Undal order sound
 - [ ] V-025 · Order card with items, totals, fee, distance and address title, description, note
 - [ ] V-026 · Customer card with name, profile photo, phone number, Call button and copy-address
 - [ ] V-027 · Google embed map and pin on every order, with an osmdroid toggle
-- [ ] V-028 · Accept with a prep-time picker (10/15/20/25/30/45 minute chips plus custom)
-- [ ] V-029 · Reject with reason templates and a mandatory note that pushes instantly
-- [ ] V-030 · Confirmation sheet before accepting, showing the total
-- [ ] V-031 · "Is the order ready?" alert that sets ready, notifies the customer and stops the sound tick
-- [ ] V-032 · Mark in delivery with a customer push
+- [x] V-028 · Accept with a prep-time picker (10/15/20/25/30/45 minute chips plus custom)
+- [x] V-029 · Reject with reason templates and a mandatory note that pushes instantly
+- [x] V-030 · Confirmation sheet before accepting, showing the total
+- [x] V-031 · "Is the order ready?" alert that sets ready, notifies the customer and stops the sound tick
+- [x] V-032 · Mark in delivery with a customer push
 - [ ] V-033 · Mark delivered with a customer push, celebration and the collected-cash checkbox
-- [ ] V-034 · Sticky countdown notification with a ten-second tick
+- [x] V-034 · Sticky countdown notification with a ten-second tick
 - [ ] V-035 · Overdue escalation with a red banner and an extra push
 - [ ] V-036 · Per-order chat shortcut
 - [ ] V-037 · Unread customer message badge on the order
@@ -188,7 +188,7 @@ Legend: `[x]` shipped and wired · `[ ]` still to ship.
 - [ ] V-084 · Every edit reaching customers live through Firestore snapshots
 - [ ] V-085 · Save guards and confirmation snackbars
 - [ ] V-086 · Sound test and tick-sound test in settings
-- [ ] V-087 · Full device diagnostics screen
+- [x] V-087 · Full device diagnostics screen
 - [ ] V-088 · Timezone hard-locked to Asia/Dhaka in every display
 - [ ] V-089 · Schedule customer-view parity check
 - [ ] V-090 · Special-date conflict warnings
@@ -233,8 +233,8 @@ Legend: `[x]` shipped and wired · `[ ]` still to ship.
 - [ ] P-016 · Download page with QR code and an unknown-sources guide
 - [ ] P-017 · Web page stating honestly which features are app-only
 - [x] P-018 · Order sound asset copied into res/raw by the workflows
-- [ ] P-019 · Boot receiver rescheduling the heartbeat and the notification retry workers
-- [ ] P-020 · WorkManager retry queue for failed notification relays
+- [x] P-019 · Boot receiver rescheduling the heartbeat and the notification retry workers
+- [x] P-020 · WorkManager retry queue for failed notification relays
 - [x] P-021 · Firestore offline persistence tuned to a 100 MB local cache
 - [x] P-022 · Realtime Database keepSynced for chat and live order flags
 - [ ] P-023 · Crashlytics wired and monitored for a crash-free rate
