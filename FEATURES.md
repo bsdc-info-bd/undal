@@ -11,7 +11,7 @@ backend** — never when it is merely planned or sketched.
 | Platform · web · deep links · CI | P-001 … P-045 | 45 |
 | **Total** | | **235** |
 
-**Progress: 19 / 235 implemented.**
+**Progress: 25 / 235 implemented (11 %)** — verified by `grep -c '^- \[x\]' FEATURES.md`.
 
 Legend: `[x]` shipped and wired · `[ ]` still to ship.
 
