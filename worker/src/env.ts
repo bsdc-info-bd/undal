@@ -20,6 +20,12 @@ export interface Env {
   APP_PACKAGE_NAME: string;
   GITHUB_REPO_SLUG: string;
   PROMO_TOPIC: string;
+  /**
+   * Firebase Web API key: the public identifier used for anonymous sign-in on
+   * the web store. It is not a secret (it ships inside every Firebase app), but
+   * it is kept in the deploy workflow's secrets so no key ever lands in a file.
+   */
+  FIREBASE_WEB_API_KEY: string;
 }
 
 /** Google service-account document shape (only the fields we rely on). */

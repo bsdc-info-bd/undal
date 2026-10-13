@@ -1,9 +1,7 @@
 /**
- * Public web store front (Response 1 scope).
+ * The kitchen's own page: who they are, when they open, what delivery costs.
  *
- * This page is the honest web face of the kitchen: live open/closed state from
- * config/store, today's hours, delivery economics and the install path. The full
- * ordering PWA is layered on top of it in Response 5.
+ * Served at `/about` now that the root of the site is the storefront itself.
  */
 import type { Env } from "../env";
 import { fsGet } from "../firestore";
@@ -25,7 +23,7 @@ function slotLine(config: StoreConfig, weekday: string): string {
   return slots.map((slot) => `${escapeHtml(slot.open)} – ${escapeHtml(slot.close)}`).join(" · ");
 }
 
-export async function handleLanding(env: Env, request: Request): Promise<Response> {
+export async function handleAboutPage(env: Env, request: Request): Promise<Response> {
   const config = (await fsGet(env, "config/store").catch(() => null)) as StoreConfig | null;
   const clock = dhakaClock();
   const status = storeStatus(config);
@@ -59,10 +57,13 @@ export async function handleLanding(env: Env, request: Request): Promise<Respons
 </section>
 
 <section class="card">
-  <h2>Order from the Undal app</h2>
-  <p class="muted">Live order tracking, in-order chat with the kitchen and the Undal order sound are app-only. Cash is paid to the rider on delivery.</p>
-  <a class="button" href="/download">Download the Undal app</a>
-  <a class="button secondary" href="/app">Already installed? Open Undal</a>
+  <h2>Three ways to order</h2>
+  <p class="muted">The menu, the prices and the cash-on-delivery rule are identical everywhere.</p>
+  <a class="button" href="/store">Order from this browser</a>
+  <a class="button secondary" href="/download">Install the Android app</a>
+  <p class="smallprint">The app adds push notifications on every status change, the prep countdown, in-order chat with
+  the kitchen and reorders — all of which the browser cannot do. Everything else, including the delivery fee and the
+  order total, is the same.</p>
 </section>
 
 <section class="card">

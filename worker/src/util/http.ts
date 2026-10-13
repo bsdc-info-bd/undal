@@ -42,8 +42,9 @@ export function securityHeaders(extra: Record<string, string> = {}): Record<stri
       "default-src 'self'; img-src 'self' data: https://res.cloudinary.com https://tile.openstreetmap.org; " +
       "style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; connect-src 'self' " +
       "https://firestore.googleapis.com https://identitytoolkit.googleapis.com " +
-      "https://securetoken.googleapis.com wss://*.firebaseio.com https://*.firebaseio.com; " +
-      "frame-ancestors 'self'; base-uri 'none'; form-action 'self'",
+      "https://securetoken.googleapis.com https://nominatim.openstreetmap.org " +
+      "wss://*.firebaseio.com https://*.firebaseio.com; " +
+      "frame-ancestors 'self'; base-uri 'none'; form-action 'self'", 
     ...extra,
   };
 }

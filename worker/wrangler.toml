@@ -18,6 +18,11 @@ workers_dev = true
 [vars]
 # Non-secret, owner-facing configuration.
 CLOUDINARY_CLOUD_NAME = "REPLACE_CLOUDINARY_CLOUD_NAME"
+# Firebase Web API key (Project settings -> General -> Web API Key). It is a
+# public client key used for anonymous web sign-in on /checkout; leaving the
+# GitHub secret blank keeps the storefront readable and turns ordering on the
+# web into "install the app" — never a broken button.
+FIREBASE_WEB_API_KEY = "REPLACE_FIREBASE_WEB_API_KEY"
 APP_PACKAGE_NAME = "com.undal.syl.app"
 GITHUB_REPO_SLUG = "REPLACE_GITHUB_REPO_SLUG"
 PROMO_TOPIC = "promos_all"

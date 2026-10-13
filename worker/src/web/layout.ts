@@ -11,6 +11,8 @@ export interface PageOptions {
   ogImage?: string;
   ogUrl?: string;
   cacheSeconds?: number;
+  /** Extra navigational markup under the header (store pages). */
+  nav?: string;
 }
 
 const STYLE = `
@@ -35,7 +37,49 @@ a.button{display:block;text-align:center;background:var(--brand);color:#fff;text
 a.button.secondary{background:#fff;color:var(--brand);border:1.5px solid var(--brand)}
 img.hero{width:100%;border-radius:12px;display:block;margin-bottom:12px}
 .muted{color:var(--muted);font-size:.85rem}
+nav.store{background:#fff;border-bottom:1px solid var(--line);position:sticky;top:0;z-index:5}
+nav.store .inner{max-width:680px;margin:0 auto;display:flex;gap:14px;padding:10px 18px;font-size:.85rem;overflow-x:auto}
+nav.store a{color:var(--ink);text-decoration:none;font-weight:600;white-space:nowrap}
+nav.store a.active{color:var(--brand)}
+nav.store a.cart{margin-left:auto;background:var(--brand);color:#fff;padding:5px 12px;border-radius:999px}
 footer{max-width:680px;margin:0 auto;padding:6px 18px 34px;color:var(--muted);font-size:.78rem}
+.grid{display:grid;gap:12px;grid-template-columns:repeat(auto-fill,minmax(210px,1fr))}
+.item{display:flex;flex-direction:column;background:#fff;border:1px solid var(--line);border-radius:14px;overflow:hidden;text-decoration:none;color:inherit}
+.item img{width:100%;aspect-ratio:4/3;object-fit:cover;background:#f2f4f0}
+.item .body{padding:10px 12px;display:flex;flex-direction:column;gap:4px;flex:1}
+.item h3{margin:0;font-size:.95rem}
+.item p{margin:0;font-size:.8rem;color:var(--muted)}
+.price{font-weight:700;font-size:.95rem}
+.was{color:var(--muted);text-decoration:line-through;font-size:.8rem;font-weight:500;margin-left:6px}
+.tag{display:inline-block;font-size:.68rem;font-weight:700;padding:2px 7px;border-radius:999px;background:#e4f3e7;color:#0b5a2b}
+.tag.off{background:#fdecec;color:#b3261e}
+.tag.warn{background:#fff4dc;color:#9a6700}
+.chips{display:flex;gap:8px;overflow-x:auto;padding:2px 0 10px}
+.chips a{padding:6px 12px;border-radius:999px;border:1px solid var(--line);background:#fff;text-decoration:none;color:var(--ink);font-size:.82rem;white-space:nowrap}
+.chips a.active{background:var(--brand);border-color:var(--brand);color:#fff}
+.search{display:flex;gap:8px;margin:0 0 12px}
+.search input{flex:1;padding:12px;border-radius:12px;border:1px solid var(--line);font-size:1rem;background:#fff;color:var(--ink)}
+input,textarea,select{width:100%;padding:12px;border-radius:12px;border:1px solid var(--line);font-size:1rem;background:#fff;color:var(--ink);font-family:inherit}
+label{display:block;font-size:.82rem;font-weight:600;margin:10px 0 4px}
+.row{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid var(--line)}
+.row:last-child{border-bottom:none}
+.total{font-size:1.15rem;font-weight:700}
+.steps{list-style:none;padding:0;margin:0}
+.steps li{display:flex;gap:10px;align-items:flex-start;padding:6px 0;font-size:.9rem}
+.steps .dot{width:12px;height:12px;border-radius:50%;border:2px solid var(--line);margin-top:4px;flex:none}
+.steps li.done .dot{background:var(--brand);border-color:var(--brand)}
+.steps li.now{font-weight:700}
+.steps li.now .dot{border-color:var(--accent);background:var(--accent)}
+.qty{display:inline-flex;align-items:center;gap:8px}
+.qty button{width:34px;height:34px;border-radius:10px;border:1px solid var(--line);background:#fff;font-size:1.1rem;font-weight:700;color:var(--ink)}
+.notice{background:#fff4dc;border:1px solid #f0d9a8;color:#5c3d00;padding:12px;border-radius:12px;font-size:.88rem;margin:0 0 12px}
+.notice.error{background:#fdecec;border-color:#f3c6c2;color:#8c1d18}
+.notice.ok{background:#e7f5ec;border-color:#bfe4cb;color:#0a3d20}
+.qr{background:#fff;padding:12px;border:1px solid var(--line);border-radius:14px;display:inline-block}
+.qr svg{display:block;width:220px;height:220px}
+.smallprint{font-size:.78rem;color:var(--muted)}
+@keyframes undalPulse{0%,100%{opacity:1}50%{opacity:.45}}
+.pulse{animation:undalPulse 1.4s ease-in-out infinite}
 `;
 
 const MARK_PATHS = `<path fill="#FFFDF7" d="M24,54 L84,54 C84,76 71,88 54,88 C37,88 24,76 24,54 Z"/>
@@ -78,11 +122,15 @@ ${MARK}
 <p>Home-cooked food · Sylhet · cash on delivery</p>
 </div>
 </header>
+${options.nav ?? ""}
 <main>
 ${options.body}
 </main>
 <footer>
-Undal HomeKitchen · Zindabazar, Sylhet · Delivery inside our radius only · Cash on delivery
+Undal HomeKitchen · Sylhet · Delivery inside our radius only · <strong>Cash on delivery only</strong> —
+no card, no wallet, no online payment anywhere in this app.<br>
+Ordering from a phone browser works; live status pushes, in-order chat with the kitchen and the
+Undal order sound are app-only. <a href="/download">Install the app</a> · <a href="/app">Open Undal</a>
 </footer>
 </body>
 </html>`;

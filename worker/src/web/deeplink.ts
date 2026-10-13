@@ -60,14 +60,18 @@ export function handleOrderOpenPage(env: Env, request: Request, orderId: string)
   const body = `
 <section class="card">
   <h2>Your Undal order</h2>
-  <p class="muted">Order details are private to you and the kitchen, so they live inside the app only.</p>
-  ${openButton(intent, "Open this order in the app")}
+  <p class="muted">The link you followed is the key to this one order. The tracking page shows its status, the cash
+  amount and the kitchen's note — never your phone number or your address.</p>
+  <a class="button" href="/order/${escapeHtml(cleanId)}">Watch this order's status</a>
+  ${openButton(intent, "Open the full order in the app")}
   <a class="button secondary" href="/download">Install Undal</a>
+  <p class="smallprint">The app adds the prep countdown, the in-order chat with the kitchen and a push on every
+  status change. The web page stays honest about what it does not have.</p>
 </section>`;
 
   return renderPage({
-    title: "Undal order",
-    description: "Open this Undal order in the app to follow it live.",
+    title: `Undal order ${escapeHtml(cleanId.slice(-6))} — status`,
+    description: "Follow this Undal order's status on the web, or open it in the app for live tracking.",
     body,
     cacheSeconds: 0,
   });
@@ -126,9 +130,10 @@ export async function handleItemSharePage(
   <p style="font-size:1.35rem;font-weight:750;margin:6px 0 0">${escapeHtml(formatPaisa(amountPaisa))}</p>
   ${savings}
   ${available ? "" : `<p class="muted">Sold out right now — back soon.</p>`}
+  ${available ? `<a class="button" href="/item/${escapeHtml(id)}">Add it to a basket on the web</a>` : ""}
   ${openButton(intent, available ? "Order in the Undal app" : "Get the Undal app")}
   <a class="button secondary" href="/download">Install Undal (Android)</a>
-  <p class="muted">Cash on delivery · delivery fee is per km from the kitchen</p>
+  <p class="muted">Cash on delivery · delivery fee is per km from the kitchen · the same price in the app and on the web</p>
 </section>`;
 
   return renderPage({

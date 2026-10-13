@@ -80,13 +80,21 @@ jobs:
       - name: Render wrangler.toml for this account
         env:
           CLOUDINARY_CLOUD_NAME: ${{ secrets.CLOUDINARY_CLOUD_NAME }}
+          FIREBASE_WEB_API_KEY: ${{ secrets.FIREBASE_WEB_API_KEY }}
           GITHUB_REPO_SLUG: ${{ github.repository }}
           KV_ID: ${{ steps.kv.outputs.id }}
         run: |
+          set -euo pipefail
           sed -i "s|REPLACE_KV_NAMESPACE_ID|${KV_ID}|g" worker/wrangler.toml
           sed -i "s|REPLACE_CLOUDINARY_CLOUD_NAME|${CLOUDINARY_CLOUD_NAME}|g" worker/wrangler.toml
           sed -i "s|REPLACE_GITHUB_REPO_SLUG|${GITHUB_REPO_SLUG}|g" worker/wrangler.toml
+          sed -i "s|REPLACE_FIREBASE_WEB_API_KEY|${FIREBASE_WEB_API_KEY:-}|g" worker/wrangler.toml
           grep -n "KV_NAMESPACE_ID\|CLOUDINARY_CLOUD_NAME\|GITHUB_REPO_SLUG" worker/wrangler.toml
+          if [ -n "${FIREBASE_WEB_API_KEY:-}" ]; then
+            echo "Web checkout: enabled (FIREBASE_WEB_API_KEY set)."
+          else
+            echo "Web checkout: parked — FIREBASE_WEB_API_KEY is blank, so /checkout tells visitors to install the app."
+          fi
 
       - name: Push worker secrets
         working-directory: worker
