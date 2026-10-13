@@ -3,13 +3,16 @@ package com.undal.syl.app.features.root
 /**
  * Every route in one place.
  *
- * Two families live here:
- *   · the auth and onboarding route, which Response 2 completes, and
- *   · the portal routes, declared now so push notifications and shared links
- *     have a real destination from the first build instead of a dead tap.
+ * Three families live here:
+ *   · the auth and onboarding routes,
+ *   · the customer portal — store, dish, cart, orders, order tracking, inbox and
+ *     profile — which Response 3 fills in, and
+ *   · the vendor console routes, declared so pushes and shared links always have
+ *     a real destination instead of a dead tap.
  *
- * Route strings double as deep-link targets: `undal://customer/home` and
- * `https://<worker>/app` both resolve through [routeForDeepLink].
+ * Route strings double as deep-link targets: `undal://customer/home`, a shared
+ * `https://<worker>/dish/<id>` App Link and a push `clickAction` of
+ * `customer/order/<id>` all resolve through [routeForDeepLink].
  */
 object UndalRoutes {
 
@@ -20,6 +23,8 @@ object UndalRoutes {
     const val SUPPORT = "support"
 
     const val CUSTOMER_HOME = "customer/home"
+    const val CUSTOMER_ITEM = "customer/item/{itemId}"
+    const val CUSTOMER_CART = "customer/cart"
     const val CUSTOMER_ORDERS = "customer/orders"
     const val CUSTOMER_INBOX = "customer/inbox"
     const val CUSTOMER_PROFILE = "customer/profile"
@@ -37,10 +42,16 @@ object UndalRoutes {
     const val CUSTOMER_ORDER_DETAIL = "customer/order/{orderId}"
     const val CUSTOMER_CHAT = "customer/chat/{orderId}"
 
+    const val ARG_ITEM_ID = "itemId"
+    const val ARG_ORDER_ID = "orderId"
+
     fun vendorOrderDetail(orderId: String) = "vendor/order/$orderId"
     fun vendorChat(orderId: String) = "vendor/chat/$orderId"
     fun customerOrderDetail(orderId: String) = "customer/order/$orderId"
     fun customerChat(orderId: String) = "customer/chat/$orderId"
+
+    /** A dish or a combo is the same screen — the id decides which. */
+    fun customerItem(itemId: String) = "customer/item/$itemId"
 
     /**
      * Translates a push deep link or a shared link into a route the graph knows.
@@ -49,19 +60,30 @@ object UndalRoutes {
     fun routeForDeepLink(deepLink: String?): String? {
         val cleaned = deepLink?.removePrefix("undal://")?.removePrefix("/")?.trim().orEmpty()
         if (cleaned.isEmpty()) return null
+        val path = cleaned.substringBefore('?')
+        val id = path.substringAfterLast('/')
         return when {
-            cleaned.startsWith("vendor/order/") -> cleaned.substringBefore('?')
-            cleaned.startsWith("customer/order/") -> cleaned.substringBefore('?')
-            cleaned.startsWith("vendor/chat/") -> cleaned.substringBefore('?')
-            cleaned.startsWith("customer/chat/") -> cleaned.substringBefore('?')
-            cleaned.startsWith("vendor/store") -> VENDOR_STORE
-            cleaned.startsWith("vendor/orders") -> VENDOR_ORDERS
-            cleaned.startsWith("vendor/menu") -> VENDOR_MENU
-            cleaned.startsWith("vendor/diagnostics") -> VENDOR_DIAGNOSTICS
-            cleaned.startsWith("customer/home") -> CUSTOMER_HOME
-            cleaned.startsWith("customer/orders") -> CUSTOMER_ORDERS
-            cleaned.startsWith("customer/inbox") -> CUSTOMER_INBOX
-            cleaned.startsWith("customer/profile") -> CUSTOMER_PROFILE
+            path.startsWith("vendor/order/") -> path
+            path.startsWith("vendor/chat/") -> path
+            path.startsWith("customer/order/") -> path
+            path.startsWith("customer/chat/") -> path
+            path.startsWith("dish/") && id.isNotBlank() -> customerItem(id)
+            path.startsWith("combo/") && id.isNotBlank() -> customerItem(id)
+            path.startsWith("order/") && id.isNotBlank() -> customerOrderDetail(id)
+            path.startsWith("customer/item/") && id.isNotBlank() -> customerItem(id)
+            path.startsWith("vendor/store") -> VENDOR_STORE
+            path.startsWith("vendor/orders") -> VENDOR_ORDERS
+            path.startsWith("vendor/menu") -> VENDOR_MENU
+            path.startsWith("vendor/diagnostics") -> VENDOR_DIAGNOSTICS
+            path.startsWith("store") -> CUSTOMER_HOME
+            path.startsWith("app") -> CUSTOMER_HOME
+            path.startsWith("open") -> CUSTOMER_HOME
+            path.startsWith("download") -> CUSTOMER_HOME
+            path.startsWith("customer/home") -> CUSTOMER_HOME
+            path.startsWith("customer/cart") -> CUSTOMER_CART
+            path.startsWith("customer/orders") -> CUSTOMER_ORDERS
+            path.startsWith("customer/inbox") -> CUSTOMER_INBOX
+            path.startsWith("customer/profile") -> CUSTOMER_PROFILE
             else -> null
         }
     }

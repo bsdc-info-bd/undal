@@ -58,7 +58,8 @@ fun UndalMenuCard(
     onAdd: () -> Unit,
     onRemove: () -> Unit,
     onOpen: () -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    imageModifier: Modifier = Modifier
 ) {
     val available = card.available
     Card(
@@ -82,7 +83,10 @@ fun UndalMenuCard(
                         model = card.imageUrl,
                         contentDescription = card.name,
                         contentScale = ContentScale.Crop,
-                        modifier = Modifier.fillMaxWidth().aspectRatio(1.25f)
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .aspectRatio(1.25f)
+                            .then(imageModifier)
                     )
                 } else {
                     Icon(

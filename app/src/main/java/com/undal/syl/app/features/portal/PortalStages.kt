@@ -1,6 +1,5 @@
 package com.undal.syl.app.features.portal
 
-import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -13,10 +12,8 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Build
-import androidx.compose.material.icons.filled.Email
 import androidx.compose.material.icons.filled.ExitToApp
 import androidx.compose.material.icons.filled.Notifications
-import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.ShoppingCart
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -28,7 +25,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.undal.syl.app.core.config.UndalBuildInfo
-import com.undal.syl.app.core.design.UndalAlertBanner
 import com.undal.syl.app.core.design.UndalCard
 import com.undal.syl.app.core.design.UndalKeyValueRow
 import com.undal.syl.app.core.design.UndalPrimaryButton
@@ -37,116 +33,6 @@ import com.undal.syl.app.core.design.UndalSecondaryButton
 import com.undal.syl.app.core.design.UndalStatusPill
 import com.undal.syl.app.core.design.UndalTextButton
 import com.undal.syl.app.core.theme.UndalDimens
-
-/**
- * Honest, working shells for the two portals.
- *
- * Response 2 ships the account, the address, the push pipeline and the alert
- * loop; the ordering screens and the kitchen console arrive in Responses 3 and 4.
- * Until then these stages do real work — they verify the session, register the
- * device, watch the heartbeat, resend the verification email and let both roles
- * reach the diagnostics, the policy pages and sign-out — instead of showing an
- * empty page.
- */
-@Composable
-fun CustomerHomeStage(
-    onOpenSupport: () -> Unit
-) {
-    val vm: PortalViewModel = hiltViewModel()
-    val state by vm.state.collectAsState()
-    val context = LocalContext.current
-
-    LaunchedEffect(Unit) { vm.refresh(context) }
-
-    UndalScaffold(
-        title = state.greeting,
-        subtitle = state.email.ifBlank { "Signed in" },
-        actions = {
-            UndalTextButton(text = "Sign out", onClick = { vm.signOut(context) }, icon = Icons.Filled.ExitToApp)
-        }
-    ) { _ ->
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .verticalScroll(rememberScrollState())
-                .padding(UndalDimens.screenPadding)
-        ) {
-            if (state.loading) {
-                UndalCard { Text("Checking your account…", style = MaterialTheme.typography.bodyLarge) }
-                return@Column
-            }
-
-            if (!state.emailVerified) {
-                UndalCard {
-                    Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
-                        UndalStatusPill(
-                            text = "Verify email",
-                            containerColour = MaterialTheme.colorScheme.secondaryContainer,
-                            contentColour = MaterialTheme.colorScheme.onSecondaryContainer,
-                            icon = Icons.Filled.Email
-                        )
-                    }
-                    Spacer(Modifier.height(UndalDimens.sm))
-                    Text(
-                        text = "We sent a verification link to ${state.email}. Confirming it keeps password " +
-                            "recovery reliable — ordering works either way.",
-                        style = MaterialTheme.typography.bodyMedium
-                    )
-                    Spacer(Modifier.height(UndalDimens.sm))
-                    UndalSecondaryButton(text = "Resend the link", onClick = vm::resendVerification)
-                    if (state.infoMessage != null) {
-                        Spacer(Modifier.height(UndalDimens.xs))
-                        Text(state.infoMessage.orEmpty(), style = MaterialTheme.typography.bodySmall)
-                    }
-                }
-                Spacer(Modifier.height(UndalDimens.sm))
-            }
-
-            UndalCard {
-                Text("Your account is ready", style = MaterialTheme.typography.titleMedium)
-                Spacer(Modifier.height(UndalDimens.xs))
-                Text(
-                    text = "The address you pinned is what the kitchen uses to check the delivery radius and " +
-                        "to calculate the per-kilometre fee.",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-                Spacer(Modifier.height(UndalDimens.sm))
-                UndalKeyValueRow("Saved address", state.addressSummary.ifBlank { "Not set yet" })
-                UndalKeyValueRow("Notifications", if (state.notificationsEnabled) "Allowed" else "Blocked")
-            }
-
-            Spacer(Modifier.height(UndalDimens.sm))
-
-            UndalAlertBanner(
-                text = "The store, cart and live order tracking are the next build step. Everything you have " +
-                    "set up now — account, address, notifications — is already live and will be used " +
-                    "unchanged when ordering opens.",
-                icon = Icons.Filled.Build
-            )
-
-            Spacer(Modifier.height(UndalDimens.sm))
-
-            UndalCard {
-                Text("Open the kitchen on the web", style = MaterialTheme.typography.titleMedium)
-                Spacer(Modifier.height(UndalDimens.xs))
-                Text(
-                    text = UndalBuildInfo.workerBaseUrl,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-                Spacer(Modifier.height(UndalDimens.sm))
-                UndalSecondaryButton(
-                    text = "Delivery, payment and privacy",
-                    onClick = onOpenSupport,
-                    icon = Icons.Filled.Info
-                )
-            }
-
-            Spacer(Modifier.height(UndalDimens.lg))
-        }
-    }
-}
 
 @Composable
 fun VendorConsoleStage(

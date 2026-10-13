@@ -82,6 +82,7 @@ fun StoreScreen(
     onOpenInbox: () -> Unit,
     onOpenProfile: () -> Unit,
     onEditAddress: () -> Unit,
+    sharedImageModifier: @Composable (String) -> Modifier = { Modifier },
     viewModel: StoreViewModel = hiltViewModel()
 ) {
     val state by viewModel.state.collectAsState()
@@ -169,6 +170,14 @@ fun StoreScreen(
                 }
 
                 item(span = { GridItemSpan(maxLineSpan) }) {
+                    GreetingHeader(
+                        greeting = state.greeting,
+                        addressLabel = state.addressLabel,
+                        onEditAddress = onEditAddress
+                    )
+                }
+
+                item(span = { GridItemSpan(maxLineSpan) }) {
                     UndalTextField(
                         value = state.query,
                         onValueChange = viewModel::onQueryChange,
@@ -240,7 +249,8 @@ fun StoreScreen(
                             quantity = state.quantities[card.id] ?: 0,
                             onAdd = { viewModel.quickAdd(card.id) },
                             onRemove = { viewModel.quickRemove(card.id) },
-                            onOpen = { onOpenItem(card.id) }
+                            onOpen = { onOpenItem(card.id) },
+                            imageModifier = sharedImageModifier(card.id)
                         )
                     }
                 }
@@ -352,6 +362,46 @@ private fun StoreHeader(
                     } else {
                         MaterialTheme.colorScheme.onErrorContainer
                     }
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun GreetingHeader(
+    greeting: String,
+    addressLabel: String,
+    onEditAddress: () -> Unit
+) {
+    Column {
+        Text(
+            text = greeting.ifBlank { "Welcome back" },
+            style = MaterialTheme.typography.titleMedium
+        )
+        Spacer(Modifier.height(UndalDimens.xs))
+        Surface(
+            shape = RoundedCornerShape(UndalDimens.radiusPill),
+            color = MaterialTheme.colorScheme.secondaryContainer,
+            modifier = Modifier.clickable(onClick = onEditAddress)
+        ) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.padding(horizontal = UndalDimens.sm, vertical = UndalDimens.xs)
+            ) {
+                Icon(
+                    Icons.Filled.LocationOn,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.onSecondaryContainer,
+                    modifier = Modifier.size(UndalDimens.iconSm)
+                )
+                Spacer(Modifier.width(UndalDimens.xs))
+                Text(
+                    text = addressLabel.ifBlank { "Set your delivery address" },
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSecondaryContainer,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
                 )
             }
         }

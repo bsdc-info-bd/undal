@@ -71,6 +71,7 @@ fun ItemDetailScreen(
     onBack: () -> Unit,
     onOpenItem: (String) -> Unit,
     onOpenCart: () -> Unit,
+    headerImageModifier: Modifier = Modifier,
     viewModel: ItemDetailViewModel = hiltViewModel()
 ) {
     val state by viewModel.state.collectAsState()
@@ -133,7 +134,7 @@ fun ItemDetailScreen(
                         model = card.imageUrl,
                         contentDescription = card.name,
                         contentScale = ContentScale.Crop,
-                        modifier = Modifier.fillMaxSize()
+                        modifier = Modifier.fillMaxSize().then(headerImageModifier)
                     )
                 } else {
                     Icon(

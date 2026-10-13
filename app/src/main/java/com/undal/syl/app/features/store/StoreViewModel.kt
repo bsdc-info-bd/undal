@@ -12,6 +12,7 @@ import com.undal.syl.app.core.model.StoreConfig
 import com.undal.syl.app.core.model.StoreOpenState
 import com.undal.syl.app.core.util.Distance
 import com.undal.syl.app.core.util.Money
+import com.undal.syl.app.core.util.TimeDhaka
 import com.undal.syl.app.data.repo.AuthRepo
 import com.undal.syl.app.data.repo.CartRepo
 import com.undal.syl.app.data.repo.MenuRepo
@@ -69,7 +70,9 @@ class StoreViewModel @Inject constructor(
         val cartCount: Int = 0,
         val cartSubtotalLabel: String = "",
         val quantities: Map<String, Int> = emptyMap(),
-        val errorMessage: String? = null
+        val errorMessage: String? = null,
+        val greeting: String = "",
+        val addressLabel: String = ""
     )
 
     private val _state = MutableStateFlow(State())
@@ -138,10 +141,26 @@ class StoreViewModel @Inject constructor(
                     cartCount = cart.itemCount,
                     cartSubtotalLabel = Money.format(cart.subtotalPaisa),
                     quantities = quantities,
-                    errorMessage = null
+                    errorMessage = null,
+                    greeting = greetingForHour(TimeDhaka.now().hour),
+                    addressLabel = addressLabelOf(address)
                 )
             }.collect { next -> _state.value = next }
         }
+    }
+
+    /** The header greeting, told by the Dhaka clock (C-021). */
+    private fun greetingForHour(hour: Int): String = when (hour) {
+        in 5..11 -> "Good morning"
+        in 12..16 -> "Good afternoon"
+        in 17..21 -> "Good evening"
+        else -> "Late-night craving?"
+    }
+
+    /** The chip under the greeting: the address title, its description as fallback. */
+    private fun addressLabelOf(address: UndalLocation?): String {
+        if (address == null || !address.isValid) return ""
+        return address.title.trim().ifBlank { address.desc.trim() }
     }
 
     /** Re-reads the pinned address; call this whenever the customer returns. */

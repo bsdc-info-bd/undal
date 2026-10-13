@@ -41,6 +41,15 @@ object UndalBuildInfo {
     val isWorkerConfigured: Boolean
         get() = workerBaseUrl.startsWith("https://") && !workerBaseUrl.contains(NOT_CONFIGURED_MARKER)
 
+    /**
+     * True when the profile-photo pipeline can work: both the cloud name and the
+     * unsigned preset must be present. Neither is a secret, so both live in the
+     * build config — and a blank one produces a clear sentence on screen instead
+     * of a network error nobody can act on.
+     */
+    val isCloudinaryConfigured: Boolean
+        get() = cloudinaryCloudName.isNotBlank() && cloudinaryUploadPreset.isNotBlank()
+
     /** Deep link for a dish / combo / order, used by the share sheet and the QR code. */
     fun shareUrl(path: String): String = workerBaseUrl.trimEnd('/') + "/" + path.trimStart('/')
 

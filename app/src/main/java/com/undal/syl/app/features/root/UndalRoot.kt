@@ -1,5 +1,7 @@
 package com.undal.syl.app.features.root
 
+import androidx.compose.animation.ExperimentalSharedTransitionApi
+import androidx.compose.animation.SharedTransitionLayout
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
@@ -24,8 +26,14 @@ import com.undal.syl.app.features.auth.LoginScreen
 import com.undal.syl.app.features.auth.RegisterScreen
 import com.undal.syl.app.features.onboarding.LocationSetupScreen
 import com.undal.syl.app.features.onboarding.UndalSplash
-import com.undal.syl.app.features.portal.CustomerHomeStage
+import com.undal.syl.app.features.cart.CartScreen
+import com.undal.syl.app.features.inbox.InboxScreen
+import com.undal.syl.app.features.item.ItemDetailScreen
+import com.undal.syl.app.features.order.OrderHistoryScreen
+import com.undal.syl.app.features.order.OrderTrackingScreen
 import com.undal.syl.app.features.portal.SupportScreen
+import com.undal.syl.app.features.profile.ProfileScreen
+import com.undal.syl.app.features.store.StoreScreen
 import com.undal.syl.app.features.portal.VendorConsoleStage
 import com.undal.syl.app.features.portal.VendorOrderStage
 import com.undal.syl.app.features.vendor.DiagnosticsScreen
@@ -38,6 +46,7 @@ import com.undal.syl.app.features.vendor.DiagnosticsScreen
  * the router has decided the portal, so a kitchen alert opens the order it is
  * about and a customer status push opens the right order — never a blank screen.
  */
+@OptIn(ExperimentalSharedTransitionApi::class)
 @Composable
 fun UndalRoot(
     initialDeepLink: String?,
@@ -87,6 +96,10 @@ fun UndalRoot(
     }
 
     Box(modifier = Modifier.fillMaxSize()) {
+      // The shared-element scope for the whole app: a dish photo travels from
+      // the menu card to the dish page with one identity, which is what makes
+      // the second screen feel like the first one opening (C-039).
+      SharedTransitionLayout {
       NavHost(
         navController = navController,
         startDestination = UndalRoutes.SPLASH
@@ -126,9 +139,105 @@ fun UndalRoot(
             SupportScreen(onBack = { navController.popBackStack() })
         }
 
-        composable(UndalRoutes.CUSTOMER_HOME) {
-            CustomerHomeStage(
-                onOpenSupport = { navController.navigate(UndalRoutes.SUPPORT) }
+        // `enterTransition = null` keeps the graph's default motion and picks the
+        // destination scope that carries the animated-visibility needed by the
+        // shared dish photo.
+        composable(
+            route = UndalRoutes.CUSTOMER_HOME,
+            enterTransition = null,
+            exitTransition = null
+        ) {
+            StoreScreen(
+                onOpenItem = { itemId ->
+                    navController.navigate(UndalRoutes.customerItem(itemId)) { launchSingleTop = true }
+                },
+                onOpenCart = { navController.navigate(UndalRoutes.CUSTOMER_CART) { launchSingleTop = true } },
+                onOpenOrders = { navController.navigate(UndalRoutes.CUSTOMER_ORDERS) { launchSingleTop = true } },
+                onOpenInbox = { navController.navigate(UndalRoutes.CUSTOMER_INBOX) { launchSingleTop = true } },
+                onOpenProfile = { navController.navigate(UndalRoutes.CUSTOMER_PROFILE) { launchSingleTop = true } },
+                onEditAddress = { navController.navigate(UndalRoutes.LOCATION_SETUP) { launchSingleTop = true } },
+                sharedImageModifier = { itemId ->
+                    Modifier.sharedElement(rememberSharedContentState("dish-photo-$itemId"), this)
+                }
+            )
+        }
+
+        composable(
+            route = UndalRoutes.CUSTOMER_ITEM,
+            enterTransition = null,
+            exitTransition = null
+        ) { backStackEntry ->
+            val itemId = backStackEntry.arguments?.getString(UndalRoutes.ARG_ITEM_ID).orEmpty()
+            ItemDetailScreen(
+                itemId = itemId,
+                onBack = { navController.popBackStack() },
+                onOpenItem = { nextId ->
+                    navController.navigate(UndalRoutes.customerItem(nextId)) { launchSingleTop = true }
+                },
+                onOpenCart = { navController.navigate(UndalRoutes.CUSTOMER_CART) { launchSingleTop = true } },
+                headerImageModifier = Modifier.sharedElement(
+                    rememberSharedContentState("dish-photo-$itemId"),
+                    this
+                )
+            )
+        }
+
+        composable(UndalRoutes.CUSTOMER_CART) {
+            CartScreen(
+                onBack = { navController.popBackStack() },
+                onBrowseMenu = { navController.navigate(UndalRoutes.CUSTOMER_HOME) { launchSingleTop = true } },
+                onEditAddress = { navController.navigate(UndalRoutes.LOCATION_SETUP) { launchSingleTop = true } },
+                onOpenOrder = { orderId ->
+                    navController.navigate(UndalRoutes.customerOrderDetail(orderId)) { launchSingleTop = true }
+                }
+            )
+        }
+
+        composable(UndalRoutes.CUSTOMER_ORDERS) {
+            OrderHistoryScreen(
+                onBack = { navController.popBackStack() },
+                onOpenOrder = { orderId ->
+                    navController.navigate(UndalRoutes.customerOrderDetail(orderId)) { launchSingleTop = true }
+                },
+                onOpenCart = { navController.navigate(UndalRoutes.CUSTOMER_CART) { launchSingleTop = true } },
+                onBrowseMenu = { navController.navigate(UndalRoutes.CUSTOMER_HOME) { launchSingleTop = true } }
+            )
+        }
+
+        composable(UndalRoutes.CUSTOMER_ORDER_DETAIL) { backStackEntry ->
+            val orderId = backStackEntry.arguments?.getString(UndalRoutes.ARG_ORDER_ID).orEmpty()
+            OrderTrackingScreen(
+                orderId = orderId,
+                onBack = { navController.popBackStack() },
+                onOpenCart = { navController.navigate(UndalRoutes.CUSTOMER_CART) { launchSingleTop = true } }
+            )
+        }
+
+        composable(UndalRoutes.CUSTOMER_CHAT) { backStackEntry ->
+            val orderId = backStackEntry.arguments?.getString(UndalRoutes.ARG_ORDER_ID).orEmpty()
+            OrderTrackingScreen(
+                orderId = orderId,
+                onBack = { navController.popBackStack() },
+                onOpenCart = { navController.navigate(UndalRoutes.CUSTOMER_CART) { launchSingleTop = true } },
+                openChatInitially = true
+            )
+        }
+
+        composable(UndalRoutes.CUSTOMER_INBOX) {
+            InboxScreen(
+                onBack = { navController.popBackStack() },
+                onOpenOrder = { orderId ->
+                    navController.navigate(UndalRoutes.customerOrderDetail(orderId)) { launchSingleTop = true }
+                }
+            )
+        }
+
+        composable(UndalRoutes.CUSTOMER_PROFILE) {
+            ProfileScreen(
+                onBack = { navController.popBackStack() },
+                onEditAddress = { navController.navigate(UndalRoutes.LOCATION_SETUP) { launchSingleTop = true } },
+                onOpenOrders = { navController.navigate(UndalRoutes.CUSTOMER_ORDERS) { launchSingleTop = true } },
+                onOpenInbox = { navController.navigate(UndalRoutes.CUSTOMER_INBOX) { launchSingleTop = true } }
             )
         }
 
@@ -168,7 +277,8 @@ fun UndalRoot(
                 onOpenOrders = { navController.navigate(UndalRoutes.VENDOR_ORDERS) }
             )
         }
-    }
+      }
+      }
 
       if (errorMessage != null) {
           UndalAlertBanner(

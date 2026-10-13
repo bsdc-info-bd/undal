@@ -51,8 +51,6 @@ fun UndalStatusPill(
     }
 }
 
-val MaterialTheme.statusPillRadius get() = RoundedCornerShape(UndalDimens.radiusPill)
-
 @Composable
 fun UndalAlertBanner(
     text: String,

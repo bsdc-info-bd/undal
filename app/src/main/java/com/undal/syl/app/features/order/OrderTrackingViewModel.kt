@@ -1,0 +1,310 @@
+package com.undal.syl.app.features.order
+
+import android.content.Context
+import androidx.lifecycle.ViewModel
+import androidx.lifecycle.viewModelScope
+import com.undal.syl.app.core.cart.Cart
+import com.undal.syl.app.core.config.UndalBuildInfo
+import com.undal.syl.app.core.util.OrderStateMachine
+import com.undal.syl.app.core.util.OrderStatus
+import com.undal.syl.app.core.util.TimeDhaka
+import com.undal.syl.app.core.util.UndalPhone
+import com.undal.syl.app.core.util.UndalResult
+import com.undal.syl.app.data.repo.CartRepo
+import com.undal.syl.app.data.repo.ChatRepo
+import com.undal.syl.app.data.repo.MenuRepo
+import com.undal.syl.app.data.repo.OrderRepo
+import com.undal.syl.app.core.background.NotifyRetryWorker
+import dagger.hilt.android.lifecycle.HiltViewModel
+import dagger.hilt.android.qualifiers.ApplicationContext
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
+import java.time.Instant
+import javax.inject.Inject
+
+/**
+ * One order, live (C-063 … C-076).
+ *
+ * Two pipes feed this screen and they have different jobs:
+ *   · Firestore carries the order document — items, money, notes, timeline — and
+ *     is written by the kitchen as it works,
+ *   · the Realtime Database carries the `orderLive` status flag and the chat, so
+ *     the stepper moves in under a second and messages land instantly.
+ *
+ * The screen shows the newest of the two, which means a status change is visible
+ * even in the moment between the kitchen's RTDB write and its Firestore commit.
+ */
+@HiltViewModel
+class OrderTrackingViewModel @Inject constructor(
+    private val orderRepo: OrderRepo,
+    private val chatRepo: ChatRepo,
+    private val menuRepo: MenuRepo,
+    private val cartRepo: CartRepo,
+    @ApplicationContext private val context: Context
+) : ViewModel() {
+
+    data class State(
+        val loading: Boolean = true,
+        val orderId: String = "",
+        val detail: OrderRepo.OrderDetail? = null,
+        val liveStatus: OrderStatus? = null,
+        val displayStatus: OrderStatus = OrderStatus.PLACED,
+        val steps: List<OrderStatus> = OrderStateMachine.timeline,
+        val stepIndex: Int = -1,
+        val timelineRows: List<Pair<OrderStatus, String>> = emptyList(),
+        val countdownLabel: String = "",
+        val prepProgress: Float = 0f,
+        val prepOverdue: Boolean = false,
+        val placedAgoLabel: String = "",
+        val messages: List<ChatRepo.Message> = emptyList(),
+        val unread: Int = 0,
+        val chatOpen: Boolean = false,
+        val draft: String = "",
+        val kitchenTyping: Boolean = false,
+        val sending: Boolean = false,
+        val reordering: Boolean = false,
+        val reorderedLines: Int = 0,
+        val notice: String? = null
+    ) {
+
+        /** The number the customer dials to reach the kitchen (C-072). */
+        val kitchenPhone: String get() = UndalBuildInfo.supportPhone
+
+        val canCallKitchen: Boolean get() = UndalPhone.isDialable(kitchenPhone)
+
+        val isCancelled: Boolean get() = displayStatus == OrderStatus.CANCELLED
+
+        val isDelivered: Boolean get() = displayStatus == OrderStatus.DELIVERED
+
+        val isCooking: Boolean get() = displayStatus == OrderStatus.ACCEPTED
+
+        val isActive: Boolean get() = OrderStateMachine.isActive(displayStatus)
+
+        val itemCount: Int get() = detail?.items?.sumOf { it.quantity } ?: 0
+
+        val sendEnabled: Boolean get() = draft.isNotBlank() && !sending
+
+        val hasHistoryRows: Boolean get() = timelineRows.any { it.second.isNotBlank() }
+    }
+
+    private val _state = MutableStateFlow(State())
+    val state: StateFlow<State> = _state.asStateFlow()
+
+    private var boundOrderId: String = ""
+    private val detailFlow = MutableStateFlow<OrderRepo.OrderDetail?>(null)
+    private val messagesFlow = MutableStateFlow<List<ChatRepo.Message>>(emptyList())
+    private val lastReadFlow = MutableStateFlow(0L)
+    private val typingFlow = MutableStateFlow(false)
+    private val chatOpenFlow = MutableStateFlow(false)
+    private val draftFlow = MutableStateFlow("")
+    private val tickFlow = MutableStateFlow(System.currentTimeMillis())
+    private val sendingFlow = MutableStateFlow(false)
+    private val reorderingFlow = MutableStateFlow(false)
+    private val noticeFlow = MutableStateFlow<String?>(null)
+
+    init {
+        viewModelScope.launch {
+            while (isActive) {
+                delay(1_000)
+                tickFlow.value = System.currentTimeMillis()
+            }
+        }
+        viewModelScope.launch {
+            combine(
+                detailFlow,
+                messagesFlow,
+                lastReadFlow,
+                combine(chatOpenFlow, draftFlow, typingFlow, tickFlow) { open, draft, typing, tick ->
+                    ChatView(open = open, draft = draft, typing = typing, tick = tick)
+                },
+                combine(sendingFlow, reorderingFlow, noticeFlow) { sending, reordering, notice ->
+                    WorkView(sending = sending, reordering = reordering, notice = notice)
+                }
+            ) { detail, messages, lastRead, chat, work ->
+                buildState(detail, messages, lastRead, chat, work)
+            }.collect { next -> _state.value = next }
+        }
+    }
+
+    private data class ChatView(val open: Boolean, val draft: String, val typing: Boolean, val tick: Long)
+
+    private data class WorkView(val sending: Boolean, val reordering: Boolean, val notice: String?)
+
+    fun bind(orderId: String) {
+        if (boundOrderId == orderId) return
+        boundOrderId = orderId
+        _state.value = _state.value.copy(orderId = orderId, loading = true)
+
+        viewModelScope.launch {
+            orderRepo.observeOrder(orderId).collect { detail ->
+                detailFlow.value = detail
+                if (detail != null) {
+                    // The moment the screen opens, this phone has seen the chat.
+                    markReadFor(messagesFlow.value)
+                }
+            }
+        }
+        viewModelScope.launch {
+            chatRepo.observeMessages(orderId).collect { messages ->
+                messagesFlow.value = messages
+                if (chatOpenFlow.value) markReadFor(messages)
+            }
+        }
+        viewModelScope.launch {
+            chatRepo.lastReadFlow(orderId).collect { lastReadFlow.value = it }
+        }
+        viewModelScope.launch {
+            chatRepo.observeKitchenTyping(orderId).collect { typingFlow.value = it }
+        }
+    }
+
+    private fun buildState(
+        detail: OrderRepo.OrderDetail?,
+        messages: List<ChatRepo.Message>,
+        lastRead: Long,
+        chat: ChatView,
+        work: WorkView
+    ): State {
+        val liveStatus = detail?.liveStatus?.let { OrderStatus.fromWire(it) }
+        val display = liveStatus ?: detail?.status ?: OrderStatus.PLACED
+        val cancelled = display == OrderStatus.CANCELLED
+
+        // Where the order stopped: for a cancelled order the last step that was
+        // actually reached, so the note sits next to the right dot.
+        val stepIndex = when {
+            cancelled -> detail?.timeline
+                ?.map { it.first }
+                ?.lastOrNull { it != OrderStatus.CANCELLED }
+                ?.let { OrderStateMachine.stepIndex(it) } ?: 0
+            else -> OrderStateMachine.stepIndex(display)
+        }.coerceAtLeast(0)
+
+        val rows = OrderStateMachine.timeline.map { step ->
+            step to (detail?.timeline?.lastOrNull { it.first == step }?.second.orEmpty())
+        }
+
+        val prepEndsAt = detail?.prepEndsAt
+        val prepMinutes = detail?.prepMinutes
+        val now = Instant.ofEpochMilli(chat.tick)
+        val startMillis = if (prepEndsAt != null && prepMinutes != null) {
+            prepEndsAt.toEpochMilli() - prepMinutes * 60_000L
+        } else {
+            0L
+        }
+        val span = if (prepEndsAt != null) (prepEndsAt.toEpochMilli() - startMillis).coerceAtLeast(1L) else 1L
+
+        return State(
+            loading = detail == null,
+            orderId = boundOrderId,
+            detail = detail,
+            liveStatus = liveStatus,
+            displayStatus = display,
+            stepIndex = stepIndex,
+            timelineRows = rows,
+            countdownLabel = if (prepEndsAt != null) TimeDhaka.countdown(prepEndsAt, now) else "",
+            prepProgress = if (prepEndsAt != null && startMillis > 0L) {
+                ((chat.tick - startMillis).toFloat() / span.toFloat()).coerceIn(0f, 1f)
+            } else {
+                0f
+            },
+            prepOverdue = TimeDhaka.isPrepOverdue(prepEndsAt, now),
+            placedAgoLabel = TimeDhaka.relativeFromNow(detail?.createdAt),
+            messages = messages,
+            unread = if (chat.open) 0 else chatRepo.unreadCount(messages, lastRead),
+            chatOpen = chat.open,
+            draft = chat.draft,
+            kitchenTyping = chat.typing,
+            sending = work.sending,
+            reordering = work.reordering,
+            reorderedLines = _state.value.reorderedLines,
+            notice = work.notice
+        )
+    }
+
+    // ------------------------------------------------------------------- chat
+    fun openChat() {
+        chatOpenFlow.value = true
+        markReadFor(messagesFlow.value)
+    }
+
+    fun closeChat() {
+        chatOpenFlow.value = false
+        viewModelScope.launch { chatRepo.setCustomerTyping(boundOrderId, false) }
+    }
+
+    fun onDraftChange(value: String) {
+        val next = value.take(ChatRepo.MAX_MESSAGE_LENGTH)
+        draftFlow.value = next
+        // One write on the first keystroke, cleared on send or when the sheet
+        // closes: enough for "the customer is typing", without a write per key.
+        if (next.length == 1) {
+            viewModelScope.launch { chatRepo.setCustomerTyping(boundOrderId, true) }
+        }
+    }
+
+    fun send() {
+        val body = draftFlow.value.trim()
+        if (body.isEmpty() || sendingFlow.value) return
+        sendingFlow.value = true
+        viewModelScope.launch {
+            when (val result = chatRepo.send(boundOrderId, body)) {
+                is UndalResult.Success -> {
+                    draftFlow.value = ""
+                    noticeFlow.value = null
+                    // The kitchen must be told even if their console is closed.
+                    NotifyRetryWorker.enqueue(
+                        context = context,
+                        orderId = boundOrderId,
+                        kind = NotifyRetryWorker.KIND_CHAT,
+                        text = body.take(120)
+                    )
+                }
+
+                is UndalResult.Failure -> noticeFlow.value = result.message
+            }
+            sendingFlow.value = false
+        }
+    }
+
+    private fun markReadFor(messages: List<ChatRepo.Message>) {
+        if (boundOrderId.isBlank()) return
+        val newest = messages.maxOfOrNull { it.tsMillis } ?: 0L
+        val stamp = maxOf(System.currentTimeMillis(), newest)
+        viewModelScope.launch { chatRepo.markRead(boundOrderId, stamp) }
+    }
+
+    // ---------------------------------------------------------------- reorder
+    /** Rebuilds the cart from this order, skipping dishes that are gone (C-076). */
+    fun reorder() {
+        if (reorderingFlow.value) return
+        reorderingFlow.value = true
+        viewModelScope.launch {
+            val snapshot = menuRepo.observeMenu().first()
+            if (!snapshot.loaded) {
+                noticeFlow.value = "The menu has not loaded yet. Check your connection and try again."
+                reorderingFlow.value = false
+                return@launch
+            }
+            when (val result = orderRepo.reorder(boundOrderId, snapshot)) {
+                is UndalResult.Success -> {
+                    cartRepo.replaceLines(Cart(lines = result.value))
+                    _state.value = _state.value.copy(reorderedLines = result.value.size)
+                    noticeFlow.value = orderRepo.lastReorderNote
+                }
+
+                is UndalResult.Failure -> noticeFlow.value = result.message
+            }
+            reorderingFlow.value = false
+        }
+    }
+
+    fun dismissNotice() {
+        noticeFlow.value = null
+    }
+}
