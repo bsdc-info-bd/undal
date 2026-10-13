@@ -253,7 +253,10 @@ fun DiagnosticsScreen(
                 Text("Connection health", style = MaterialTheme.typography.titleMedium)
                 Spacer(Modifier.height(UndalDimens.xs))
                 Text("Kitchen session: ${state.sessionSummary}", style = MaterialTheme.typography.bodyMedium)
-                Text("Device token ends with: ${state.tokenSummary()}", style = MaterialTheme.typography.bodyMedium)
+                Text(
+                    "Device token ends with: ${state.tokenTail.ifBlank { "not registered yet" }}",
+                    style = MaterialTheme.typography.bodyMedium
+                )
                 Text("Last heartbeat: ${state.heartbeatAgeLabel}", style = MaterialTheme.typography.bodyMedium)
                 Spacer(Modifier.height(UndalDimens.sm))
                 Text(

@@ -82,7 +82,9 @@ class LocationSetupViewModel @Inject constructor(
             val draft = progress.draftAddress.first()
             val saved = if (draft == null) authRepo.loadProfileLocation() else null
 
-            val restored = draft ?: saved
+            // A draft is a different type from a saved address, so the draft is
+            // normalised into an UndalLocation before anything is read off it.
+            val restored: UndalLocation? = draft?.toLocation() ?: saved
             if (restored != null) {
                 _state.value = _state.value.copy(
                     lat = restored.lat,
@@ -96,15 +98,18 @@ class LocationSetupViewModel @Inject constructor(
         }
     }
 
+    /**
+     * The screen calls this from its permission callback. On a grant it also
+     * calls [captureCurrentLocation] with the context it already holds, so there
+     * is nothing to start here; on a refusal the flag makes the next use-my-location
+     * tap open the rationale instead of a silent prompt.
+     */
     fun onPermissionResult(granted: Boolean) {
-        if (granted) {
-            captureCurrentLocation()
-        } else {
-            _state.value = _state.value.copy(
-                permissionNeeded = true,
-                banner = "Without location permission you can still drag the pin by hand — the map below works either way."
-            )
-        }
+        if (granted) return
+        _state.value = _state.value.copy(
+            permissionNeeded = true,
+            banner = "Without location permission you can still drag the pin by hand — the map below works either way."
+        )
     }
 
     fun requestPermission() {

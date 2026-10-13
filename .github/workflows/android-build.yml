@@ -66,6 +66,15 @@ jobs:
       - name: No-placeholder gate (LAW-1)
         run: bash tools/check_no_placeholders.sh
 
+      # Two-second static checks for the mistakes that cost a full build: a
+      # missing extension import, a top-level type used from another package
+      # without its import, an unbalanced brace. Gradle is the real compiler —
+      # this only makes sure it is never started on a file that cannot compile.
+      - name: Kotlin shape and import gates
+        run: |
+          python3 tools/check_kotlin_shape.py
+          python3 tools/check_import_contracts.py
+
       - name: Set up JDK 17
         uses: actions/setup-java@v4
         with:

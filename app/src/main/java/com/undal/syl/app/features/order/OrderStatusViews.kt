@@ -34,6 +34,7 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import com.undal.syl.app.core.design.UndalStatusPill
 import com.undal.syl.app.core.design.undalOrdered
 import com.undal.syl.app.core.design.undalStateDescription

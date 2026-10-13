@@ -16,6 +16,7 @@ import kotlinx.coroutines.flow.callbackFlow
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.tasks.await
 import java.util.Date
 import javax.inject.Inject
 import javax.inject.Singleton

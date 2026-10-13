@@ -104,8 +104,8 @@ class VendorOrderDetailViewModel @Inject constructor(
                 )
                 order?.let { current ->
                     escalateIfOverdue(current)
-                    if (_state.value.customerPhotoUrl.isBlank() && current.customerId.isNotBlank()) {
-                        val photo = vendorOrderRepo.customerPhoto(current.customerId).orEmpty()
+                    if (_state.value.customerPhotoUrl.isBlank() && current.customerUid.isNotBlank()) {
+                        val photo = vendorOrderRepo.customerPhoto(current.customerUid).orEmpty()
                         _state.value = _state.value.copy(customerPhotoUrl = photo)
                     }
                 }
