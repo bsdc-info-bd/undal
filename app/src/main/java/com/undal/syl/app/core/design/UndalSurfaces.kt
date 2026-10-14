@@ -5,6 +5,7 @@ import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -39,23 +40,48 @@ import androidx.compose.ui.unit.dp
 import com.undal.syl.app.core.theme.UndalDimens
 import com.undal.syl.app.core.theme.UndalMotion
 
-/** Standard content card: white surface in light mode, raised tone in dark. */
+/**
+ * Standard content card: white surface in light mode, raised tone in dark.
+ *
+ * The card is drawn as a surface with a **hairline of the brand tint at the top
+ * and a very soft vertical wash** rather than a flat fill with a shadow. On an
+ * OLED phone in a kitchen that is the difference between a form and something
+ * that looks like it was designed this decade — and it costs one gradient, no
+ * image, no font, nothing that a cheap device has to fetch.
+ */
 @Composable
 fun UndalCard(
     modifier: Modifier = Modifier,
     onClick: (() -> Unit)? = null,
     content: @Composable () -> Unit
 ) {
+    val shape = RoundedCornerShape(UndalDimens.radiusLg)
     val base = modifier
         .fillMaxWidth()
-        .clip(RoundedCornerShape(UndalDimens.radiusMd))
+        .clip(shape)
     Card(
         modifier = if (onClick != null) base.clickable(onClick = onClick) else base,
-        shape = RoundedCornerShape(UndalDimens.radiusMd),
+        shape = shape,
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-        elevation = CardDefaults.cardElevation(defaultElevation = UndalDimens.elevationCard)
+        elevation = CardDefaults.cardElevation(defaultElevation = UndalDimens.elevationCard),
+        border = BorderStroke(
+            width = 1.dp,
+            color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.6f)
+        )
     ) {
-        Column(modifier = Modifier.padding(UndalDimens.cardPadding)) { content() }
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .background(
+                    Brush.verticalGradient(
+                        colors = listOf(
+                            MaterialTheme.colorScheme.primary.copy(alpha = 0.035f),
+                            MaterialTheme.colorScheme.surface.copy(alpha = 0f)
+                        )
+                    )
+                )
+                .padding(UndalDimens.cardPadding)
+        ) { content() }
     }
 }
 
@@ -69,7 +95,7 @@ fun UndalTintedCard(
 ) {
     Surface(
         modifier = modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(UndalDimens.radiusMd),
+        shape = RoundedCornerShape(UndalDimens.radiusLg),
         color = containerColour,
         contentColor = contentColour
     ) {
@@ -99,7 +125,22 @@ fun UndalSectionHeader(
             Spacer(Modifier.width(UndalDimens.sm))
         }
         Column(modifier = Modifier.weight(1f)) {
-            Text(text = title, style = MaterialTheme.typography.titleMedium)
+            Text(
+                text = title,
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = androidx.compose.ui.text.font.FontWeight.Bold
+            )
+            // A two-pixel accent under the heading: it costs nothing and it is
+            // what makes a long list look organised instead of stacked.
+            Spacer(Modifier.height(3.dp))
+            Box(
+                modifier = Modifier
+                    .width(28.dp)
+                    .height(2.dp)
+                    .clip(RoundedCornerShape(UndalDimens.radiusPill))
+                    .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.55f))
+            )
+            Spacer(Modifier.height(2.dp))
             if (subtitle != null) {
                 Text(
                     text = subtitle,

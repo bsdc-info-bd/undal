@@ -57,6 +57,16 @@ fun UndalPrimaryButton(
         colors = ButtonDefaults.buttonColors(
             containerColor = MaterialTheme.colorScheme.primary,
             contentColor = MaterialTheme.colorScheme.onPrimary
+        ),
+        // The button that starts an order, accepts an order or rings a phone
+        // should feel like a physical control: it lifts when it is available and
+        // sits flat under the finger.
+        elevation = ButtonDefaults.buttonElevation(
+            defaultElevation = 3.dp,
+            pressedElevation = 0.dp,
+            focusedElevation = 3.dp,
+            hoveredElevation = 4.dp,
+            disabledElevation = 0.dp
         )
     ) {
         if (loading) {
