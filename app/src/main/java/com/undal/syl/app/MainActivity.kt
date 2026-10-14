@@ -124,6 +124,13 @@ class MainActivity : ComponentActivity() {
         const val EXTRA_DEEP_LINK = "undal.deepLink"
 
         /**
+         * Set by [com.undal.syl.app.core.util.UndalCrashGuard] when this launch is
+         * the app reopening after a guarded crash. The activity reads it once and
+         * shows the sentence; it is never written by anything else.
+         */
+        const val EXTRA_RECOVERED = "undal.recovered"
+
+        /**
          * Builds the intent every notification, alert action and QR code uses.
          * Keeping it in one place means the activity never has to guess which
          * shape of link it was opened with.

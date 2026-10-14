@@ -58,7 +58,7 @@ class DiagnosticsViewModel @Inject constructor(
     enum class Status { OK, ATTENTION, MISSING }
 
     /** How this check can be repaired, if it can. */
-    enum class Fix { NOTIFICATIONS, CHANNEL, FULL_SCREEN, BATTERY, EXACT_ALARMS, AUTOSTART, TOKEN, WATCH, VOLUME }
+    enum class Fix { NOTIFICATIONS, CHANNEL, FULL_SCREEN, BATTERY, EXACT_ALARMS, AUTOSTART, TOKEN, WATCH, WATCHDOG, VOLUME }
 
     data class Check(
         val id: String,

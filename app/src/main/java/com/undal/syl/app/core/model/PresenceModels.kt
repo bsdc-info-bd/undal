@@ -1,6 +1,9 @@
 package com.undal.syl.app.core.model
 
 import com.undal.syl.app.core.util.TimeDhaka
+import java.time.Instant
+import java.time.OffsetDateTime
+import java.time.ZonedDateTime
 
 
 /**
@@ -67,7 +70,7 @@ data class PresenceDay(
         private fun millisOf(value: Any?): Long = when (value) {
             is Number -> value.toLong()
             is com.google.firebase.Timestamp -> value.seconds * 1000L
-            is String -> com.google.firebase.Timestamp.parseString(value)?.seconds?.times(1000L) ?: 0L
+            is String -> parseMillis(value)
             else -> 0L
         }
     }
@@ -94,7 +97,7 @@ data class PresenceOutage(
         private fun millisOf(value: Any?): Long = when (value) {
             is Number -> value.toLong()
             is com.google.firebase.Timestamp -> value.seconds * 1000L
-            is String -> com.google.firebase.Timestamp.parseString(value)?.seconds?.times(1000L) ?: 0L
+            is String -> parseMillis(value)
             else -> 0L
         }
 
@@ -204,4 +207,21 @@ data class PresenceSummary(
             return if (rest == 0) "${hours} h" else "${hours} h ${rest} min"
         }
     }
+}
+
+/**
+ * A timestamp that arrived as text → epoch millis.
+ *
+ * Firestore hands a REST-style ISO string back for anything it cannot decode as a
+ * number, and the three spellings it can arrive in — a plain instant, an offset, a
+ * zone — are all valid ISO-8601. Tried in that order; a value nobody can read
+ * becomes 0 rather than a crash on the vendor's dashboard.
+ */
+private fun parseMillis(text: String): Long {
+    val trimmed = text.trim()
+    if (trimmed.isEmpty()) return 0L
+    return runCatching { Instant.parse(trimmed).toEpochMilli() }
+        .recoverCatching { OffsetDateTime.parse(trimmed).toInstant().toEpochMilli() }
+        .recoverCatching { ZonedDateTime.parse(trimmed).toInstant().toEpochMilli() }
+        .getOrDefault(0L)
 }
