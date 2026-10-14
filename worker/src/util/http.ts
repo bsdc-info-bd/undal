@@ -3,14 +3,33 @@
  * headers and the KV-backed edge rate limiter.
  */
 
+/**
+ * A failure with a repair instruction attached.
+ *
+ * `hint` exists because "HTTP 502" is not an answer a merchant can act on. Every
+ * error this Worker raises about somebody else's infrastructure — Firestore, the
+ * Realtime Database, FCM, Firebase Auth — carries the sentence that says what to
+ * do next, and `errorJson` puts it in the body where a client can show it.
+ */
 export class HttpError extends Error {
   readonly status: number;
   readonly code: string;
+  /** What the caller should do about it. Shown to the human, never swallowed. */
+  readonly hint?: string;
+  /** Machine-readable upstream detail (status, Google error code, index URL). */
+  readonly detail?: Record<string, unknown>;
 
-  constructor(status: number, code: string, message?: string) {
+  constructor(
+    status: number,
+    code: string,
+    message?: string,
+    extra?: { hint?: string; detail?: Record<string, unknown> },
+  ) {
     super(message ?? code);
     this.status = status;
     this.code = code;
+    this.hint = extra?.hint;
+    this.detail = extra?.detail;
   }
 }
 
@@ -26,8 +45,16 @@ export function json(data: unknown, status = 200, extraHeaders: Record<string, s
   });
 }
 
-export function errorJson(status: number, code: string, message?: string): Response {
-  return json({ ok: false, error: code, message: message ?? code }, status);
+export function errorJson(
+  status: number,
+  code: string,
+  message?: string,
+  extra?: { hint?: string; detail?: Record<string, unknown> },
+): Response {
+  const body: Record<string, unknown> = { ok: false, error: code, message: message ?? code };
+  if (extra?.hint) body.hint = extra.hint;
+  if (extra?.detail) body.detail = extra.detail;
+  return json(body, status);
 }
 
 /** Security headers applied to every HTML page the Worker serves. */

@@ -185,21 +185,147 @@ export const CART_SCRIPT = `
     if (value.length < 3 || value.length > 80) return false;
     return [...value].some(function (character) { return /[\\p{L} .-]/u.test(character); });
   }
+  // All three are published on the window because the checkout and the account page
+  // run in their own script block: a validator that only exists inside this IIFE
+  // is a ReferenceError at the moment a customer taps "Place the order", which is
+  // exactly what the web checkout used to do — nothing at all, silently.
   window.undalUsablePhone = usablePhone;
+  window.undalUsableName = usableName;
+  window.undalUsableText = usableText;
 
-  // ---- the anonymous session ----------------------------------------------
-  window.undalSession = function () {
-    var cached = null;
-    try { cached = JSON.parse(sessionStorage.getItem(SESSION_KEY) || "null"); } catch (error) { cached = null; }
-    if (cached && cached.idToken && cached.expiresAt > Date.now() + 60000) {
-      return Promise.resolve(cached);
-    }
+  // ---- the session: a signed-in account when there is one, a guest otherwise
+  function readSession() {
+    try { return JSON.parse(sessionStorage.getItem(SESSION_KEY) || "null"); } catch (error) { return null; }
+  }
+  function writeSession(session) {
+    try { sessionStorage.setItem(SESSION_KEY, JSON.stringify(session)); } catch (error) { /* private mode */ }
+    return session;
+  }
+  function fresh(session) {
+    return !!session && !!session.idToken && (session.expiresAt || 0) > Date.now() + 60000;
+  }
+
+  /** An anonymous guest session, created once per tab. */
+  function guestSession() {
     return fetch("/api/store/session", { method: "POST" }).then(function (response) {
       return response.json().then(function (payload) {
         if (!response.ok || !payload.ok) throw new Error(payload.message || "Sign-in failed.");
-        var session = { idToken: payload.idToken, expiresAt: Date.now() + (payload.expiresIn || 3600) * 1000 };
-        try { sessionStorage.setItem(SESSION_KEY, JSON.stringify(session)); } catch (error) { /* ignore */ }
-        return session;
+        return writeSession({
+          idToken: payload.idToken,
+          expiresAt: Date.now() + (payload.expiresIn || 3600) * 1000,
+          uid: payload.uid || "",
+          guest: true
+        });
+      });
+    });
+  }
+
+  /** Renews a signed-in account past its hour, using the refresh token it holds. */
+  function renewSession(session) {
+    if (!session || !session.refreshToken) return guestSession();
+    return fetch("/api/account/refresh", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ refreshToken: session.refreshToken })
+    })
+      .then(function (response) {
+        return response.json().then(function (payload) {
+          if (!response.ok || !payload.ok) throw new Error(payload.message || "Your session has ended.");
+          return writeSession({
+            idToken: payload.idToken,
+            refreshToken: payload.refreshToken || session.refreshToken,
+            expiresAt: Date.now() + (payload.expiresIn || 3600) * 1000,
+            uid: payload.uid || session.uid || "",
+            email: session.email || "",
+            guest: false
+          });
+        });
+      })
+      .catch(function () {
+        // A refresh token that no longer works is not a dead end: the basket
+        // survives and the customer can order as a guest or sign in again.
+        return guestSession();
+      });
+  }
+
+  /**
+   * A valid ID token for whoever is using this tab.
+   *
+   * One function, two kinds of caller: a guest ordering lunch and an account
+   * holder whose order has to land in the same history the app shows. Both get a
+   * token that has at least a minute of life left, renewed if it has not.
+   */
+  window.undalSession = function () {
+    var cached = readSession();
+    if (fresh(cached)) return Promise.resolve(cached);
+    if (cached && cached.refreshToken) return renewSession(cached);
+    if (cached && cached.idToken && !cached.guest) return renewSession(cached);
+    return guestSession();
+  };
+
+  /** The signed-in account on this tab, or null for a guest. */
+  window.undalAccount = function () {
+    var session = readSession();
+    if (!session || session.guest || !session.idToken) return null;
+    return { uid: session.uid || "", email: session.email || "", expiresAt: session.expiresAt || 0 };
+  };
+
+  window.undalSaveAccount = function (payload) {
+    return writeSession({
+      idToken: payload.idToken,
+      refreshToken: payload.refreshToken || "",
+      expiresAt: Date.now() + (payload.expiresIn || 3600) * 1000,
+      uid: payload.uid || "",
+      email: payload.email || "",
+      guest: false
+    });
+  };
+
+  window.undalDropAccount = function () {
+    try {
+      sessionStorage.removeItem(SESSION_KEY);
+      sessionStorage.removeItem(PROFILE_KEY);
+    } catch (error) { /* nothing to clear */ }
+  };
+
+  /** Saves the name, number and pinned address for the checkout form. */
+  window.undalSaveProfile = function (profile) {
+    try { sessionStorage.setItem(PROFILE_KEY, JSON.stringify(profile || {})); } catch (error) { /* private mode */ }
+  };
+
+  /**
+   * One call to the account API: the right token, JSON both ways, and a single
+   * renewal when the token expired mid-page.
+   */
+  window.undalApi = function (path, options) {
+    var settings = options || {};
+    return window.undalSession().then(function (session) {
+      return fetch(path, {
+        method: settings.method || "GET",
+        headers: { "content-type": "application/json", authorization: "Bearer " + session.idToken },
+        body: settings.body ? JSON.stringify(settings.body) : undefined
+      }).then(function (response) {
+        return response.text().then(function (text) {
+          var payload = null;
+          try { payload = text ? JSON.parse(text) : null; } catch (error) { payload = null; }
+          if (response.status === 401 && !settings.retried) {
+            return renewSession(session).then(function (renewed) {
+              window.undalSaveAccount({
+                idToken: renewed.idToken, refreshToken: renewed.refreshToken,
+                expiresIn: Math.max(60, Math.round((renewed.expiresAt - Date.now()) / 1000)),
+                uid: renewed.uid, email: renewed.email
+              });
+              return window.undalApi(path, { method: settings.method, body: settings.body, retried: true });
+            });
+          }
+          if (!response.ok || !payload || payload.ok === false) {
+            var error = new Error((payload && (payload.message || payload.error)) || "That did not go through (" + response.status + ").");
+            error.status = response.status;
+            error.hint = payload && payload.hint;
+            throw error;
+          }
+          return payload;
+        });
       });
     });
   };

@@ -305,9 +305,14 @@ const MONEY = "worker/src/util/money.ts";
 const CART = "worker/src/web/cart.ts";
 const CART_CLIENT = "worker/src/web/cart-client.ts";
 const STORE_PAGES = "worker/src/web/store-pages.ts";
+// The distance a customer is charged for is measured on the map they ticked their
+// pin on, so the browser's haversine now ships with the map rather than inside a
+// page template. Same function, same vectors, new home.
+const MAP_CLIENT = "worker/src/web/map-client.ts";
 
 const cartClientSource = emittedBrowserJs(read(CART_CLIENT));
 const storePagesSource = emittedBrowserJs(read(STORE_PAGES));
+const mapClientSource = emittedBrowserJs(read(MAP_CLIENT));
 
 // The Worker modules are imported as they ship. Node strips the types; a Node
 // too old for that says so instead of silently checking nothing.
@@ -354,7 +359,7 @@ const browser = build(
   extractFunction(cartClientSource, "usablePhone", CART_CLIENT),
   extractFunction(cartClientSource, "usableText", CART_CLIENT),
   extractFunction(cartClientSource, "usableName", CART_CLIENT),
-  extractFunction(storePagesSource, "haversine", STORE_PAGES),
+  extractFunction(mapClientSource, "haversine", MAP_CLIENT),
 );
 
 /** The fee the basket page computes, taken from the expression it really uses. */

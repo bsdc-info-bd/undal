@@ -6,8 +6,10 @@
  *   /dish/{id} /combo/{id}   share cards + smart open
  *   /order/{id} /app         deep-link smart open
  *   /store /item/{id} /basket /checkout /track   the storefront pages
- *   /login                   the account the app already has, on the web
+ *   /login                   sign in, sign up, reset a password
+ *   /account                 profile, address book, order history, security
  *   /about                   who the kitchen is, hours, delivery economics
+ *   /robots.txt /sitemap.xml crawler routes, built from the live catalogue
  *   /download                install page with QR codes · /download/apk is the file
  *   /manifest.webmanifest /sw.js /icons/*   installable-web layer (P-014)
  *   /latest.json             in-app update check
@@ -15,6 +17,7 @@
  *   /notify/*                FCM HTTP v1 relay (ID-token protected)
  *   /admin/release           release webhook (shared secret)
  *   /api/store/*             session or sign-in, menu snapshot, order, status
+ *   /api/account/*           the web account: profile, addresses, orders, close
  *
  * Cron triggers: *​/5 presence watchdog · 0 12 * * * (18:00 Asia/Dhaka) promo blast.
  */
@@ -39,16 +42,30 @@ import {
   handleStoreSignIn,
   looksLikeOrderId,
 } from "./routes/store";
-import { handleAboutPage } from "./web/landing";
 import {
+  handleAboutPage,
   handleBasket,
   handleCheckout,
-  handleLoginPage,
   handleOrderTracking,
   handleStoreFront,
   handleStoreItem,
   handleTrackPage,
 } from "./web/store-pages";
+import { handleAccountPage, handleLoginPage } from "./web/account-page";
+import {
+  handleAccountAddressDelete,
+  handleAccountAddressSave,
+  handleAccountAddressesGet,
+  handleAccountClose,
+  handleAccountOrders,
+  handleAccountPassword,
+  handleAccountProfileGet,
+  handleAccountProfileSave,
+  handleAccountRefresh,
+  handleAccountReset,
+  handleAccountSignUp,
+} from "./routes/account";
+import { handleRobotsTxt, handleSitemapXml } from "./web/seo";
 import { handleDownloadPage } from "./web/download-page";
 import { handleIcon, handleManifest, handleServiceWorker } from "./web/pwa";
 import { handleItemSharePage, handleOrderOpenPage, handleSmartOpen } from "./web/deeplink";
@@ -104,7 +121,7 @@ async function route(request: Request, env: Env): Promise<Response> {
       status: 204,
       headers: {
         "access-control-allow-headers": "authorization,content-type,x-undal-release-secret",
-        "access-control-allow-methods": "GET,POST,OPTIONS",
+        "access-control-allow-methods": "GET,POST,DELETE,OPTIONS",
         "access-control-max-age": "86400",
       },
     });
@@ -113,7 +130,7 @@ async function route(request: Request, env: Env): Promise<Response> {
   if (path === "/healthz") return health(env);
 
   const isApi = path.startsWith("/notify/") || path.startsWith("/admin/");
-  const isStoreApi = path.startsWith("/api/store/");
+  const isStoreApi = path.startsWith("/api/store/") || path.startsWith("/api/account/");
   const allowed = await rateLimit(
     env,
     `${isApi ? "api" : isStoreApi ? "store" : "web"}:${ip}`,
@@ -129,14 +146,17 @@ async function route(request: Request, env: Env): Promise<Response> {
   if (path === "/" || path === "/store") return handleStoreFront(env, request);
   if (path === "/about") return handleAboutPage(env, request);
   if (path === "/basket") return handleBasket(env);
-  if (path === "/checkout") return handleCheckout(env);
+  if (path === "/checkout") return handleCheckout(env, request);
   if (path === "/login") return handleLoginPage(env, request);
+  if (path === "/account") return handleAccountPage(env, request);
+  if (path === "/robots.txt") return handleRobotsTxt(request);
+  if (path === "/sitemap.xml") return handleSitemapXml(env, request);
   if (path === "/track") {
     const orderId = url.searchParams.get("id") ?? "";
     return orderId ? handleOrderTracking(orderId) : handleTrackPage("");
   }
   if (path.startsWith("/item/")) {
-    return handleStoreItem(env, path.slice("/item/".length));
+    return handleStoreItem(env, request, path.slice("/item/".length));
   }
   if (path === "/favicon.svg") return favicon();
   if (path === "/manifest.webmanifest") return handleManifest();
@@ -174,9 +194,29 @@ async function route(request: Request, env: Env): Promise<Response> {
     if (path === "/api/store/session") return handleStoreSession(env);
     if (path === "/api/store/signin") return handleStoreSignIn(env, request);
     if (path === "/api/store/order") return handleStoreOrder(env, request);
+    if (path === "/api/account/signup") return handleAccountSignUp(env, request);
+    if (path === "/api/account/reset") return handleAccountReset(env, request);
+    if (path === "/api/account/refresh") return handleAccountRefresh(env, request);
+    if (path === "/api/account/profile") return handleAccountProfileSave(env, request);
+    if (path === "/api/account/addresses") return handleAccountAddressSave(env, request);
+    if (path === "/api/account/password") return handleAccountPassword(env, request);
+    if (path === "/api/account/close") return handleAccountClose(env, request);
+  }
+
+  if (request.method === "DELETE") {
+    // Only the address book is deletable from the web: an order is the kitchen's
+    // record and a customer cancels it through the status ladder, never a DELETE.
+    if (path.startsWith("/api/account/addresses/")) {
+      const id = path.slice("/api/account/addresses/".length);
+      if (!/^[a-z0-9]{8,32}$/.test(id)) return errorJson(400, "address-id-invalid");
+      return handleAccountAddressDelete(env, request, id);
+    }
   }
 
   if (path === "/api/store/menu") return handleStoreMenuApi(env);
+  if (path === "/api/account/profile") return handleAccountProfileGet(env, request);
+  if (path === "/api/account/addresses") return handleAccountAddressesGet(env, request);
+  if (path === "/api/account/orders") return handleAccountOrders(env, request);
   if (path.startsWith("/api/store/order/")) {
     const orderId = path.slice("/api/store/order/".length);
     if (!looksLikeOrderId(orderId)) return errorJson(400, "order-id-invalid");
@@ -192,7 +232,13 @@ export default {
       return await route(request, env);
     } catch (error) {
       if (error instanceof HttpError) {
-        return errorJson(error.status, error.code, error.message);
+        // The hint is the part a merchant can act on. Dropping it here is what
+        // turned "Firestore needs a composite index, create it at <link>" into
+        // "Cleanup paused (HTTP 502). You can safely try again."
+        return errorJson(error.status, error.code, error.message, {
+          hint: error.hint,
+          detail: error.detail,
+        });
       }
       console.error("undal-worker failure", error);
       return errorJson(500, "internal-error", "The Undal worker hit an unexpected error.");

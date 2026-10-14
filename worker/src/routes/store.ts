@@ -108,8 +108,10 @@ export async function handleStoreSignIn(env: Env, request: Request): Promise<Res
 
   const payload = (await response.json().catch(() => ({}))) as {
     idToken?: string;
+    refreshToken?: string;
     localId?: string;
     expiresIn?: string;
+    email?: string;
     error?: { message?: string };
   };
   if (!response.ok || !payload.idToken || !payload.localId) {
@@ -120,11 +122,16 @@ export async function handleStoreSignIn(env: Env, request: Request): Promise<Res
     );
   }
 
+  // The refresh token is what lets the tab stay signed in past the ID token's
+  // hour. It is returned to the browser that just proved the password, stored in
+  // that tab's sessionStorage, and never written to a log.
   return json({
     ok: true,
     idToken: payload.idToken,
+    refreshToken: payload.refreshToken ?? "",
     expiresIn: Number(payload.expiresIn) || 3600,
     uid: payload.localId,
+    email: payload.email ?? email,
     profile: await readCustomerProfile(env, payload.localId),
   });
 }
@@ -147,14 +154,38 @@ function signInSentence(code: string | undefined): string {
   }
 }
 
-/** The name and phone from `users/{uid}`, so the checkout form arrives filled. */
-async function readCustomerProfile(env: Env, uid: string): Promise<{ name: string; phone: string }> {
-  const empty = { name: "", phone: "" };
+export interface WebProfile {
+  name: string;
+  phone: string;
+  address: { lat: number; lng: number; title: string; desc: string; note: string } | null;
+}
+
+/**
+ * The name, the number and the pinned address from `users/{uid}`, so the checkout
+ * form arrives filled and the map arrives with the pin already ticked.
+ */
+async function readCustomerProfile(env: Env, uid: string): Promise<WebProfile> {
+  const empty: WebProfile = { name: "", phone: "", address: null };
   if (!/^[A-Za-z0-9_-]{6,128}$/.test(uid)) return empty;
   try {
     const record = await fsGet(env, `users/${uid}`);
     if (!record) return empty;
-    return { name: str(record.name).slice(0, 80), phone: str(record.phone).slice(0, 20) };
+    const address = record.address as Record<string, unknown> | null;
+    const lat = Number(address?.lat ?? 0);
+    const lng = Number(address?.lng ?? 0);
+    return {
+      name: str(record.name).slice(0, 80),
+      phone: str(record.phone).slice(0, 20),
+      address: Number.isFinite(lat) && Number.isFinite(lng) && lat !== 0 && lng !== 0
+        ? {
+            lat,
+            lng,
+            title: str(address?.title).slice(0, 160),
+            desc: str(address?.desc).slice(0, 300),
+            note: str(address?.note).slice(0, 300),
+          }
+        : null,
+    };
   } catch {
     return empty;
   }

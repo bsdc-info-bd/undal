@@ -10,6 +10,7 @@ import com.undal.syl.app.core.config.UndalBuildInfo
 import com.undal.syl.app.core.maps.UndalLocationController
 import com.undal.syl.app.core.model.StoreConfig
 import com.undal.syl.app.core.model.StoreOpenState
+import com.undal.syl.app.core.net.WorkerApi
 import com.undal.syl.app.core.session.VendorSessionKeeper
 import com.undal.syl.app.core.util.Money
 import com.undal.syl.app.core.util.UndalResult
@@ -35,7 +36,7 @@ class VendorStoreViewModel @Inject constructor(
     private val storeRepo: StoreRepo,
     private val vendorStoreRepo: VendorStoreRepo,
     private val locationController: UndalLocationController,
-    private val workerApi: com.undal.syl.app.core.net.WorkerApi,
+    private val workerApi: WorkerApi,
     private val sessionKeeper: VendorSessionKeeper
 ) : ViewModel() {
 
@@ -56,6 +57,9 @@ class VendorStoreViewModel @Inject constructor(
         val busy: Boolean = false,
         val cleaning: Boolean = false,
         val cleanupProgress: String? = null,
+        /** What the last cleanup had to work around. Stays on screen; a toast does not. */
+        val cleanupNotice: String? = null,
+        val checkingCleanup: Boolean = false,
         val dirty: Boolean = false,
         val vendorClaim: Boolean = true,
         val message: String? = null
@@ -302,41 +306,171 @@ class VendorStoreViewModel @Inject constructor(
             .onFailure { _state.value = _state.value.copy(message = "This phone refused to play the sound.") }
     }
 
-    /** One confirmed action drains bounded batches; interruption is safe to retry. */
+    /**
+     * One confirmed action drains bounded batches.
+     *
+     * Three things this loop refuses to do, all of them learned from the failure
+     * it replaced — a merchant tapping "Clear finished history" and being told
+     * "Cleanup paused (HTTP 502). You can safely try again." forever:
+     *
+     *   · **hide the reason.** The Worker's own sentence and hint are shown, so a
+     *     missing index reads as a missing index and names the workflow that
+     *     deploys it;
+     *   · **lose the work already done.** The batch cursor survives a failure, and
+     *     the summary says how much was deleted before it stopped;
+     *   · **hammer a refusal that cannot change.** Only what the Worker marks
+     *     retryable is retried, a bounded number of times, with a growing pause.
+     */
     fun cleanupHistory() {
         if (_state.value.busy || _state.value.cleaning) return
-        _state.value = _state.value.copy(cleaning = true, busy = true, cleanupProgress = "Starting cleanup…")
+        _state.value = _state.value.copy(
+            cleaning = true,
+            busy = true,
+            cleanupProgress = "Starting cleanup…",
+            cleanupNotice = null
+        )
         viewModelScope.launch {
             var orders = 0
             var notifications = 0
             var before: String? = null
+            var batches = 0
+            var strategy = "indexed"
+            var hint: String? = null
+            var stoppedBy: String? = null
+            val warnings = mutableListOf<String>()
             try {
-                repeat(100) {
-                    val result = workerApi.cleanupHistory(before)
+                while (batches < CLEANUP_BATCH_LIMIT && stoppedBy == null) {
+                    batches += 1
+                    var batch: WorkerApi.CleanupBatch? = null
+                    var attempt = 0
+                    while (attempt < CLEANUP_ATTEMPTS_PER_BATCH && batch == null && stoppedBy == null) {
+                        attempt += 1
+                        if (attempt > 1) {
+                            _state.value = _state.value.copy(
+                                cleanupProgress = "The Worker asked for a moment. Retrying this batch ($attempt of $CLEANUP_ATTEMPTS_PER_BATCH)…"
+                            )
+                            kotlinx.coroutines.delay(CLEANUP_RETRY_PAUSE_MILLIS * attempt)
+                        }
+                        try {
+                            batch = workerApi.cleanupHistory(before)
+                        } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                            throw cancelled
+                        } catch (refusal: WorkerApi.WorkerRefusal) {
+                            if (refusal.retryable && attempt < CLEANUP_ATTEMPTS_PER_BATCH) {
+                                // A rate limit or a dropped connection: worth one more try.
+                                continue
+                            }
+                            stoppedBy = refusal.message ?: "Cleanup paused."
+                        } catch (error: Exception) {
+                            stoppedBy = error.message ?: "Cleanup paused. You can safely try again."
+                        }
+                    }
+                    val result = batch ?: break
                     before = result.before
                     orders += result.orders
                     notifications += result.notifications
-                    val summary = "$orders finished orders · $notifications kitchen notifications deleted"
-                    _state.value = _state.value.copy(cleanupProgress = summary)
-                    if (!result.more) {
-                        _state.value = _state.value.copy(message = "Cleanup complete. $summary. Active orders were kept.")
-                        return@launch
+                    strategy = result.strategy
+                    if (result.hint != null) hint = result.hint
+                    for (warning in result.warnings) {
+                        if (!warnings.contains(warning)) warnings.add(warning)
                     }
-                    kotlinx.coroutines.delay(1000)
+                    _state.value = _state.value.copy(cleanupProgress = cleanupSummary(orders, notifications))
+                    if (!result.more) break
+                    kotlinx.coroutines.delay(CLEANUP_BATCH_PAUSE_MILLIS)
                 }
-                _state.value = _state.value.copy(message = "Cleanup paused after 100 batches. Run again to continue safely.")
+
+                val done = cleanupSummary(orders, notifications)
+                val message = when {
+                    stoppedBy != null && orders > 0 -> "$stoppedBy\n\nDeleted before it stopped: $done."
+                    stoppedBy != null -> stoppedBy
+                    batches >= CLEANUP_BATCH_LIMIT ->
+                        "Cleanup paused after $CLEANUP_BATCH_LIMIT batches. $done. Run it again to continue — nothing already deleted comes back."
+                    else -> "Cleanup complete. $done. Active orders were kept."
+                }
+                val notice = (warnings + listOfNotNull(hint) + listOfNotNull(
+                    if (strategy == "scan") {
+                        "This project is using the slower index-free scan. Cleanup works, and re-running the seed-config workflow deploys the composite index that makes it fast."
+                    } else {
+                        null
+                    }
+                )).distinct().joinToString("\n\n").ifBlank { null }
+
+                _state.value = _state.value.copy(message = message, cleanupNotice = notice)
             } catch (cancelled: kotlinx.coroutines.CancellationException) {
                 throw cancelled
             } catch (error: Exception) {
-                _state.value = _state.value.copy(message = error.message ?: "Cleanup paused. You can safely try again.")
+                _state.value = _state.value.copy(
+                    message = error.message ?: "Cleanup paused. You can safely try again."
+                )
             } finally {
-                _state.value = _state.value.copy(cleaning = false, busy = false)
+                _state.value = _state.value.copy(cleaning = false, busy = false, cleanupProgress = null)
             }
         }
     }
 
+    /**
+     * Asks the Worker to check the whole cleanup path **without deleting
+     * anything**, and puts the answer on screen.
+     *
+     * This is the difference between "try again" and knowing: a merchant can see
+     * whether the composite index exists, whether the Realtime Database mirrors
+     * are reachable and how many finished orders are waiting, before they commit
+     * to a deletion that cannot be undone.
+     */
+    fun checkCleanupPath() {
+        if (_state.value.busy || _state.value.checkingCleanup) return
+        _state.value = _state.value.copy(checkingCleanup = true, busy = true, cleanupNotice = null)
+        viewModelScope.launch {
+            try {
+                val diagnosis = workerApi.cleanupDiagnosis()
+                val failed = diagnosis.checks.filterNot { it.ok }
+                val lines = mutableListOf(diagnosis.summary)
+                if (diagnosis.finishedSample > 0) {
+                    lines.add("The next batch would delete ${diagnosis.finishedSample} finished order(s).")
+                }
+                if (diagnosis.mirrorsPending > 0) {
+                    lines.add("${diagnosis.mirrorsPending} live mirror(s) are queued from an earlier run and will be retried.")
+                }
+                for (check in diagnosis.checks) {
+                    lines.add("${if (check.ok) "✓" else "✗"} ${check.name} — ${check.detail}")
+                    if (!check.ok && check.hint != null) lines.add("   ${check.hint}")
+                }
+                _state.value = _state.value.copy(
+                    cleanupNotice = lines.joinToString("\n"),
+                    message = if (failed.isEmpty()) {
+                        "History cleanup is fully wired. Nothing is blocking it."
+                    } else {
+                        "History cleanup can run, but ${failed.size} check(s) need attention — read them below."
+                    }
+                )
+            } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                throw cancelled
+            } catch (error: Exception) {
+                _state.value = _state.value.copy(
+                    message = error.message ?: "The history self-test could not reach the Worker."
+                )
+            } finally {
+                _state.value = _state.value.copy(checkingCleanup = false, busy = false)
+            }
+        }
+    }
+
+    private fun cleanupSummary(orders: Int, notifications: Int): String =
+        "$orders finished orders · $notifications kitchen notifications deleted"
+
     fun dismissMessage() {
         _state.value = _state.value.copy(message = null)
+    }
+
+    private companion object {
+        /** How many batches one confirmed tap may drain before it pauses. */
+        const val CLEANUP_BATCH_LIMIT = 100
+
+        /** Attempts per batch: one try plus two retries of a retryable refusal. */
+        const val CLEANUP_ATTEMPTS_PER_BATCH = 3
+
+        const val CLEANUP_RETRY_PAUSE_MILLIS = 1_500L
+        const val CLEANUP_BATCH_PAUSE_MILLIS = 1_000L
     }
 
     override fun onCleared() {

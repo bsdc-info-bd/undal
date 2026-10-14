@@ -10,8 +10,21 @@
 import type { Env } from "../env";
 import { escapeHtml } from "../util/http";
 import { formatPaisa } from "../util/money";
-import { CART_SCRIPT, SESSION_STORAGE_KEY, PROFILE_STORAGE_KEY } from "./cart-client";
+import { dhakaClock, storeStatus } from "../util/store-hours";
+import { CART_SCRIPT } from "./cart-client";
+import { MAP_SCRIPT } from "./map-client";
 import { renderPage } from "./layout";
+import {
+  breadcrumbJsonLd,
+  canonicalUrl,
+  faqEntries,
+  faqJsonLd,
+  itemJsonLd,
+  jsonLdScript,
+  menuJsonLd,
+  organizationJsonLd,
+  websiteJsonLd,
+} from "./seo";
 import {
   populatedSections,
   queryMenu,
@@ -26,8 +39,19 @@ interface ShellOptions {
   title: string;
   description: string;
   body: string;
-  active: "menu" | "basket" | "download" | "track" | "account";
+  active: "menu" | "basket" | "download" | "track" | "account" | "about";
   cacheSeconds?: number;
+  /** Page-specific script, appended after the shared cart script. */
+  script?: string;
+  /** Open Graph URL, when it is not the canonical one. */
+  ogUrl?: string;
+  /** Structured data, one object per entry, serialised into the head. */
+  jsonLd?: unknown[];
+  /** Absolute canonical URL for this page. */
+  canonical?: string;
+  /** `noindex,follow` for a page that is a key rather than a destination. */
+  robots?: string;
+  ogImage?: string;
 }
 
 function nav(active: ShellOptions["active"]): string {
@@ -35,9 +59,10 @@ function nav(active: ShellOptions["active"]): string {
     `<a class="${active === key ? "active" : ""}" ${active === key ? 'aria-current="page"' : ""} href="${href}">${label}</a>`;
   return `<nav class="store" aria-label="Main navigation"><div class="inner">
 ${link("/store", "Menu", "menu")}
+${link("/about", "The kitchen", "about")}
 ${link("/download", "Install", "download")}
 ${link("/track", "Track an order", "track")}
-${link("/login", "Sign in", "account")}
+${link("/account", "Account", "account")}
 <a class="cart" href="/basket">Basket <span id="undal-cart-count" style="display:none"></span></a>
 </div></nav>`;
 }
@@ -56,6 +81,7 @@ function page(options: ShellOptions & { catalogue: Record<string, unknown>; stor
 window.UNDAL_CATALOGUE = ${catalogue};
 window.UNDAL_STORE = ${store};
 ${CART_SCRIPT}
+${options.script ?? ""}
 </script>`;
 
   return renderPage({
@@ -64,8 +90,17 @@ ${CART_SCRIPT}
     body,
     nav: nav(options.active),
     cacheSeconds: options.cacheSeconds ?? 30,
-    ogUrl: undefined,
+    ogUrl: options.ogUrl ?? options.canonical,
+    ogImage: options.ogImage,
+    canonical: options.canonical,
+    robots: options.robots,
+    jsonLd: (options.jsonLd ?? []).map(jsonLdScript).join("\n"),
   });
+}
+
+/** The public origin of this deployment, for canonical URLs and structured data. */
+function originOf(request: Request): string {
+  return new URL(request.url).origin.replace(/\/+$/, "");
 }
 
 /** The catalogue blob every page embeds so the basket can show names and prices. */
@@ -237,6 +272,7 @@ ${campaignCard}
 ${grid}
 <p class="smallprint" style="margin-top:16px">Prices are per dish and include nothing else. The delivery fee is added at checkout from your pinned location, rounded up to whole kilometres.</p>`;
 
+  const origin = originOf(request);
   return page({
     title: `${menu.store?.storeName ?? "Undal HomeKitchen"} — order home-cooked food in Sylhet`,
     description:
@@ -245,13 +281,32 @@ ${grid}
     active: "menu",
     catalogue: catalogueFor(menu),
     store: menu.store,
+    // Every filter and search permutation points at one canonical URL: a crawler
+    // that indexes ?section=rice and ?sort=popular as separate pages dilutes the
+    // menu, and the menu is the page that has to win.
+    canonical: canonicalUrl(origin, "/store"),
+    ogUrl: origin,
+    ogImage: menu.store?.bannerUrl || menu.store?.logoUrl || undefined,
+    jsonLd: [
+      organizationJsonLd(origin, menu.store),
+      websiteJsonLd(origin),
+      breadcrumbJsonLd(origin, [
+        { name: "Home", path: "/" },
+        { name: "Menu", path: "/store" },
+      ]),
+      menuJsonLd(origin, menu.sections, [
+        ...menu.dishes.map((dish) => ({ ...dish, categoryId: dish.categoryId })),
+        ...menu.combos.map((combo) => ({ ...combo, categoryId: "" })),
+      ]),
+    ],
   });
 }
 
 // ---------------------------------------------------------------------- item
 
-export async function handleStoreItem(env: Env, id: string): Promise<Response> {
+export async function handleStoreItem(env: Env, request: Request, id: string): Promise<Response> {
   const menu = await webMenu(env);
+  const origin = originOf(request);
   const item = menu.dishes.find((dish) => dish.id === id) ?? menu.combos.find((combo) => combo.id === id);
   if (!item) {
     return renderPage({
@@ -311,6 +366,18 @@ export async function handleStoreItem(env: Env, id: string): Promise<Response> {
     catalogue: catalogueFor(menu),
     store: menu.store,
     cacheSeconds: 60,
+    canonical: canonicalUrl(origin, `/item/${item.id}`),
+    ogUrl: canonicalUrl(origin, `/item/${item.id}`),
+    ogImage: item.imageUrl || menu.store?.bannerUrl || undefined,
+    jsonLd: [
+      organizationJsonLd(origin, menu.store),
+      breadcrumbJsonLd(origin, [
+        { name: "Home", path: "/" },
+        { name: "Menu", path: "/store" },
+        { name: item.name, path: `/item/${item.id}` },
+      ]),
+      itemJsonLd(origin, item, section?.name ?? (item.kind === "combo" ? "Combos" : undefined)),
+    ],
   });
 }
 
@@ -346,14 +413,18 @@ export async function handleBasket(env: Env): Promise<Response> {
     catalogue: catalogueFor(menu),
     store: menu.store,
     cacheSeconds: 0,
+    // A basket is a step, not a destination: indexed it would only compete with
+    // the menu for the same words.
+    robots: "noindex,follow",
   });
 }
 
 // ------------------------------------------------------------------ checkout
 
-export async function handleCheckout(env: Env): Promise<Response> {
+export async function handleCheckout(env: Env, request: Request): Promise<Response> {
   const menu = await webMenu(env);
   const store = menu.store;
+  const origin = originOf(request);
   if (!store) {
     return renderPage({
       title: "The kitchen is not ready",
@@ -383,20 +454,30 @@ export async function handleCheckout(env: Env): Promise<Response> {
     });
   }
 
+  const storePin = { lat: store.storeLat, lng: store.storeLng, radiusKm: store.radiusKm };
+
   const body = `
 <section class="card">
   <h2>Where should the rider go?</h2>
-  <p class="muted">Tap the button, then check the three boxes below — the landmark is the part riders actually use.</p>
-  <button class="button secondary" id="undal-locate" type="button">Use my current location</button>
-  <div id="undal-locate-result" class="smallprint"></div>
-  <label for="name">Name the kitchen should call out</label>
-  <input id="name" autocomplete="name" placeholder="Rahim" required>
-  <label for="phone">Mobile number the rider will call</label>
-  <input id="phone" inputmode="numeric" autocomplete="tel" placeholder="01712345678" required>
-  <label for="title">Area or neighbourhood</label>
-  <input id="title" placeholder="Zindabazar, Sylhet" required>
-  <label for="desc">House, road and floor</label>
-  <input id="desc" placeholder="House 14, Road 3, first floor, blue gate" required>
+  <p class="muted">Move the map until the green pin is on your door, then <strong>tick it</strong>. The delivery fee is
+  measured from that exact point and the rider is sent to it — so the pin is worth ten seconds of your time.</p>
+  <div id="undal-map"></div>
+  <p class="undal-map-attribution">Tiles © OpenStreetMap contributors · the pin is placed by you, never guessed from your IP address.</p>
+  <div id="undal-radius" class="notice" style="display:none"></div>
+  <div class="auth-split">
+    <div>
+      <label for="name">Name the kitchen should call out</label>
+      <input id="name" autocomplete="name" placeholder="Rahim" required>
+      <label for="phone">Mobile number the rider will call</label>
+      <input id="phone" inputmode="numeric" autocomplete="tel" placeholder="01712345678" required>
+    </div>
+    <div>
+      <label for="title">Area or neighbourhood</label>
+      <input id="title" placeholder="Zindabazar, Sylhet" required>
+      <label for="desc">House, road and floor</label>
+      <input id="desc" placeholder="House 14, Road 3, first floor, blue gate" required>
+    </div>
+  </div>
   <label for="note">One landmark the rider can ask for</label>
   <input id="note" placeholder="Beside the mosque, opposite the tea stall" required>
   <label for="cartnote">Anything the kitchen should know (optional)</label>
@@ -404,7 +485,7 @@ export async function handleCheckout(env: Env): Promise<Response> {
   <label for="coupon">Coupon code (optional)</label>
   <input id="coupon" autocapitalize="characters" placeholder="WELCOME10">
   <div class="row"><span>Food</span><span id="undal-subtotal">৳ 0</span></div>
-  <div class="row"><span>Delivery</span><span id="undal-delivery">measured once you pin the location</span></div>
+  <div class="row"><span>Delivery</span><span id="undal-delivery">measured once you tick the pin</span></div>
   <div class="row"><span class="total">Cash on delivery</span><span class="total" id="undal-total">৳ 0</span></div>
   <div id="undal-cart-lines" class="smallprint" style="display:none"></div>
   <div id="undal-minimum" class="notice" style="display:none"></div>
@@ -421,74 +502,48 @@ export async function handleCheckout(env: Env): Promise<Response> {
     <li><span class="dot"></span><span>You pay the rider in cash when the food arrives.</span></li>
   </ol>
 </section>
+<section class="card">
+  <h2>The three questions everybody asks</h2>
+  <dl>
+    <dt>How do I pay?</dt><dd>Cash on delivery. There is no card, no wallet and no online payment anywhere in Undal.</dd>
+    <dt>How much is delivery?</dt><dd>${escapeHtml(formatPaisa(store.deliveryPerKmAmountPaisa))} for every whole kilometre from the kitchen to your pin, rounded up. The number is on this page before you order.</dd>
+    <dt>Do I need the app?</dt><dd>No. The app adds live status pushes, chat with the kitchen and reorders — everything else, including this checkout, works in the browser.</dd>
+  </dl>
+</section>`;
 
-<script>
+  const script = `${MAP_SCRIPT}
 (function () {
+  var store = window.UNDAL_STORE || {};
+  var storePin = ${JSON.stringify(storePin)};
+  var nameBox = document.getElementById("name");
+  var phoneBox = document.getElementById("phone");
+  var titleBox = document.getElementById("title");
+  var descBox = document.getElementById("desc");
+  var noteBox = document.getElementById("note");
+  var resultHost = document.getElementById("undal-order-result");
+  var placeButton = document.getElementById("undal-place");
+  var notice = document.getElementById("undal-radius");
+
   var position = null;
-  var locateButton = document.getElementById("undal-locate");
-  var result = document.getElementById("undal-locate-result");
+  var ticked = false;
+  var info = {};
 
-  locateButton.addEventListener("click", function () {
-    if (!navigator.geolocation) {
-      result.textContent = "This browser cannot read your location. Please type the address by hand.";
-      return;
-    }
-    result.textContent = "Reading your position…";
-    navigator.geolocation.getCurrentPosition(function (fix) {
-      position = { lat: fix.coords.latitude, lng: fix.coords.longitude };
-      result.textContent = "Pinned at " + position.lat.toFixed(5) + ", " + position.lng.toFixed(5) + ". Filling the address…";
-      // Reverse geocoding happens from this browser directly to OpenStreetMap,
-      // so the visitor's position is never routed through the kitchen's server.
-      fetch("https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=" + position.lat + "&lon=" + position.lng, {
-        headers: { "Accept-Language": "en" }
-      })
-        .then(function (response) { return response.json(); })
-        .then(function (data) {
-          var address = data.address || {};
-          var area = address.suburb || address.neighbourhood || address.village || address.town || address.city || "";
-          var road = [address.house_number, address.road].filter(Boolean).join(" ");
-          if (area && !document.getElementById("title").value) document.getElementById("title").value = area + (address.city && address.city !== area ? ", " + address.city : "");
-          if (road && !document.getElementById("desc").value) document.getElementById("desc").value = road;
-          result.textContent = "Address filled from the map. Check it, and add the landmark the rider should ask for.";
-          updateDeliveryPreview();
-        })
-        .catch(function () {
-          result.textContent = "Location pinned. The address lookup did not answer — please type the three lines by hand.";
-          updateDeliveryPreview();
-        });
-    }, function (error) {
-      result.textContent = "Location refused (" + error.message + "). Type the address and place the order by phone if you prefer.";
-    }, { enableHighAccuracy: true, timeout: 12000, maximumAge: 60000 });
-  });
-
-  function haversine(a, b) {
-    var toRad = function (degrees) { return degrees * Math.PI / 180; };
-    var dLat = toRad(b.lat - a.lat), dLng = toRad(b.lng - a.lng);
-    var h = Math.sin(dLat / 2) * Math.sin(dLat / 2) +
-      Math.cos(toRad(a.lat)) * Math.cos(toRad(b.lat)) * Math.sin(dLng / 2) * Math.sin(dLng / 2);
-    return 6371.0088 * 2 * Math.asin(Math.min(1, Math.sqrt(h)));
+  function showNotice(text, kind) {
+    if (!notice) return;
+    notice.style.display = text ? "block" : "none";
+    notice.className = "notice" + (kind ? " " + kind : "");
+    notice.textContent = text || "";
   }
 
-  function updateDeliveryPreview() {
-    var store = window.UNDAL_STORE || {};
-    var pinned = ${JSON.stringify({ lat: store.storeLat, lng: store.storeLng })};
+  function preview() {
     if (!position) { window.undalRender(); return; }
-    if (!pinned.lat || !pinned.lng) {
-      var unpinned = document.getElementById("undal-radius");
-      if (!unpinned) {
-        unpinned = document.createElement("div");
-        unpinned.id = "undal-radius";
-        unpinned.className = "notice";
-        var anchor = document.getElementById("undal-place");
-        anchor.parentNode.insertBefore(unpinned, anchor);
-      }
-      unpinned.style.display = "block";
-      unpinned.textContent = "The kitchen has not published its exact location yet, so the delivery fee cannot be measured here. " +
-        "Please call the kitchen — they will tell you the honest price to your door.";
+    if (!storePin.lat || !storePin.lng) {
+      showNotice("The kitchen has not published its exact location yet, so the delivery fee cannot be measured here. " +
+        "Please call the kitchen — they will tell you the honest price to your door.");
       window.undalRender();
       return;
     }
-    var km = haversine(pinned, position);
+    var km = window.undalHaversine(storePin, position);
     window.UNDAL_DISTANCE_KM = km;
     window.undalRender();
     var host = document.getElementById("undal-delivery");
@@ -496,43 +551,62 @@ export async function handleCheckout(env: Env): Promise<Response> {
       var fee = Math.ceil(km) * (store.perKmPaisa || 0);
       host.textContent = window.undalMoney(fee) + " (" + km.toFixed(1) + " km, rounded up)";
     }
-    var notice = document.getElementById("undal-radius");
-    if (!notice) {
-      notice = document.createElement("div");
-      notice.id = "undal-radius";
-      notice.className = "notice";
-      var anchor = document.getElementById("undal-place");
-      anchor.parentNode.insertBefore(notice, anchor);
-    }
     if (store.radiusKm && km > store.radiusKm) {
-      notice.style.display = "block";
-      notice.textContent = "That address is " + km.toFixed(1) + " km from the kitchen, outside the " +
-        store.radiusKm + " km delivery radius. Please call the kitchen — they will tell you honestly whether they can get there.";
+      showNotice("That pin is " + km.toFixed(1) + " km from the kitchen, outside the " + store.radiusKm +
+        " km delivery radius. Please call the kitchen — they will tell you honestly whether they can get there.", "error");
+    } else if (!ticked) {
+      showNotice("Move the map until the pin is on your door, then tick it below the map.");
     } else {
-      notice.style.display = "none";
+      showNotice("");
     }
   }
 
-  document.getElementById("undal-place").addEventListener("click", function () {
+  /** The map's own name for the place, written into the empty fields only. */
+  function fillAddress() {
+    if (info.area && !titleBox.value) {
+      titleBox.value = info.city && info.city !== info.area ? info.area + ", " + info.city : info.area;
+    }
+    if (info.road && !descBox.value) descBox.value = info.road;
+  }
+
+  var map = window.undalMap({
+    mount: "undal-map",
+    store: storePin.lat && storePin.lng ? storePin : null,
+    perKmPaisa: store.perKmPaisa || 0,
+    confirmLabel: "Tick this pin as my delivery address",
+    onPin: function (point, next) { position = point; info = next || info; preview(); },
+    onConfirm: function (point, next) { position = point; info = next || info; ticked = true; fillAddress(); preview(); }
+  });
+
+  placeButton.addEventListener("click", function () {
     var button = this;
-    var resultHost = document.getElementById("undal-order-result");
     var lines = window.undalLines();
     if (lines.length === 0) {
-      resultHost.innerHTML = '<div class="notice error">Your basket is empty.</div>';
+      resultHost.innerHTML = '<div class="notice error">Your basket is empty. <a href="/store">Back to the menu</a>.</div>';
       return;
     }
     if (!position) {
-      resultHost.innerHTML = '<div class="notice error">Tap "Use my current location" first — the kitchen measures the delivery fee from it.</div>';
+      resultHost.innerHTML = '<div class="notice error">Move the map so the pin is on your door — the kitchen measures the delivery fee from it.</div>';
       return;
     }
-    var name = document.getElementById("name").value.trim();
-    var phone = document.getElementById("phone").value.trim();
-    var title = document.getElementById("title").value.trim();
-    var desc = document.getElementById("desc").value.trim();
-    var note = document.getElementById("note").value.trim();
-    var localPhone = usablePhone(phone);
-    if (!usableName(name) || !localPhone || !usableText(title) || !usableText(desc) || !usableText(note)) {
-      resultHost.innerHTML = '<div class="notice error">Check these please: your name (letters, three or more), a Bangladeshi mobile like 01712345678, the area, the house and a landmark they can ask for.</div>';
+    if (!ticked) {
+      resultHost.innerHTML = '<div class="notice error">Tick the pin to confirm that is your address. The rider is sent to exactly that point.</div>';
+      return;
+    }
+    var name = nameBox.value.trim();
+    var phone = phoneBox.value.trim();
+    var title = titleBox.value.trim();
+    var desc = descBox.value.trim();
+    var note = noteBox.value.trim();
+    var localPhone = window.undalUsablePhone(phone);
+    var missing = [];
+    if (!window.undalUsableName(name)) missing.push("your name (letters, three or more)");
+    if (!localPhone) missing.push("a Bangladeshi mobile like 01712345678");
+    if (!window.undalUsableText(title)) missing.push("the area");
+    if (!window.undalUsableText(desc)) missing.push("the house and road");
+    if (!window.undalUsableText(note)) missing.push("one landmark the rider can ask for");
+    if (missing.length > 0) {
+      resultHost.innerHTML = '<div class="notice error">Still needed: ' + missing.join(", ") + ".</div>";
       return;
     }
     button.disabled = true;
@@ -548,7 +622,7 @@ export async function handleCheckout(env: Env): Promise<Response> {
             lines: lines,
             couponCode: document.getElementById("coupon").value.trim(),
             note: document.getElementById("cartnote").value.trim(),
-            customerName: name.trim(),
+            customerName: name,
             phone: localPhone,
             address: { lat: position.lat, lng: position.lng, title: title, desc: desc, note: note }
           })
@@ -573,29 +647,48 @@ export async function handleCheckout(env: Env): Promise<Response> {
       });
   });
 
-  // A signed-in customer should not retype what the kitchen already knows.
+  // A signed-in customer should not retype what the kitchen already knows, and a
+  // saved address arrives with its pin already ticked.
   var savedProfile = window.undalProfile ? window.undalProfile() : null;
   if (savedProfile) {
-    if (!document.getElementById("name").value && savedProfile.name) {
-      document.getElementById("name").value = savedProfile.name;
-    }
-    if (!document.getElementById("phone").value && savedProfile.phone) {
-      document.getElementById("phone").value = savedProfile.phone;
+    if (!nameBox.value && savedProfile.name) nameBox.value = savedProfile.name;
+    if (!phoneBox.value && savedProfile.phone) phoneBox.value = savedProfile.phone;
+    var saved = savedProfile.address;
+    if (saved && saved.lat && saved.lng && map) {
+      if (saved.title) titleBox.value = saved.title;
+      if (saved.desc) descBox.value = saved.desc;
+      if (saved.note) noteBox.value = saved.note;
+      map.setPin(saved.lat, saved.lng, 16);
+      map.confirm();
     }
   }
 
   window.undalRender();
-})();
-</script>`;
+})();`;
 
   return page({
     title: "Delivery details — Undal HomeKitchen",
-    description: "Enter the delivery details and place a cash-on-delivery order.",
+    description: "Drop a pin on the map, enter the delivery details and place a cash-on-delivery order.",
     body,
+    script,
     active: "basket",
     catalogue: catalogueFor(menu),
     store: menu.store,
     cacheSeconds: 0,
+    robots: "noindex,follow",
+    canonical: canonicalUrl(origin, "/checkout"),
+    // The questions on this page are the questions Google is asked about the
+    // kitchen, so the same answers are published as structured data.
+    jsonLd: [
+      organizationJsonLd(origin, store),
+      faqJsonLd(origin, store),
+      breadcrumbJsonLd(origin, [
+        { name: "Home", path: "/" },
+        { name: "Menu", path: "/store" },
+        { name: "Basket", path: "/basket" },
+        { name: "Delivery details", path: "/checkout" },
+      ]),
+    ],
   });
 }
 
@@ -603,138 +696,9 @@ export async function handleCheckout(env: Env): Promise<Response> {
 
 // -------------------------------------------------------------------- account
 
-/**
- * `GET /login` — the same account the app uses, on the web (P-013).
- *
- * Signing in is optional: a guest can order without it. What it buys is a
- * checkout form that already knows the name and the mobile number, and a web
- * order that lands in the app's own order history. The password goes to
- * Firebase Authentication through the Worker, which holds the web API key; the
- * browser never sees the key and the Worker never stores a credential.
- */
-export async function handleLoginPage(env: Env, request: Request): Promise<Response> {
-  void request;
-  if (!(env.FIREBASE_WEB_API_KEY ?? "").trim().length) {
-    return renderPage({
-      title: "Sign in — Undal HomeKitchen",
-      description: "Web sign-in is switched off; the Undal app holds the account.",
-      body: `<section class="card"><h2>Signing in on the web is switched off right now</h2>
-<p class="muted">The accounts live in Firebase and this site has not been given the key that talks to it yet. The Undal app signs in as usual, and a guest order here works without an account at all.</p>
-<a class="button" href="/checkout">Order as a guest</a>
-<a class="button secondary" href="/store">Back to the menu</a></section>`,
-      nav: nav("account"),
-      cacheSeconds: 0,
-    });
-  }
-
-  const body = `
-<section class="card">
-  <h2>Sign in to your Undal account</h2>
-  <p class="muted">The same email and password you use in the Undal app. Signing in fills in your name and number at the checkout and keeps this order in your history — a guest order works just as well.</p>
-  <label for="email">Email address</label>
-  <input id="email" type="email" autocomplete="email" inputmode="email" placeholder="you@example.com">
-  <label for="password">Password</label>
-  <input id="password" type="password" autocomplete="current-password" placeholder="Your Undal password">
-  <div id="undal-account-state" class="notice" style="display:none"></div>
-  <div id="undal-signin-result"></div>
-  <button class="button" id="undal-signin" type="button">Sign in</button>
-  <button class="button secondary" id="undal-signout" type="button" style="display:none">Sign out on this phone</button>
-  <a class="button secondary" href="/checkout">Continue as a guest</a>
-  <p class="smallprint">Your password is sent once, over HTTPS, to Firebase Authentication. This site does not keep it, and never asks for it twice.</p>
-</section>
-<section class="card">
-  <h2>What signing in changes</h2>
-  <ol class="steps">
-    <li class="done"><span class="dot"></span><span>Your name and mobile number come from your Undal profile, so the checkout is two taps shorter.</span></li>
-    <li><span class="dot"></span><span>The order appears in the app's order history under the same account.</span></li>
-    <li><span class="dot"></span><span>Everything else is unchanged: cash on delivery, one kitchen, the same food.</span></li>
-  </ol>
-</section>
-<script>
-(function () {
-  var SESSION = ${JSON.stringify(SESSION_STORAGE_KEY)};
-  var PROFILE = ${JSON.stringify(PROFILE_STORAGE_KEY)};
-  var result = document.getElementById("undal-signin-result");
-  var state = document.getElementById("undal-account-state");
-  var signOut = document.getElementById("undal-signout");
-  var emailBox = document.getElementById("email");
-  var passwordBox = document.getElementById("password");
-
-  function read(key) {
-    try { return JSON.parse(sessionStorage.getItem(key) || "null"); } catch (error) { return null; }
-  }
-
-  var session = read(SESSION);
-  if (session && session.idToken && (session.expiresAt || 0) > Date.now()) {
-    var profile = read(PROFILE) || {};
-    state.style.display = "block";
-    state.textContent = "Signed in" + (profile.name ? " as " + profile.name : "") +
-      ". Your next order is saved to your Undal account.";
-    signOut.style.display = "inline-flex";
-  }
-
-  document.getElementById("undal-signin").addEventListener("click", function () {
-    var button = this;
-    var email = emailBox.value.trim();
-    var password = passwordBox.value;
-    if (email.length < 5 || password.length < 6) {
-      result.innerHTML = '<div class="notice error">Enter the email address and password you use in the Undal app.</div>';
-      return;
-    }
-    button.disabled = true;
-    button.textContent = "Signing in\u2026";
-    result.innerHTML = "";
-    fetch("/api/store/signin", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ email: email, password: password })
-    })
-      .then(function (response) {
-        return response.json().then(function (payload) { return { ok: response.ok, payload: payload }; });
-      })
-      .then(function (outcome) {
-        if (!outcome.ok || !outcome.payload.ok) {
-          throw new Error(outcome.payload.message || "The sign-in did not go through.");
-        }
-        try {
-          sessionStorage.setItem(SESSION, JSON.stringify({
-            idToken: outcome.payload.idToken,
-            expiresAt: Date.now() + (outcome.payload.expiresIn || 3600) * 1000
-          }));
-          sessionStorage.setItem(PROFILE, JSON.stringify(outcome.payload.profile || { name: "", phone: "" }));
-        } catch (error) { /* private mode: the checkout makes a fresh session */ }
-        result.innerHTML = '<div class="notice ok">Signed in. Taking you to the checkout\u2026</div>';
-        window.location.href = "/checkout";
-      })
-      .catch(function (error) {
-        button.disabled = false;
-        button.textContent = "Sign in";
-        var notice = document.createElement("div");
-        notice.className = "notice error";
-        notice.setAttribute("role", "alert");
-        notice.textContent = String(error.message || error);
-        result.replaceChildren(notice);
-      });
-  });
-
-  signOut.addEventListener("click", function () {
-    try {
-      sessionStorage.removeItem(SESSION);
-      sessionStorage.removeItem(PROFILE);
-    } catch (error) { /* nothing to clear */ }
-    window.location.reload();
-  });
-})();
-</script>`;
-
-  return renderPage({
-    title: "Sign in — Undal HomeKitchen",
-    description: "Sign in with the Undal account you use in the app, or order as a guest.",
-    body,
-    nav: nav("account"),
-    cacheSeconds: 0,
-  });
-}
+// `/login` and `/account` live in ./account-page.ts: sign-in, sign-up, the
+// profile, the address book, the order history, the password and the account's
+// own end are one feature and are kept in one file.
 
 export async function handleTrackPage(orderId: string): Promise<Response> {
   const body = `<section class="card">
@@ -753,6 +717,7 @@ export async function handleTrackPage(orderId: string): Promise<Response> {
     body,
     nav: nav("track"),
     cacheSeconds: 0,
+    robots: "noindex,follow",
   });
 }
 
@@ -828,5 +793,148 @@ export async function handleOrderTracking(orderId: string): Promise<Response> {
 </script>`,
     nav: nav("track"),
     cacheSeconds: 0,
+  });
+}
+
+// --------------------------------------------------------------------- about
+
+/**
+ * `GET /about` — what Undal is, how an order travels from this website into a
+ * home kitchen, and the questions people ask before ordering. The FAQ is the
+ * very list the structured data carries, so a crawler and a reader are told the
+ * same thing from one place.
+ */
+export async function handleAboutPage(env: Env, request: Request): Promise<Response> {
+  const origin = originOf(request);
+  let menu: WebMenu;
+  try {
+    menu = await webMenu(env);
+  } catch {
+    return renderPage({
+      title: "About the kitchen — Undal",
+      description: "Please try the Undal about page again shortly.",
+      nav: nav("about"),
+      status: 503,
+      cacheSeconds: 0,
+      body: `<section class="card" role="status"><span class="eyebrow">A small pause</span>
+        <h2>We couldn’t reach the kitchen.</h2>
+        <p>Please try again in a minute.</p>
+        <a class="button" href="/store">Go to the menu</a></section>`,
+    });
+  }
+
+  const store = menu.store;
+  const status = storeStatus(store);
+  const clock = dhakaClock();
+  const items = queryMenu(menu, { sectionId: "", subsectionId: "", search: "", sort: "recommended" });
+  const available = items.filter((item) => item.available);
+  const faqs = faqEntries(store);
+  const name = store?.storeName || "Undal HomeKitchen";
+  const radius = store?.radiusKm ?? 0;
+  const perKm = store?.deliveryPerKmAmountPaisa ?? 0;
+
+  const steps: Array<[string, string]> = [
+    ["Pick your food", `Every dish on the menu is cooked to order — ${available.length} of the ${items.length} on the board today. Tap one to read what is in it, how long it takes and what it costs.`],
+    ["Drop your pin", "On the checkout the map shows exactly where we will deliver. Drag the pin, read the address it worked out and tick it. The fee is your distance from the kitchen multiplied by the store's own rate, rounded up to the whole kilometre."],
+    ["Send the order", "The kitchen is alerted the moment you order — a loud looping alarm on the merchant app, even when that phone is asleep, locked or in a pocket. That is why the app asks for the battery exemption."],
+    ["Follow it live", "Your tracking page updates itself. Confirmed, accepted, preparing, ready, dispatched, delivered: each step is written the second the kitchen taps it."]
+  ];
+
+  const todayLine = status.todaySlots.length === 0
+    ? "Closed today"
+    : status.todaySlots.map((slot) => `${escapeHtml(slot.open)} \u2013 ${escapeHtml(slot.close)}`).join(" \u00b7 ");
+
+  const facts: Array<[string, string]> = [
+    ["Kitchen", escapeHtml(store?.storeName || name)],
+    [`Today (${clock.weekday.toUpperCase()})`, todayLine],
+    ["Address", escapeHtml(store?.storeAddressText || "Sylhet, Bangladesh")],
+    ["Delivery radius", radius > 0 ? `${radius} km from the kitchen` : "A fixed radius set by the kitchen"],
+    ["Per kilometre", perKm > 0 ? `${formatPaisa(perKm)} per whole km, rounded up` : "Charged per whole kilometre"],
+    ["Minimum order", (store?.minOrderAmountPaisa ?? 0) > 0 ? formatPaisa(store!.minOrderAmountPaisa) : "None"],
+    ["Payment", "Cash on delivery"],
+    ["On the menu today", `${available.length} available of ${items.length} listed`],
+    ["Right now", escapeHtml(status.headline)]
+  ];
+
+  const body = `<section class="hero">
+  <span class="pill ${status.openNow ? "open" : "closed"}">${escapeHtml(status.headline)}</span>
+  <span class="eyebrow">About the kitchen</span>
+  <h1>One home kitchen. A short menu. A pin you drop yourself.</h1>
+  <p class="lead">Undal is not a cloud kitchen and not an aggregator listing. It is one cook in Sylhet, a menu that changes with what is fresh, and a delivery radius small enough that the food arrives hot. You order from a phone browser or from the app; the kitchen hears the order ring whether its phone is awake or not.</p>
+  <p class="note">${escapeHtml(status.detail)}</p>
+  <div class="actions">
+    <a class="button" href="/store">See today’s menu</a>
+    <a class="button secondary" href="/account">My account</a>
+  </div>
+</section>
+
+<section class="card">
+  <h2>How an order travels</h2>
+  <ol class="steps">
+    ${steps.map(([title, text], index) => `<li><span class="step-number">${index + 1}</span><div><h3>${escapeHtml(title)}</h3><p>${escapeHtml(text)}</p></div></li>`).join("\n    ")}
+  </ol>
+</section>
+
+<section class="split">
+  <div class="card">
+    <h2>The kitchen at a glance</h2>
+    <dl class="facts">
+      ${facts.map(([label, value]) => `<div><dt>${escapeHtml(label)}</dt><dd>${value}</dd></div>`).join("\n      ")}
+    </dl>
+    ${store?.manualOverrideNote ? `<p class="note">${escapeHtml(store.manualOverrideNote)}</p>` : ""}
+  </div>
+  <div class="card">
+    <h2>For the cook</h2>
+    <p>The merchant side is the Android app: the ringing order alert that wakes a sleeping phone, the status ladder, the day's history and the menu editor. One vendor, one kitchen, one device list — no dashboard to learn.</p>
+    <div class="actions">
+      <a class="button secondary" href="/download">Download the app</a>
+      <a class="button ghost" href="/app">Open an app link</a>
+    </div>
+  </div>
+</section>
+
+<section class="card" id="faq">
+  <h2>Questions before you order</h2>
+  ${faqs.map((entry) => `<details class="faq-item"><summary>${escapeHtml(entry.question)}</summary><p>${escapeHtml(entry.answer)}</p></details>`).join("\n  ")}
+</section>
+
+<section class="card">
+  <h2>Share the kitchen</h2>
+  <p class="lead">Send this link to anyone inside the delivery radius. The menu, the prices and the cash-on-delivery rule are the same on every device.</p>
+  <p><code>${escapeHtml(origin)}</code></p>
+  <div class="actions">
+    <a class="button secondary" href="https://wa.me/?text=${encodeURIComponent(`Undal HomeKitchen \u2014 home-cooked food delivered in Sylhet: ${origin}`)}">Share on WhatsApp</a>
+    <a class="button ghost" href="/track">Track an existing order</a>
+  </div>
+</section>
+
+<section class="card">
+  <h2>The small print, plainly</h2>
+  <ul class="plain-list">
+    <li>Money is kept in whole paisa and rounded once, at the end. A split bill never loses a fraction and a discount never turns a price negative.</li>
+    <li>The distance to your pin is measured as the crow flies, and the fee follows that number — not the traffic and not the route the rider chooses.</li>
+    <li>An order without a ticked location cannot be placed: a pin beats a typed address, and it is what the rider is given.</li>
+    <li>Your tracking link is the key to that order. Anyone holding it can watch it; it never shows your phone number or your address.</li>
+    <li>An account is optional. It only keeps your addresses and your order history on this device and in your own profile, so reordering is two taps.</li>
+  </ul>
+</section>`;
+
+  return page({
+    catalogue: catalogueFor(menu),
+    store,
+    title: `About ${name} — a home kitchen in Sylhet`,
+    description: `How ${name} works: ${available.length} dishes cooked to order, a delivery pin you tick yourself, ${radius > 0 ? `${radius} km reach` : "a fixed delivery radius"} and a kitchen that is alerted the moment you order.`,
+    active: "about",
+    cacheSeconds: 60,
+    canonical: canonicalUrl(origin, "/about"),
+    jsonLd: [
+      organizationJsonLd(origin, store),
+      faqJsonLd(origin, store),
+      breadcrumbJsonLd(origin, [
+        { name: "Home", path: "/" },
+        { name: "About the kitchen", path: "/about" },
+      ]),
+    ],
+    body,
   });
 }

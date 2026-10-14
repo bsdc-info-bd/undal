@@ -119,10 +119,27 @@ fun VendorStoreScreen(
                             style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant)
                         state.cleanupProgress?.let { Text(it, style = MaterialTheme.typography.labelLarge) }
+                        state.cleanupNotice?.let { notice ->
+                            UndalAlertBanner(
+                                text = notice,
+                                icon = Icons.Filled.Info
+                            )
+                        }
                         UndalSecondaryButton(
                             text = if (state.cleaning) "Cleaning history…" else "Clear finished history",
                             onClick = { confirmCleanup = true },
                             enabled = !state.busy && state.vendorClaim
+                        )
+                        UndalTextButton(
+                            text = if (state.checkingCleanup) "Checking the history path…" else "Check first — delete nothing",
+                            onClick = viewModel::checkCleanupPath,
+                            enabled = !state.busy && state.vendorClaim,
+                            icon = Icons.Filled.Check
+                        )
+                        Text(
+                            "The check asks the Worker to walk the whole path — the Firestore index, the slower scan that replaces it, the live mirrors and the notification history — and report what it finds without deleting a single order.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
                 }
