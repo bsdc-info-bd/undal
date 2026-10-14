@@ -638,7 +638,7 @@ const APP_ONLY = [
   },
   {
     what: "CouponMath.pickBest (the app's own choice of automatic coupon)",
-    pattern: /CouponMath\.pickBest\(|assertEquals\("soon"|assertEquals\(5_000L, best\?\.discountPaisa\)/,
+    pattern: /CouponMath\.pickBest\(|assertEquals\("SOON"|assertEquals\("EID20"|assertEquals\(5_000L, best\?\.discountPaisa\)/,
     why:
       "the Android cart picks its own best coupon from the board and the server re-prices every order " +
       "before it is written, so the JS copies of that choice are proven by the Worker's own tests",

@@ -171,8 +171,21 @@ class CouponMathTest {
             listOf(small, later, soon),
             CouponMath.Context(25_000, 0, CouponMath.Clock("wed", 12 * 60, now))
         )
-        assertEquals("soon", best?.code)
+        // The code that comes back is the document's identity, not the spelling
+        // the kitchen typed: coupons live at `coupons/{CODE}`, Firestore stores
+        // that path upper case, and the order has to name the document it used.
+        assertEquals("SOON", best?.code)
         assertEquals(5_000L, best?.discountPaisa)
+
+        // So a coupon saved in lower case still applies, and still names `EID20`.
+        val typedLowerCase = CouponMath.Coupon(code = "eid20", type = "percent", value = 10, active = true)
+        assertEquals(
+            "EID20",
+            CouponMath.pickBest(
+                listOf(typedLowerCase),
+                CouponMath.Context(25_000, 0, CouponMath.Clock("wed", 12 * 60, now))
+            )?.code
+        )
 
         // Nothing helps this basket, so nothing is applied: an automatic discount
         // that silently failed is worse than none.
