@@ -15,7 +15,9 @@ import com.undal.syl.app.core.fcm.AlarmChannels
  *   · reschedules the fifteen-minute heartbeat fallback,
  *   · re-registers the FCM token so the phone can be reached before anyone
  *     opens the app,
- *   · brings the heartbeat foreground service back for a signed-in kitchen.
+ *   · brings the heartbeat foreground service back for a signed-in kitchen,
+ *   · brings the live order watcher back, so a rebooted phone rings for an order
+ *     that arrives before anybody touches it.
  *
  * It never touches the customer experience: if nobody is signed in, it simply
  * recreates the channels and returns.
@@ -41,9 +43,16 @@ class BootReceiver : BroadcastReceiver() {
 
         if (isVendor) {
             PresenceHeartbeat.startService(context)
+            // Without this, a rebooted kitchen phone would only ring for an order
+            // that arrived by push until somebody opened the app — and the push is
+            // exactly the route that fails on the phones that need this most.
+            KitchenWatchService.start(context)
             // A rebooted kitchen phone must be able to ring again immediately,
             // so the alert channel state is verified as part of the boot path.
             OrderAlertController.stop()
+        } else if (user != null) {
+            // A customer device must never keep the kitchen's watcher alive.
+            KitchenWatchService.stop(context)
         }
     }
 

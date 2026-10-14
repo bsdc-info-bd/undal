@@ -21,7 +21,13 @@
 import type { Env } from "./env";
 import { projectId } from "./env";
 import { HttpError, clientIp, errorJson, json, rateLimit } from "./util/http";
-import { handleChat, handleOrderCreated, handleOrderStatus, handleVendorSelf } from "./routes/notify";
+import {
+  handleChat,
+  handleOrderCreated,
+  handleOrderStatus,
+  handleTestAlert,
+  handleVendorSelf,
+} from "./routes/notify";
 import { handleAssetLinks } from "./routes/wellknown";
 import { handleDownload, handleLatestJson, handleReleaseWebhook } from "./routes/download";
 import {
@@ -47,9 +53,17 @@ import { handleIcon, handleManifest, handleServiceWorker } from "./web/pwa";
 import { handleItemSharePage, handleOrderOpenPage, handleSmartOpen } from "./web/deeplink";
 import { favicon } from "./web/layout";
 import { runPresenceCheck } from "./crons/presence";
+import { runRealertSweep } from "./crons/realert";
 import { runPromoBlast } from "./crons/promo";
 
 const PRESENCE_CRON = "*/5 * * * *";
+/**
+ * Every minute, on the minute: re-alert orders that are still unanswered.
+ *
+ * Cloudflare's minimum granularity is one minute, so this is the fastest a
+ * server-side repeat can be. The phone-side watcher covers the seconds between.
+ */
+const REALERT_CRON = "* * * * *";
 const PROMO_CRON = "0 12 * * *";
 
 async function health(env: Env): Promise<Response> {
@@ -146,6 +160,7 @@ async function route(request: Request, env: Env): Promise<Response> {
     if (path === "/notify/order-status") return handleOrderStatus(env, request);
     if (path === "/notify/chat") return handleChat(env, request);
     if (path === "/notify/vendor-self") return handleVendorSelf(env, request);
+    if (path === "/notify/test-alert") return handleTestAlert(env, request);
     if (path === "/admin/release") return handleReleaseWebhook(env, request);
     if (path === "/api/store/session") return handleStoreSession(env);
     if (path === "/api/store/signin") return handleStoreSignIn(env, request);
@@ -185,6 +200,21 @@ export default {
       );
       return;
     }
+    if (cron === REALERT_CRON) {
+      ctx.waitUntil(
+        runRealertSweep(env)
+          .then((result) => {
+            // One line per sweep, and only when it did something: a cron that
+            // logs "nothing to do" every minute is a log nobody reads.
+            if (result.realerted > 0 || result.missed > 0 || result.failures.length > 0) {
+              console.log("undal-cron realert", JSON.stringify(result));
+            }
+          })
+          .catch((error) => console.error("undal-cron realert failed", error)),
+      );
+      return;
+    }
+
     if (cron === PROMO_CRON) {
       ctx.waitUntil(
         runPromoBlast(env)

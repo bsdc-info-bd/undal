@@ -78,6 +78,12 @@ jobs:
           python3 tools/check_kotlin_shape.py
           python3 tools/check_import_contracts.py
 
+      # The kitchen's ability to ring spans the Worker and the app: a topic name,
+      # a message type, a channel id, a cron and a route. None of them can be
+      # felt by a test, so they are read from both sides and compared here.
+      - name: Alert ladder gate
+        run: node tools/check-alert-ladder.mjs
+
       - name: Set up JDK 17
         uses: actions/setup-java@v4
         with:

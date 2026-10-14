@@ -54,6 +54,20 @@ def scan(text: str) -> tuple[list[int], int, int]:
                 line += text.count("\n", i, end + 3)
                 i = end + 3
             continue
+        if char == "`":
+            # A backticked identifier — Kotlin's way of writing
+            # `fun `the order didn't ring`()` — is one token, and it may
+            # contain an apostrophe, a brace and a paren, none of which are
+            # code. Without this, a test name like "the worker's spelling"
+            # swallowed the `{` that opened the function body and the file
+            # looked unbalanced.
+            end = text.find("`", i + 1)
+            if end == -1:
+                i = n
+            else:
+                line += text.count("\n", i, end + 1)
+                i = end + 1
+            continue
         if char == "'":
             # A character literal — `','`, `'"'`, `'\\n'` — may contain a quote
             # that must not be mistaken for the start of a string.

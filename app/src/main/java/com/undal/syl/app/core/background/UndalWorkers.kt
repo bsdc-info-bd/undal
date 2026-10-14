@@ -14,6 +14,7 @@ import androidx.work.WorkManager
 import androidx.work.WorkerParameters
 import androidx.work.workDataOf
 import com.google.firebase.auth.FirebaseAuth
+import kotlinx.coroutines.tasks.await
 import dagger.assisted.Assisted
 import dagger.assisted.AssistedInject
 import com.undal.syl.app.core.net.WorkerApi
@@ -83,14 +84,20 @@ class TokenRefreshWorker @AssistedInject constructor(
     @Assisted context: Context,
     @Assisted params: WorkerParameters,
     private val auth: FirebaseAuth,
-    private val registrar: com.undal.syl.app.core.fcm.TokenRegistrar
+    private val registrar: com.undal.syl.app.core.fcm.TokenRegistrar,
+    private val progress: com.undal.syl.app.core.session.OnboardingProgress
 ) : CoroutineWorker(context, params) {
 
     override suspend fun doWork(): Result {
         val user = auth.currentUser ?: return Result.success()
+        // Forced, once, per boot/update: this worker exists precisely for the
+        // moments when the cached token cannot be trusted, and the claim decides
+        // whether this device may read the kitchen's orders at all.
         val isVendor = runCatching {
-            user.getIdToken(false).result?.claims?.get("vendor") == true
+            user.getIdToken(true).await().claims?.get("vendor") == true
         }.getOrDefault(false)
+
+        progress.setKitchenDevice(isVendor)
 
         return registrar.register(uid = user.uid, isVendor = isVendor, subscribeToPromos = !isVendor)
             .fold(onSuccess = { Result.success() }, onFailure = { Result.retry() })
