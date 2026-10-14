@@ -235,6 +235,34 @@ check(
   "a test alert must be distinguishable from a real one and must stop itself",
 );
 
+check(
+  "a silent phone is treated as a phone that cannot ring",
+  /AlertVolume\.arm\(/.test(read(APP_ALERT)) &&
+    /AlertVolume\.raise\(/.test(read("app/src/main/java/com/undal/syl/app/features/vendor/DiagnosticsViewModel.kt")) &&
+    /MODIFY_AUDIO_SETTINGS/.test(manifest) &&
+    /blocking = !volumeHealthy/.test(read("app/src/main/java/com/undal/syl/app/features/vendor/DiagnosticsViewModel.kt")),
+  "the ring plays on the ALARM stream: at zero volume nothing else in this app can make it audible",
+);
+const withoutComments = (source) =>
+  source.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
+
+check(
+  "the sound is prepared before it is asked to play",
+  (() => {
+    // Comments talk about prepare() as well, so the order is read from code only.
+    const code = withoutComments(read(APP_ALERT));
+    const attributes = code.indexOf("setAudioAttributes");
+    const prepare = code.indexOf("prepare()");
+    return attributes !== -1 && prepare !== -1 && attributes < prepare;
+  })(),
+  "setAudioAttributes() after prepare() makes the platform reset the player and start() throw",
+);
+check(
+  "there is a second way to the tone, and a third to a ring",
+  /cachedOrderSound\(\)/.test(read(APP_ALERT)) && /playSystemRinger\(\)/.test(read(APP_ALERT)),
+  "one resource, one decode path: if it fails the kitchen is silent with nothing to say",
+);
+
 // ---------------------------------------------------------------------------
 // 7 · the half of the test only the server can answer
 // ---------------------------------------------------------------------------
