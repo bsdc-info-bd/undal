@@ -74,7 +74,7 @@ export interface KitchenAlertOutcome {
   topic: string;
   topicSent: boolean;
   /**
-   * Everything we have positive proof of. The topic counts as one, not as the
+   * Messages accepted by FCM, NOT proof of device delivery or audible playback. The topic counts as one, not as the
    * number of subscribers — the Worker cannot see FCM's subscription list, and
    * pretending otherwise would make a log line lie.
    */
@@ -108,7 +108,10 @@ export async function raiseKitchenAlert(
     ...(alert.kind ? { kind: alert.kind } : {}),
     ...(alert.extra ?? {}),
   };
-  const options = { data, ttl: alert.ttl ?? "300s", collapseKey };
+  // Never collapse new orders: Android keeps only four collapse keys, so
+  // using one key per order can silently discard a busy kitchen's backlog.
+  const options = { data, ttl: alert.ttl ?? "300s", highPriority: true,
+    collapseKey: data.type === "order_created" ? undefined : collapseKey };
 
   const outcome: KitchenAlertOutcome = {
     tokens: 0,

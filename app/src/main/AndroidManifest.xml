@@ -111,7 +111,7 @@
 
         <!-- The live order watcher: a Firestore listener in the foreground, so an
              order rings this phone even when push does not arrive at all. Silent
-             notification on purpose — it is a guarantee, not an interruption. -->
+             notification on purpose — this is a fallback, not a delivery guarantee. -->
         <service
             android:name=".core.background.KitchenWatchService"
             android:exported="false"
@@ -159,8 +159,9 @@
             </intent-filter>
         </receiver>
 
-        <!-- Push entry point. Data-only messages mean this always runs, in the
-             foreground, in the background and on a locked screen. -->
+        <!-- Push entry point. High-priority data messages can wake a terminated
+             process and reach this callback while locked, subject to Android/FCM
+             restrictions. Force-stopped apps must be opened by the user. -->
         <service
             android:name=".core.fcm.UndalFcmService"
             android:exported="false">

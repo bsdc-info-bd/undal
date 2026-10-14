@@ -105,6 +105,7 @@ class MainActivity : ComponentActivity() {
      */
     private fun extractDeepLink(intent: Intent?): String? {
         val data: Uri = intent?.data ?: return intent?.getStringExtra(EXTRA_DEEP_LINK)
+            ?: intent?.getStringExtra("deepLink")
         return when (data.scheme) {
             "undal" -> (data.host ?: "").plus(data.path.orEmpty()).trimStart('/')
             "https", "http" -> data.path?.trimStart('/')

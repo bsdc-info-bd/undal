@@ -32,8 +32,8 @@ interface ShellOptions {
 
 function nav(active: ShellOptions["active"]): string {
   const link = (href: string, label: string, key: ShellOptions["active"]): string =>
-    `<a class="${active === key ? "active" : ""}" href="${href}">${label}</a>`;
-  return `<nav class="store"><div class="inner">
+    `<a class="${active === key ? "active" : ""}" ${active === key ? 'aria-current="page"' : ""} href="${href}">${label}</a>`;
+  return `<nav class="store" aria-label="Main navigation"><div class="inner">
 ${link("/store", "Menu", "menu")}
 ${link("/download", "Install", "download")}
 ${link("/track", "Track an order", "track")}
@@ -106,7 +106,7 @@ function statusBanner(store: WebStoreConfig | null): string {
 function itemCard(item: WebItem, sectionName: string): string {
   const image = item.imageUrl
     ? `<img src="${escapeHtml(item.imageUrl)}" alt="" loading="lazy" width="480" height="360">`
-    : `<div style="aspect-ratio:4/3;background:#f2f4f0"></div>`;
+    : `<div class="food-placeholder" aria-hidden="true"><span>♨</span><small>From our kitchen</small></div>`;
   const tags: string[] = [];
   if (item.kind === "dish" && item.veg) tags.push(`<span class="tag">Veg</span>`);
   if (item.discountAmountPaisa > 0) tags.push(`<span class="tag off">Save ${formatPaisa(item.discountAmountPaisa)}</span>`);
@@ -134,7 +134,21 @@ ${image}
 
 export async function handleStoreFront(env: Env, request: Request): Promise<Response> {
   const url = new URL(request.url);
-  const menu = await webMenu(env);
+  let menu: WebMenu;
+  try {
+    menu = await webMenu(env);
+  } catch {
+    return renderPage({
+      title: "Kitchen temporarily unavailable — Undal",
+      description: "Please try the Undal menu again shortly.",
+      nav: nav("menu"), status: 503, cacheSeconds: 0,
+      body: `<section class="card" role="status"><span class="eyebrow">A small pause</span>
+        <h2>We couldn’t reach the kitchen.</h2>
+        <p>Your saved basket is still on this device. Please try again shortly.</p>
+        <a class="button" href="/store">Try the menu again</a>
+        <a class="button secondary" href="/track">Track an existing order</a></section>`,
+    });
+  }
   const sectionId = url.searchParams.get("section") ?? "";
   const subsectionId = url.searchParams.get("sub") ?? "";
   const search = (url.searchParams.get("q") ?? "").slice(0, 60);
@@ -195,8 +209,21 @@ export async function handleStoreFront(env: Env, request: Request): Promise<Resp
     .join("");
 
   const body = `
+<section class="store-hero" aria-labelledby="welcome-title">
+  <div><span class="eyebrow">Made with care · Sylhet, Bangladesh</span>
+    <h2 id="welcome-title">A little taste<br>of <em>home.</em></h2>
+    <p>Comforting meals from our kitchen to your table. Find your favourites, choose your delivery spot, and leave the cooking to us.</p>
+    <a class="button" href="#menu">Explore the menu ↓</a>
+  </div>
+  <aside class="hero-note"><span class="hero-mark" aria-hidden="true">♨</span>
+    <h3>Good food. A simpler day.</h3>
+    <p>One local kitchen. Food made with care.</p><hr>
+    <p><strong>Cash on delivery</strong><br>Order here, pay when your meal arrives. Delivery availability is checked at checkout.</p>
+  </aside>
+</section>
 ${statusBanner(menu.store)}
 ${campaignCard}
+<div class="menu-heading" id="menu"><h2>What sounds good today?</h2><p class="muted">${items.length} menu choices · Find your favourite</p></div>
 <form class="search" action="/store" method="get" role="search">
   <input type="search" name="q" value="${escapeHtml(search)}" placeholder="Search the menu — bhorta, chicken, tea…" aria-label="Search the menu">
   ${sectionId ? `<input type="hidden" name="section" value="${escapeHtml(sectionId)}">` : ""}
@@ -682,7 +709,11 @@ export async function handleLoginPage(env: Env, request: Request): Promise<Respo
       .catch(function (error) {
         button.disabled = false;
         button.textContent = "Sign in";
-        result.innerHTML = '<div class="notice error">' + String(error.message || error) + "</div>";
+        var notice = document.createElement("div");
+        notice.className = "notice error";
+        notice.setAttribute("role", "alert");
+        notice.textContent = String(error.message || error);
+        result.replaceChildren(notice);
       });
   });
 
@@ -778,7 +809,7 @@ export async function handleOrderTracking(orderId: string): Promise<Response> {
       noteHost.innerHTML = '<p class="muted">' + pair[1] + "</p>";
     }
     document.getElementById("undal-order-total").textContent =
-      (order.totalPaisa / 100).toLocaleString("en-US", { minimumFractionDigits: order.totalPaisa % 100 ? 2 : 0, maximumFractionDigits: 2 }).replace(/^/, "\\u09F3 ");
+      (order.totalPaisa / 100).toLocaleString("en-US", { minimumFractionDigits: order.totalPaisa % 100 ? 2 : 0, maximumFractionDigits: 2 }).replace(/^/, "৳ ");
     document.getElementById("undal-updated").textContent = order.updatedAt ? "Last update: " + order.updatedAt : "";
     if (order.status === "delivered" || order.status === "cancelled") {
       window.clearInterval(window._undalPoll);

@@ -35,6 +35,7 @@ class VendorStoreViewModel @Inject constructor(
     private val storeRepo: StoreRepo,
     private val vendorStoreRepo: VendorStoreRepo,
     private val locationController: UndalLocationController,
+    private val workerApi: com.undal.syl.app.core.net.WorkerApi,
     private val sessionKeeper: VendorSessionKeeper
 ) : ViewModel() {
 
@@ -53,6 +54,8 @@ class VendorStoreViewModel @Inject constructor(
         val uploadProgress: Float? = null,
         val locating: Boolean = false,
         val busy: Boolean = false,
+        val cleaning: Boolean = false,
+        val cleanupProgress: String? = null,
         val dirty: Boolean = false,
         val vendorClaim: Boolean = true,
         val message: String? = null
@@ -297,6 +300,39 @@ class VendorStoreViewModel @Inject constructor(
             player?.start()
         }.onSuccess { _state.value = _state.value.copy(message = message) }
             .onFailure { _state.value = _state.value.copy(message = "This phone refused to play the sound.") }
+    }
+
+    /** One confirmed action drains bounded batches; interruption is safe to retry. */
+    fun cleanupHistory() {
+        if (_state.value.busy || _state.value.cleaning) return
+        _state.value = _state.value.copy(cleaning = true, busy = true, cleanupProgress = "Starting cleanup…")
+        viewModelScope.launch {
+            var orders = 0
+            var notifications = 0
+            var before: String? = null
+            try {
+                repeat(100) {
+                    val result = workerApi.cleanupHistory(before)
+                    before = result.before
+                    orders += result.orders
+                    notifications += result.notifications
+                    val summary = "$orders finished orders · $notifications kitchen notifications deleted"
+                    _state.value = _state.value.copy(cleanupProgress = summary)
+                    if (!result.more) {
+                        _state.value = _state.value.copy(message = "Cleanup complete. $summary. Active orders were kept.")
+                        return@launch
+                    }
+                    kotlinx.coroutines.delay(1000)
+                }
+                _state.value = _state.value.copy(message = "Cleanup paused after 100 batches. Run again to continue safely.")
+            } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                throw cancelled
+            } catch (error: Exception) {
+                _state.value = _state.value.copy(message = error.message ?: "Cleanup paused. You can safely try again.")
+            } finally {
+                _state.value = _state.value.copy(cleaning = false, busy = false)
+            }
+        }
     }
 
     fun dismissMessage() {

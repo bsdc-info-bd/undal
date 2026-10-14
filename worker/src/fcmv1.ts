@@ -2,7 +2,7 @@
  * Firebase Cloud Messaging — HTTP v1 only (LAW-9).
  *
  * Two rules shape this file:
- *   1. Messages are DATA-ONLY. A `notification` payload would let the system
+ *   1. Kitchen alarm messages are DATA-ONLY. A `notification` payload would let the system
  *      tray swallow the message in the background and `onMessageReceived` would
  *      never run — which would break the vendor order-alert loop (PART I).
  *   2. A token that FCM reports as UNREGISTERED must be deleted from
@@ -18,13 +18,15 @@ export interface PushOptions {
   ttl?: string;
   collapseKey?: string;
   highPriority?: boolean;
+  /** Customer status only: Android displays this even without an app callback. */
+  display?: { title: string; body: string; channelId: string; tag: string };
 }
 
 export type PushResult =
   | { ok: true }
   | { ok: false; status: number; code: string; unregistered: boolean };
 
-function body(data: Record<string, string>, options: PushOptions): string {
+export function pushBody(data: Record<string, string>, options: PushOptions): string {
   const message: Record<string, unknown> = {
     data,
     android: {
@@ -32,6 +34,14 @@ function body(data: Record<string, string>, options: PushOptions): string {
       ttl: options.ttl ?? "300s",
     },
   };
+  if (options.display && data.type !== "order_created") {
+    message.notification = { title: options.display.title, body: options.display.body };
+    (message.android as Record<string, unknown>).notification = {
+      channel_id: options.display.channelId, tag: options.display.tag,
+      default_sound: true, default_vibrate_timings: true, visibility: "PRIVATE",
+      icon: "ic_undal_mark", color: "#165B3B",
+    };
+  }
   if (options.collapseKey) {
     (message.android as Record<string, unknown>).collapse_key = options.collapseKey;
   }
@@ -42,7 +52,7 @@ async function send(env: Env, target: { token?: string; topic?: string }, option
   if (!target.token && !target.topic) return { ok: false, status: 400, code: "NO_TARGET", unregistered: false };
 
   const endpoint = `https://fcm.googleapis.com/v1/projects/${projectId(env)}/messages:send`;
-  const payload = body(options.data, options);
+  const payload = pushBody(options.data, options);
   const withTarget = (raw: string): string => {
     const parsed = JSON.parse(raw) as { message: Record<string, unknown> };
     if (target.token) parsed.message.token = target.token;
@@ -111,13 +121,15 @@ export async function sendToTokens(
   concurrency = 20,
 ): Promise<FanOutResult> {
   const result: FanOutResult = { sent: 0, failed: 0, unregisteredTokens: [] };
-  const queue = [...tokens];
+  const queue = [...new Set(tokens.filter(Boolean))];
 
   const worker = async (): Promise<void> => {
     for (;;) {
       const token = queue.shift();
       if (!token) return;
-      const outcome = await sendToToken(env, token, options);
+      const outcome = await sendToToken(env, token, options).catch((): PushResult => ({
+        ok: false, status: 503, code: "TRANSPORT_ERROR", unregistered: false,
+      }));
       if (outcome.ok) {
         result.sent += 1;
       } else {
@@ -127,7 +139,7 @@ export async function sendToTokens(
     }
   };
 
-  const workers = Array.from({ length: Math.min(concurrency, Math.max(1, tokens.length)) }, worker);
+  const workers = Array.from({ length: Math.min(Math.max(1, Math.floor(concurrency) || 1), Math.max(1, queue.length)) }, worker);
   await Promise.all(workers);
   return result;
 }
