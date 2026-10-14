@@ -100,7 +100,12 @@ def main(argv: list[str]) -> int:
         with zipfile.ZipFile(apk) as archive:
             names = archive.namelist()
         raw = sorted(n for n in names if n.startswith("res/raw") or "raw" in n.lower())
-        print(f"  · APK has {len(names)} entries; raw-related entries: {raw[:20] or 'none'}")
+        res_dirs = sorted({"/".join(n.split("/")[:2]) for n in names if n.startswith("res/")})
+        print(f"  · APK has {len(names)} entries; res/ directories: {res_dirs[:25] or 'none'}")
+        with zipfile.ZipFile(apk) as archive:
+            arsc = archive.read("resources.arsc") if "resources.arsc" in names else b""
+        print(f"  · resources.arsc names: undal_order_alert={b'undal_order_alert' in arsc} "
+              f"undal_prep_tick={b'undal_prep_tick' in arsc} ({len(arsc):,} bytes)")
         print("  · sample entries: " + ", ".join(sorted(names)[:12]))
         return fail(problems)
 
