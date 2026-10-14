@@ -408,6 +408,15 @@ export class FakeFirebase {
     if (route === "accounts:signUp") {
       const email = String(body.email ?? "").toLowerCase();
       const password = String(body.password ?? "");
+      // No credentials at all is Firebase's *anonymous* sign-up — the REST shape
+      // the web store's session endpoint uses, and the one `signInAnonymously`
+      // sends. Real Identity Toolkit mints a user; only the email/password form
+      // of this route has a password to be weak.
+      if (!email && !password) {
+        this.accountSequence += 1;
+        const uid = `anon-${this.accountSequence}`;
+        return Response.json(await this.issueSession(uid));
+      }
       if (password.length < 6) return this.authRefusal(400, "WEAK_PASSWORD : Password should be at least 6 characters");
       if ([...this.accounts.values()].some((account) => account.email === email)) {
         return this.authRefusal(400, "EMAIL_EXISTS : The email address is already in use by another account.");

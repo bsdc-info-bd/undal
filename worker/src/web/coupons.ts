@@ -52,7 +52,7 @@ export interface CouponDocument {
   maxDiscountPaisa?: number;
   /** Applied to every basket it helps, with no code typed. */
   autoApply?: boolean;
-  /** Published as a banner on the web store. Absent means "when autoApply". */
+  /** Published in the web store's offer strip. Absent means shown. */
   showOnWeb?: boolean;
   /** Optional banner picture. */
   bannerUrl?: string;
@@ -369,9 +369,13 @@ export function toBoardEntry(raw: CouponDocument): CouponBoardEntry | null {
   const autoApply = raw.autoApply !== false;
   return {
     autoApply,
-    // A code-only secret stays a secret: `showOnWeb` may only *widen* what an
-    // automatic coupon shows, never publish one the kitchen kept private.
-    showOnWeb: autoApply && raw.showOnWeb !== false,
+    // Two independent switches, and the kitchen owns both. `autoApply` decides
+    // whether a basket applies it with no code typed; `showOnWeb` decides whether
+    // it appears in the offer strip. A code-only promotion the kitchen chose to
+    // advertise — "type EID20" — is a real thing a partner app must support, so
+    // the entry reports the switch rather than a rule of its own. Absent means
+    // shown, exactly as it does in the vendor console and in the app.
+    showOnWeb: raw.showOnWeb !== false,
     code,
     type,
     value: Number.isFinite(Number(raw.value)) ? Number(raw.value) : 0,
@@ -409,7 +413,7 @@ export function buildCouponBoard(coupons: CouponDocument[], now = Date.now()): C
   const entries: CouponBoardEntry[] = [];
   for (const raw of coupons) {
     if (raw.active !== true) continue;
-    if (raw.autoApply === false && raw.showOnWeb !== true) continue;
+    if (raw.autoApply === false && raw.showOnWeb === false) continue;
     const expiry = couponExpiryMillis(raw.expiresAt);
     if (expiry > 0 && expiry <= now) continue;
     const usageLimit = Number(raw.usageLimit ?? 0);

@@ -195,6 +195,19 @@ check(
   `${STORE_ROUTES}: the board has to be readable before anyone signs in, and cheap enough for a phone`,
 );
 check(
+  "a code-only coupon the kitchen advertised is published",
+  /showOnWeb:\s*raw\.showOnWeb\s*!==\s*false/.test(coupons) &&
+    /coupon\.autoApply\s*\?\s*"Applied automatically"\s*:\s*"Type this code at checkout"/.test(storePages),
+  `${COUPONS}: the storefront renders a "type this code" tag, so toBoardEntry must report the ` +
+    `kitchen's showOnWeb switch — a rule of its own here makes that tag unreachable`,
+);
+check(
+  "only a coupon nobody can use is kept off the board",
+  /raw\.autoApply\s*===\s*false\s*&&\s*raw\.showOnWeb\s*===\s*false/.test(coupons),
+  `${COUPONS}: buildCouponBoard drops a coupon that is neither automatic nor advertised, and ` +
+    `nothing else — absent switch fields mean shown, as they do in the console`,
+);
+check(
   "the app has a Kotlin twin of the rule",
   read("app/src/main/java/com/undal/syl/app/core/util/CouponMath.kt").includes("fun discountPaisa(") &&
     read("app/src/test/java/com/undal/syl/app/core/util/CouponMathTest.kt").includes("assertDiscount("),

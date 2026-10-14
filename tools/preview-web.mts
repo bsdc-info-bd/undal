@@ -22,6 +22,7 @@
  */
 import { createServer } from "node:http";
 import worker from "../worker/src/index";
+import { buildCouponBoard, type CouponDocument } from "../worker/src/web/coupons";
 import { FakeFirebase } from "../worker/test/helpers/fake-firebase";
 
 const PORT = Number(process.argv[2] ?? process.env.PORT ?? 8787);
@@ -84,6 +85,42 @@ const dish = (
   ...extras,
 });
 
+/**
+ * The promotions, in the shape the kitchen's console saves them — raw coupon
+ * documents, not board entries. Both the preview's cached menu and its live
+ * Firestore read go through the shipping `buildCouponBoard`, so what the strip
+ * shows here is what the strip shows in production, switches and all.
+ */
+const couponDocs: CouponDocument[] = [
+  {
+    code: "EID20",
+    type: "percent",
+    value: 20,
+    description: "Eid week: 20% off the whole basket",
+    active: true,
+    autoApply: true,
+    showOnWeb: true,
+    minSubtotalAmountPaisa: 50000,
+    maxDiscountPaisa: 15000,
+    expiresAt: new Date(now + 6 * 60 * 60 * 1000).toISOString(),
+    usageLimit: 40,
+    usedCount: 7,
+  },
+  {
+    code: "FREESHIP",
+    type: "freedelivery",
+    value: 0,
+    description: "Free delivery on orders from ৳ 600",
+    active: true,
+    // Code only, and deliberately advertised: the console's third reach state.
+    // It must reach the strip and must never be applied by itself.
+    autoApply: false,
+    showOnWeb: true,
+    minSubtotalAmountPaisa: 60000,
+    expiresAt: 0,
+  },
+];
+
 const menu = {
   fetchedAt: now,
   store,
@@ -95,6 +132,7 @@ const menu = {
   ],
   subsections: [],
   campaigns: [],
+  coupons: buildCouponBoard(couponDocs, now),
   combos: [{
     id: "family-friday",
     kind: "combo",
@@ -131,6 +169,25 @@ const menu = {
 
 const backend = new FakeFirebase();
 backend.kv.set("web:menu:v1", JSON.stringify(menu));
+
+// The same catalogue in the shape the Worker reads live from Firestore, because
+// the checkout re-prices every order from documents (`webMenu({ force: true })`)
+// and never from the cache. Without this the preview would take the fast path
+// and fail the slow one, which is exactly the difference that hides bugs: the
+// cached menu would render fine while every order complained that the dish had
+// left the menu.
+for (const section of menu.sections) {
+  backend.setDocument(`categories/${section.id}`, { ...section });
+}
+for (const dish of menu.dishes) {
+  backend.setDocument(`menuItems/${dish.id}`, { ...dish });
+}
+for (const combo of menu.combos) {
+  backend.setDocument(`combos/${combo.id}`, { ...combo });
+}
+for (const coupon of couponDocs) {
+  backend.setDocument(`coupons/${coupon.code}`, { ...coupon });
+}
 backend.kv.set("release:latest", JSON.stringify({
   versionName: "1.4.0",
   versionCode: 14,
