@@ -33,8 +33,10 @@ import {
   handleVendorSelf,
 } from "./routes/notify";
 import { handleAssetLinks } from "./routes/wellknown";
+import { handleAccountForm, handleBasketForm, handleCheckoutPlace, handleCookieSession } from "./routes/webfallback";
 import { handleDownload, handleLatestJson, handleReleaseWebhook } from "./routes/download";
 import {
+  handleStoreCouponsApi,
   handleStoreMenuApi,
   handleStoreOrder,
   handleStoreOrderStatus,
@@ -70,7 +72,8 @@ import { handleDownloadPage } from "./web/download-page";
 import { handleIcon, handleManifest, handleServiceWorker } from "./web/pwa";
 import { handleItemSharePage, handleOrderOpenPage, handleSmartOpen } from "./web/deeplink";
 import { favicon } from "./web/layout";
-import { runPresenceCheck } from "./crons/presence";
+import { runOpeningReminder } from "./crons/opening";
+import { runPresenceSweep } from "./crons/presence";
 import { runRealertSweep } from "./crons/realert";
 import { runPromoBlast } from "./crons/promo";
 
@@ -145,7 +148,7 @@ async function route(request: Request, env: Env): Promise<Response> {
 
   if (path === "/" || path === "/store") return handleStoreFront(env, request);
   if (path === "/about") return handleAboutPage(env, request);
-  if (path === "/basket") return handleBasket(env);
+  if (path === "/basket") return handleBasket(env, request);
   if (path === "/checkout") return handleCheckout(env, request);
   if (path === "/login") return handleLoginPage(env, request);
   if (path === "/account") return handleAccountPage(env, request);
@@ -185,6 +188,16 @@ async function route(request: Request, env: Env): Promise<Response> {
   }
 
   if (request.method === "POST") {
+    // The plain-HTML layer: the same actions the script performs, posted by a
+    // browser that has no script at all. These are the routes that make sign-in,
+    // registration, "continue as a guest" and the basket work on every phone.
+    if (path === "/basket/add") return handleBasketForm(request, "add");
+    if (path === "/basket/set") return handleBasketForm(request, "set");
+    if (path === "/basket/remove") return handleBasketForm(request, "remove");
+    if (path === "/basket/clear") return handleBasketForm(request, "clear");
+    if (path === "/checkout/place") return handleCheckoutPlace(env, request);
+    if (path === "/login") return handleAccountForm(env, request);
+
     if (path === "/notify/order-created") return handleOrderCreated(env, request);
     if (path === "/notify/order-status") return handleOrderStatus(env, request);
     if (path === "/notify/chat") return handleChat(env, request);
@@ -214,6 +227,8 @@ async function route(request: Request, env: Env): Promise<Response> {
   }
 
   if (path === "/api/store/menu") return handleStoreMenuApi(env);
+  if (path === "/api/store/coupons") return handleStoreCouponsApi(env);
+  if (path === "/api/account/session") return handleCookieSession(request);
   if (path === "/api/account/profile") return handleAccountProfileGet(env, request);
   if (path === "/api/account/addresses") return handleAccountAddressesGet(env, request);
   if (path === "/api/account/orders") return handleAccountOrders(env, request);
@@ -249,9 +264,24 @@ export default {
     const cron = controller.cron;
     if (cron === PRESENCE_CRON) {
       ctx.waitUntil(
-        runPresenceCheck(env)
-          .then((result) => console.log("undal-cron presence", JSON.stringify(result)))
+        // Presence first — a store that has to be paused is paused before the
+        // opening reminder below asks anybody to open anything.
+        runPresenceSweep(env)
+          .then((result) => {
+            // Only the sweeps that decided something are logged: five minutes of
+            // "device-present" is a log nobody reads.
+            if (result.action !== "none" || result.reason === "device-never-seen") {
+              console.log("undal-cron presence", JSON.stringify(result));
+            }
+          })
           .catch((error) => console.error("undal-cron presence failed", error)),
+      );
+      ctx.waitUntil(
+        runOpeningReminder(env)
+          .then((result) => {
+            if (result.reminded) console.log("undal-cron opening", JSON.stringify(result));
+          })
+          .catch((error) => console.error("undal-cron opening failed", error)),
       );
       return;
     }

@@ -9,6 +9,7 @@
  */
 import type { Env } from "../env";
 import { fsGet, fsQuery, type FsRecord } from "../firestore";
+import { buildCouponBoard, type CouponBoardEntry, type CouponDocument } from "./coupons";
 
 export interface WebStoreSlot {
   open: string;
@@ -106,6 +107,13 @@ export interface WebMenu {
   dishes: WebDish[];
   combos: WebCombo[];
   campaigns: WebCampaign[];
+  /**
+   * The coupons the kitchen published for this storefront: live, automatic ones,
+   * with their conditions and their banner text. This is the same board the
+   * Android app reads (`config/couponBoard`), so a coupon the owner creates
+   * appears on the web **and** in the app, and is applied by itself in both.
+   */
+  coupons: CouponBoardEntry[];
   store: WebStoreConfig | null;
 }
 
@@ -186,12 +194,16 @@ export function toStoreConfig(record: FsRecord | null): WebStoreConfig | null {
 }
 
 async function readMenu(env: Env): Promise<WebMenu> {
-  const [sections, subsections, dishes, combos, campaigns, store] = await Promise.all([
+  const [sections, subsections, dishes, combos, campaigns, coupons, store] = await Promise.all([
     fsQuery(env, { collectionId: "categories", limit: 60 }).catch(() => []),
     fsQuery(env, { collectionId: "subcategories", limit: 120 }).catch(() => []),
     fsQuery(env, { collectionId: "menuItems", limit: 300 }).catch(() => []),
     fsQuery(env, { collectionId: "combos", limit: 100 }).catch(() => []),
     fsQuery(env, { collectionId: "campaigns", limit: 40 }).catch(() => []),
+    // The discount table, read with the service account — the same read the
+    // Android app does through `config/couponBoard` when it is published. A
+    // Firestore failure here must never take the menu down with it.
+    fsQuery(env, { collectionId: "coupons", limit: 60 }).catch(() => []),
     fsGet(env, "config/store").catch(() => null),
   ]);
 
@@ -232,6 +244,9 @@ async function readMenu(env: Env): Promise<WebMenu> {
         active: bool(record.active, true),
       }))
       .filter((campaign) => campaign.title.length > 0),
+    coupons: buildCouponBoard(
+      coupons.map((record) => ({ ...(record as CouponDocument), code: str(record.code, String(record.id)) })),
+    ),
     store: toStoreConfig(store),
   };
 }
@@ -240,7 +255,11 @@ async function readMenu(env: Env): Promise<WebMenu> {
 export async function webMenu(env: Env, options: { force?: boolean } = {}): Promise<WebMenu> {
   if (!options.force) {
     const cached = (await env.UNDAL_KV.get(MENU_KEY, "json").catch(() => null)) as WebMenu | null;
-    if (cached && Date.now() - cached.fetchedAt < MENU_TTL_SECONDS * 1000) return cached;
+    if (cached && Date.now() - cached.fetchedAt < MENU_TTL_SECONDS * 1000) {
+      // A snapshot written before the coupon board existed is still a good menu.
+      // Filling the gap here means no page has to defend against its own cache.
+      return { ...cached, coupons: cached.coupons ?? [] };
+    }
   }
   const menu = await readMenu(env);
   await env.UNDAL_KV.put(MENU_KEY, JSON.stringify(menu), { expirationTtl: 3600 }).catch(() => undefined);

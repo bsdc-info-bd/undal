@@ -12,6 +12,8 @@ import { escapeHtml } from "../util/http";
 import { formatPaisa } from "../util/money";
 import { dhakaClock, storeStatus } from "../util/store-hours";
 import { CART_SCRIPT } from "./cart-client";
+import { couponConditionLine, couponHeadline, type CouponBoardEntry } from "./coupons";
+import { readCookieCart, type CookieCart } from "./forms";
 import { MAP_SCRIPT } from "./map-client";
 import { renderPage } from "./layout";
 import {
@@ -26,6 +28,7 @@ import {
   websiteJsonLd,
 } from "./seo";
 import {
+  menuItem,
   populatedSections,
   queryMenu,
   toStoreConfig,
@@ -67,19 +70,30 @@ ${link("/account", "Account", "account")}
 </div></nav>`;
 }
 
-function page(options: ShellOptions & { catalogue: Record<string, unknown>; store: WebStoreConfig | null }): Response {
+function page(options: ShellOptions & {
+  catalogue: Record<string, unknown>;
+  store: WebStoreConfig | null;
+  /** The kitchen's automatic coupons, so the basket can apply the best one. */
+  coupons?: CouponBoardEntry[];
+  /** The basket a customer built with no script at all, from its cookie. */
+  serverCart?: CookieCart | null;
+}): Response {
   const catalogue = JSON.stringify(options.catalogue).replace(/</g, "\\u003c");
   const store = JSON.stringify({
     perKmPaisa: options.store?.deliveryPerKmAmountPaisa ?? 0,
     radiusKm: options.store?.radiusKm ?? 0,
     minOrderPaisa: options.store?.minOrderAmountPaisa ?? 0,
   }).replace(/</g, "\\u003c");
+  const coupons = JSON.stringify(options.coupons ?? []).replace(/</g, "\\u003c");
+  const serverCart = JSON.stringify(options.serverCart ?? null).replace(/</g, "\\u003c");
 
   const body = `${options.body}
 <div id="undal-flash" class="notice" style="display:none"></div>
 <script>
 window.UNDAL_CATALOGUE = ${catalogue};
 window.UNDAL_STORE = ${store};
+window.UNDAL_COUPONS = ${coupons};
+window.UNDAL_SERVER_CART = ${serverCart};
 ${CART_SCRIPT}
 ${options.script ?? ""}
 </script>`;
@@ -138,6 +152,63 @@ function statusBanner(store: WebStoreConfig | null): string {
 </div>`;
 }
 
+/** The "add to basket" control: a form first, a scripted button second. */
+function addForm(item: WebItem, options: { next?: "basket" | "store"; label?: string; wide?: boolean } = {}): string {
+  const label = options.label ?? "Add to basket";
+  const next = options.next === "basket" ? "/basket" : "/store";
+  return `<form class="undal-add${options.wide ? " undal-add-wide" : ""}" method="post" action="/basket/add"
+  data-undal-form="add" data-undal-next="${options.next === "basket" ? "basket" : "store"}"
+  data-undal-item="${escapeHtml(item.id)}">
+  <input type="hidden" name="id" value="${escapeHtml(item.id)}">
+  <input type="hidden" name="qty" value="1">
+  <input type="hidden" name="next" value="${next}">
+  <button class="button" type="submit"${item.available ? "" : " disabled"}>${escapeHtml(item.available ? label : "Sold out")}</button>
+</form>`;
+}
+
+/**
+ * The coupon strip (V-071 … V-078).
+ *
+ * A coupon the kitchen creates shows up here — headline, the condition in plain
+ * words, the code — and is applied by itself at the checkout, on the web and in
+ * the app. The banner is deliberately server-rendered: a discount that only
+ * appears when a script runs is a discount half the phones never see.
+ */
+/**
+ * The offers the kitchen is running right now, as banners on the store, the item
+ * page, the basket and the checkout.
+ *
+ * This is the half of a promotion the owner cannot check any other way: they
+ * create a coupon in the app, and they must be able to see the banner a customer
+ * sees. The other half — money actually coming off — is `buildCouponBoard` plus
+ * the basket's own arithmetic.
+ *
+ * A coupon marked code-only still gets its banner, with the code and the words
+ * "use this code": it is a made-to-be-seen offer, just not an automatic one.
+ */
+function couponStrip(coupons: CouponBoardEntry[]): string {
+  const visible = coupons.filter((coupon) => coupon.showOnWeb);
+  if (visible.length === 0) return "";
+  const cards = visible
+    .slice(0, 3)
+    .map(
+      (coupon) => `<div class="coupon-banner">
+  <div>
+    <span class="eyebrow">Undal offer</span>
+    <h3>${escapeHtml(couponHeadline(coupon.type, coupon.value, coupon.maxDiscountPaisa))}</h3>
+    <p class="muted">${escapeHtml(couponConditionLine(coupon)) || "On everything we cook."}</p>
+    ${coupon.description ? `<p class="smallprint">${escapeHtml(coupon.description)}</p>` : ""}
+  </div>
+  <div class="coupon-side">
+    <span class="coupon-code">${escapeHtml(coupon.code)}</span>
+    <span class="tag">${coupon.autoApply ? "Applied automatically" : "Type this code at checkout"}</span>
+  </div>
+</div>`,
+    )
+    .join("");
+  return `<section class="coupon-strip" aria-label="Offers running today">${cards}</section>`;
+}
+
 function itemCard(item: WebItem, sectionName: string): string {
   const image = item.imageUrl
     ? `<img src="${escapeHtml(item.imageUrl)}" alt="" loading="lazy" width="480" height="360">`
@@ -151,18 +222,24 @@ function itemCard(item: WebItem, sectionName: string): string {
     ? `<span class="was">${formatPaisa(item.amountPaisa)}</span>`
     : "";
 
-  return `<a class="item" href="/item/${item.id}">
+  // A card is a link *and* a form: tapping the picture opens the dish, tapping
+  // "Add" puts it in the basket. With the script alive the form never navigates;
+  // without it, the same tap posts to /basket/add and the basket still exists.
+  return `<div class="item">
+<a class="cover" href="/item/${item.id}">
 ${image}
 <div class="body">
   <h3>${escapeHtml(item.name)}</h3>
   <p>${escapeHtml(item.description.slice(0, 90))}</p>
   <div>${tags.join(" ")}</div>
-  <div style="margin-top:auto;display:flex;justify-content:space-between;align-items:center">
-    <span class="price">${formatPaisa(item.payablePaisa)}${was}</span>
-    <span class="smallprint">${escapeHtml(sectionName)}</span>
-  </div>
 </div>
-</a>`;
+</a>
+<div class="body card-tail">
+  <span class="price">${formatPaisa(item.payablePaisa)}${was}</span>
+  <span class="smallprint">${escapeHtml(sectionName)}</span>
+</div>
+${addForm(item, { label: "Add", next: "store" })}
+</div>`;
 }
 
 // --------------------------------------------------------------------- store
@@ -243,6 +320,15 @@ export async function handleStoreFront(env: Env, request: Request): Promise<Resp
     })
     .join("");
 
+  // A basket change that happened without a script comes back as `?added=<id>`;
+  // this is the sentence that says what just happened, on a page that has no
+  // JavaScript to say it.
+  const addedId = (url.searchParams.get("added") ?? "").slice(0, 128);
+  const addedItem = addedId ? menuItem(menu, addedId) : null;
+  const addedNotice = addedItem
+    ? `<div class="notice ok nojs">${escapeHtml(addedItem.name)} is in your basket. <a href="/basket">Open the basket</a>.</div>`
+    : "";
+
   const body = `
 <section class="store-hero" aria-labelledby="welcome-title">
   <div><span class="eyebrow">Made with care · Sylhet, Bangladesh</span>
@@ -256,6 +342,8 @@ export async function handleStoreFront(env: Env, request: Request): Promise<Resp
     <p><strong>Cash on delivery</strong><br>Order here, pay when your meal arrives. Delivery availability is checked at checkout.</p>
   </aside>
 </section>
+${addedNotice}
+${couponStrip(menu.coupons ?? [])}
 ${statusBanner(menu.store)}
 ${campaignCard}
 <div class="menu-heading" id="menu"><h2>What sounds good today?</h2><p class="muted">${items.length} menu choices · Find your favourite</p></div>
@@ -281,6 +369,8 @@ ${grid}
     active: "menu",
     catalogue: catalogueFor(menu),
     store: menu.store,
+    coupons: menu.coupons ?? [],
+    serverCart: readCookieCart(request),
     // Every filter and search permutation points at one canonical URL: a crawler
     // that indexes ?section=rice and ?sort=popular as separate pages dilutes the
     // menu, and the menu is the page that has to win.
@@ -347,8 +437,8 @@ export async function handleStoreItem(env: Env, request: Request, id: string): P
   }</p>
   ${
     item.available
-      ? `<button class="button" type="button" onclick="undalAdd('${escapeHtml(item.id)}', 1); window.location.href='/basket';">Add to basket</button>
-         <button class="button secondary" type="button" onclick="undalAdd('${escapeHtml(item.id)}', 1);">Keep browsing</button>`
+      ? addForm(item, { next: "basket", label: "Add to basket", wide: true }) +
+        `<a class="button" href="/basket">Go to the basket</a>`
       : `<div class="notice">This dish is finished for today. The kitchen keeps it on the menu so you know what they cook — it is not orderable right now.</div>`
   }
 </section>
@@ -383,18 +473,69 @@ export async function handleStoreItem(env: Env, request: Request, id: string): P
 
 // -------------------------------------------------------------------- basket
 
-export async function handleBasket(env: Env): Promise<Response> {
+export async function handleBasket(env: Env, request: Request): Promise<Response> {
   const menu = await webMenu(env);
   const store = menu.store ?? toStoreConfig(null);
+  const cart = readCookieCart(request);
+  const catalogue = catalogueFor(menu);
+  const nameOf = (id: string): string => {
+    const entry = catalogue[id] as { name?: string } | undefined;
+    return entry?.name ?? "That dish";
+  };
+  const priceOf = (id: string): number => {
+    const entry = catalogue[id] as { price?: number } | undefined;
+    return typeof entry?.price === "number" ? entry.price : 0;
+  };
+  const subtotal = cart.lines.reduce((sum, line) => sum + priceOf(line.id) * line.qty, 0);
+
+  // The basket a customer built without a script, with the controls to change
+  // it: each one is a form post, so the basket is editable on any phone. The
+  // scripted list (shown instead, the moment the script runs) replaces it.
+  const serverLines = cart.lines
+    .map(
+      (line) => `<div class="row">
+  <div><strong>${escapeHtml(nameOf(line.id))}</strong><div class="smallprint">${formatPaisa(priceOf(line.id))} each</div></div>
+  <div class="qty">
+    <form method="post" action="/basket/set" data-undal-form="set">
+      <input type="hidden" name="id" value="${escapeHtml(line.id)}">
+      <input type="hidden" name="qty" value="${Math.max(0, line.qty - 1)}">
+      <button type="submit" aria-label="One less">−</button>
+    </form>
+    <span>${line.qty}</span>
+    <form method="post" action="/basket/add" data-undal-form="add">
+      <input type="hidden" name="id" value="${escapeHtml(line.id)}">
+      <input type="hidden" name="qty" value="1">
+      <input type="hidden" name="next" value="/basket">
+      <button type="submit" aria-label="One more">+</button>
+    </form>
+    <form method="post" action="/basket/remove" data-undal-form="remove">
+      <input type="hidden" name="id" value="${escapeHtml(line.id)}">
+      <button type="submit" aria-label="Remove">✕</button>
+    </form>
+  </div>
+</div>`,
+    )
+    .join("");
+  const serverBasket =
+    cart.lines.length === 0
+      ? `<div class="notice nojs">Your basket is empty. <a href="/store">Back to the menu</a>.</div>`
+      : `<div class="nojs">${serverLines}
+<div class="row"><span class="total">Food total</span><span class="total">${formatPaisa(subtotal)}</span></div>
+<p class="smallprint">The delivery fee is measured at the checkout from your pin, and any coupon the kitchen is running is applied there automatically.</p></div>`;
+
   const body = `
+${couponStrip(menu.coupons ?? [])}
 <section class="card">
   <h2>Your basket</h2>
-  <div id="undal-cart-lines"></div>
+  <div id="undal-cart-lines" class="js" style="display:none"></div>
+  ${serverBasket}
   <div id="undal-minimum" class="notice" style="display:none"></div>
-  <div class="row"><span>Food</span><span id="undal-subtotal">৳ 0</span></div>
+  <div id="undal-auto-coupon" class="notice ok" style="display:none"></div>
+  <div class="row js" style="display:none"><span>Food</span><span id="undal-subtotal">৳ 0</span></div>
   <div class="row"><span>Delivery</span><span id="undal-delivery">measured at checkout</span></div>
-  <div class="row"><span class="total">Total</span><span class="total" id="undal-total">৳ 0</span></div>
-  <button class="button" id="undal-checkout" type="button" onclick="window.location.href='/checkout'">Continue to delivery details</button>
+  <div class="row js" style="display:none" id="undal-discount-row"><span>Coupon</span><span id="undal-discount">৳ 0</span></div>
+  <div class="row js" style="display:none"><span class="total">Total</span><span class="total" id="undal-total">৳ 0</span></div>
+  <a class="button" href="/checkout">Continue to delivery details</a>
   <a class="button secondary" href="/store">Add something else</a>
 </section>
 <section class="card">
@@ -410,8 +551,10 @@ export async function handleBasket(env: Env): Promise<Response> {
     description: "Review your Undal basket before entering delivery details.",
     body,
     active: "basket",
-    catalogue: catalogueFor(menu),
+    catalogue,
     store: menu.store,
+    coupons: menu.coupons ?? [],
+    serverCart: cart,
     cacheSeconds: 0,
     // A basket is a step, not a destination: indexed it would only compete with
     // the menu for the same words.
@@ -456,42 +599,74 @@ export async function handleCheckout(env: Env, request: Request): Promise<Respon
 
   const storePin = { lat: store.storeLat, lng: store.storeLng, radiusKm: store.radiusKm };
 
+  const url = new URL(request.url);
+  const cart = readCookieCart(request);
+  // The sentence a form post came back with: an order that failed validation, a
+  // coupon that is not live, an address we could not find. It is rendered here,
+  // at the top of the page, because a customer who posted a form deserves an
+  // answer on the page they land on.
+  const notice = (url.searchParams.get("notice") ?? "").slice(0, 240);
+  const noticeKind = url.searchParams.get("kind") === "ok" ? "ok" : "error";
+  const noticeBlock = notice
+    ? `<div class="notice ${noticeKind}">${escapeHtml(notice)} <a href="/basket">Check the basket</a></div>`
+    : "";
+  const prefill = {
+    name: (url.searchParams.get("v_name") ?? "").slice(0, 80),
+    phone: (url.searchParams.get("v_phone") ?? "").slice(0, 24),
+    title: (url.searchParams.get("v_title") ?? "").slice(0, 80),
+    desc: (url.searchParams.get("v_desc") ?? "").slice(0, 200),
+    note: (url.searchParams.get("v_note") ?? "").slice(0, 200),
+  };
+
+  const catalogue = catalogueFor(menu);
+  const cartLinesJson = JSON.stringify(cart.lines).replace(/</g, "\\u003c");
+
   const body = `
+${noticeBlock}
 <section class="card">
   <h2>Where should the rider go?</h2>
   <p class="muted">Move the map until the green pin is on your door, then <strong>tick it</strong>. The delivery fee is
   measured from that exact point and the rider is sent to it — so the pin is worth ten seconds of your time.</p>
   <div id="undal-map"></div>
+  <p class="nojs smallprint">Type the area and one landmark below. The kitchen measures the delivery fee from the address
+  against its own pin, and calls you if anything about it is unclear. (With JavaScript on, this becomes a map you can drop a pin on.)</p>
+  <form method="post" action="/checkout/place" id="undal-checkout-form" data-undal-cart="${escapeHtml(cartLinesJson)}">
   <p class="undal-map-attribution">Tiles © OpenStreetMap contributors · the pin is placed by you, never guessed from your IP address.</p>
   <div id="undal-radius" class="notice" style="display:none"></div>
   <div class="auth-split">
     <div>
       <label for="name">Name the kitchen should call out</label>
-      <input id="name" autocomplete="name" placeholder="Rahim" required>
+      <input id="name" name="name" autocomplete="name" placeholder="Rahim" required value="${escapeHtml(prefill.name)}">
       <label for="phone">Mobile number the rider will call</label>
-      <input id="phone" inputmode="numeric" autocomplete="tel" placeholder="01712345678" required>
+      <input id="phone" name="phone" inputmode="numeric" autocomplete="tel" placeholder="01712345678" required value="${escapeHtml(prefill.phone)}">
     </div>
     <div>
       <label for="title">Area or neighbourhood</label>
-      <input id="title" placeholder="Zindabazar, Sylhet" required>
+      <input id="title" name="title" placeholder="Zindabazar, Sylhet" required value="${escapeHtml(prefill.title)}">
       <label for="desc">House, road and floor</label>
-      <input id="desc" placeholder="House 14, Road 3, first floor, blue gate" required>
+      <input id="desc" name="desc" placeholder="House 14, Road 3, first floor, blue gate" required value="${escapeHtml(prefill.desc)}">
     </div>
   </div>
   <label for="note">One landmark the rider can ask for</label>
-  <input id="note" placeholder="Beside the mosque, opposite the tea stall" required>
+  <input id="note" name="note" placeholder="Beside the mosque, opposite the tea stall" required value="${escapeHtml(prefill.note)}">
   <label for="cartnote">Anything the kitchen should know (optional)</label>
-  <textarea id="cartnote" rows="2" placeholder="Less chilli on the bhorta, please."></textarea>
+  <textarea id="cartnote" name="cartnote" rows="2" placeholder="Less chilli on the bhorta, please."></textarea>
   <label for="coupon">Coupon code (optional)</label>
-  <input id="coupon" autocapitalize="characters" placeholder="WELCOME10">
+  <input id="coupon" name="coupon" autocapitalize="characters" placeholder="WELCOME10">
+  <input type="hidden" name="lat" id="undal-lat" value="0">
+  <input type="hidden" name="lng" id="undal-lng" value="0">
+  <input type="hidden" name="lines" id="undal-lines" value="">
   <div class="row"><span>Food</span><span id="undal-subtotal">৳ 0</span></div>
   <div class="row"><span>Delivery</span><span id="undal-delivery">measured once you tick the pin</span></div>
+  <div class="row" id="undal-discount-row" style="display:none"><span>Coupon</span><span id="undal-discount">৳ 0</span></div>
   <div class="row"><span class="total">Cash on delivery</span><span class="total" id="undal-total">৳ 0</span></div>
+  <div id="undal-auto-coupon" class="notice ok" style="display:none"></div>
   <div id="undal-cart-lines" class="smallprint" style="display:none"></div>
   <div id="undal-minimum" class="notice" style="display:none"></div>
   <div id="undal-order-result"></div>
-  <button class="button" id="undal-place" type="button">Place the order — pay cash on delivery</button>
+  <button class="button" id="undal-place" type="submit">Place the order — pay cash on delivery</button>
   <p class="smallprint">Placing the order tells the kitchen immediately. The order number and the tracking page appear as soon as it is written. A customer cannot cancel from the web — call the kitchen if something changes.</p>
+  </form>
 </section>
 <section class="card">
   <h2>What happens after you tap</h2>
@@ -513,6 +688,7 @@ export async function handleCheckout(env: Env, request: Request): Promise<Respon
 
   const script = `${MAP_SCRIPT}
 (function () {
+ try {
   var store = window.UNDAL_STORE || {};
   var storePin = ${JSON.stringify(storePin)};
   var nameBox = document.getElementById("name");
@@ -523,16 +699,33 @@ export async function handleCheckout(env: Env, request: Request): Promise<Respon
   var resultHost = document.getElementById("undal-order-result");
   var placeButton = document.getElementById("undal-place");
   var notice = document.getElementById("undal-radius");
+  var orderForm = document.getElementById("undal-checkout-form");
+  var linesInput = document.getElementById("undal-lines");
+  var latInput = document.getElementById("undal-lat");
+  var lngInput = document.getElementById("undal-lng");
 
   var position = null;
   var ticked = false;
   var info = {};
+
+  /** A field's text, or "" — a missing box must never kill the order button. */
+  function field(id) {
+    var box = document.getElementById(id);
+    return box && typeof box.value === "string" ? box.value.trim() : "";
+  }
 
   function showNotice(text, kind) {
     if (!notice) return;
     notice.style.display = text ? "block" : "none";
     notice.className = "notice" + (kind ? " " + kind : "");
     notice.textContent = text || "";
+  }
+
+  /** The pin and the basket, carried to the server by the same form post. */
+  function syncHiddenFields() {
+    if (linesInput && window.undalLines) linesInput.value = JSON.stringify(window.undalLines());
+    if (latInput && position) latInput.value = String(position.lat);
+    if (lngInput && position) lngInput.value = String(position.lng);
   }
 
   function preview() {
@@ -563,41 +756,58 @@ export async function handleCheckout(env: Env, request: Request): Promise<Respon
 
   /** The map's own name for the place, written into the empty fields only. */
   function fillAddress() {
-    if (info.area && !titleBox.value) {
+    // Only ever fills what the customer left empty: their own words about their
+    // own door outrank anything a map service guessed.
+    if (info.area && titleBox && !titleBox.value) {
       titleBox.value = info.city && info.city !== info.area ? info.area + ", " + info.city : info.area;
     }
-    if (info.road && !descBox.value) descBox.value = info.road;
+    if (info.road && descBox && !descBox.value) descBox.value = info.road;
   }
 
-  var map = window.undalMap({
-    mount: "undal-map",
-    store: storePin.lat && storePin.lng ? storePin : null,
-    perKmPaisa: store.perKmPaisa || 0,
-    confirmLabel: "Tick this pin as my delivery address",
-    onPin: function (point, next) { position = point; info = next || info; preview(); },
-    onConfirm: function (point, next) { position = point; info = next || info; ticked = true; fillAddress(); preview(); }
-  });
-
-  placeButton.addEventListener("click", function () {
-    var button = this;
-    var lines = window.undalLines();
+  /**
+   * The tap that has to work on every phone.
+   *
+   * The button is a submit button in a real <form>, so this listener is an
+   * *upgrade*, never the mechanism: the moment it is attached the script stops
+   * the browser posting and does the same thing with fetch — and if this file
+   * ever failed to attach it (a dead map script, an in-app browser, an old
+   * WebView), the plain post to /checkout/place places the identical order.
+   *
+   * That is why it is attached *before* the map is built: what must work first
+   * is the order, and the map is the nicety.
+   */
+  function submitOrder(event) {
+    if (!event || !event.preventDefault) return;
+    var button = placeButton;
+    var lines = window.undalLines ? window.undalLines() : [];
     if (lines.length === 0) {
+      event.preventDefault();
       resultHost.innerHTML = '<div class="notice error">Your basket is empty. <a href="/store">Back to the menu</a>.</div>';
       return;
     }
     if (!position) {
-      resultHost.innerHTML = '<div class="notice error">Move the map so the pin is on your door — the kitchen measures the delivery fee from it.</div>';
+      // No pin: either the map never started, or the customer simply did not use
+      // it. The typed address is enough — the form posts, the server geocodes the
+      // address inside the kitchen's own town, and prices the same order.
+      syncHiddenFields();
+      if (!window.undalUsableText(field("title")) || !window.undalUsableText(field("desc"))) {
+        event.preventDefault();
+        resultHost.innerHTML = '<div class="notice error">Write the area and the house so the rider can find you — ' +
+          'or turn the map on and tick your door.</div>';
+        return;
+      }
       return;
     }
+    event.preventDefault();
     if (!ticked) {
       resultHost.innerHTML = '<div class="notice error">Tick the pin to confirm that is your address. The rider is sent to exactly that point.</div>';
       return;
     }
-    var name = nameBox.value.trim();
-    var phone = phoneBox.value.trim();
-    var title = titleBox.value.trim();
-    var desc = descBox.value.trim();
-    var note = noteBox.value.trim();
+    var name = field("name");
+    var phone = field("phone");
+    var title = field("title");
+    var desc = field("desc");
+    var note = field("note");
     var localPhone = window.undalUsablePhone(phone);
     var missing = [];
     if (!window.undalUsableName(name)) missing.push("your name (letters, three or more)");
@@ -620,8 +830,8 @@ export async function handleCheckout(env: Env, request: Request): Promise<Respon
           headers: { "content-type": "application/json", authorization: "Bearer " + session.idToken },
           body: JSON.stringify({
             lines: lines,
-            couponCode: document.getElementById("coupon").value.trim(),
-            note: document.getElementById("cartnote").value.trim(),
+            couponCode: field("coupon").toUpperCase(),
+            note: field("cartnote"),
             customerName: name,
             phone: localPhone,
             address: { lat: position.lat, lng: position.lng, title: title, desc: desc, note: note }
@@ -645,25 +855,70 @@ export async function handleCheckout(env: Env, request: Request): Promise<Respon
         button.textContent = "Place the order — pay cash on delivery";
         resultHost.innerHTML = '<div class="notice error">' + String(error.message || error) + "</div>";
       });
-  });
+  }
 
-  // A signed-in customer should not retype what the kitchen already knows, and a
-  // saved address arrives with its pin already ticked.
-  var savedProfile = window.undalProfile ? window.undalProfile() : null;
-  if (savedProfile) {
-    if (!nameBox.value && savedProfile.name) nameBox.value = savedProfile.name;
-    if (!phoneBox.value && savedProfile.phone) phoneBox.value = savedProfile.phone;
-    var saved = savedProfile.address;
-    if (saved && saved.lat && saved.lng && map) {
-      if (saved.title) titleBox.value = saved.title;
-      if (saved.desc) descBox.value = saved.desc;
-      if (saved.note) noteBox.value = saved.note;
-      map.setPin(saved.lat, saved.lng, 16);
-      map.confirm();
+  // The order button is live from here on, whatever happens to the map below.
+  if (orderForm) {
+    orderForm.addEventListener("submit", submitOrder);
+    orderForm.addEventListener("submit", syncHiddenFields);
+  }
+
+  // ---- the map, which is a convenience and never a requirement ---------------
+  // An in-app browser with tiles blocked, a phone with no WebGL, a hostile
+  // network: all of them used to leave the customer staring at a dead green
+  // rectangle with a Place-order button that did nothing. Now the failure is
+  // caught, said out loud, and the typed-address path below still orders.
+  var map = null;
+  try {
+    map = window.undalMap({
+      mount: "undal-map",
+      store: storePin.lat && storePin.lng ? storePin : null,
+      perKmPaisa: store.perKmPaisa || 0,
+      confirmLabel: "Tick this pin as my delivery address",
+      onPin: function (point, next) { position = point; info = next || info; preview(); },
+      onConfirm: function (point, next) { position = point; info = next || info; ticked = true; fillAddress(); preview(); }
+    });
+  } catch (mapError) {
+    showNotice("The map could not start on this phone. Type the area and one landmark below — the kitchen measures the " +
+      "delivery fee from the address against its own pin, and calls you if anything about it is unclear.");
+  }
+  if (map && map.setPin && map.confirm && map.redraw) {
+    // A saved address arrives with its pin already on the map and already ticked.
+    var savedProfile = window.undalProfile ? window.undalProfile() : null;
+    var saved = savedProfile && savedProfile.address;
+    if (saved && saved.lat && saved.lng) {
+      try {
+        if (titleBox && saved.title && !titleBox.value) titleBox.value = saved.title;
+        if (descBox && saved.desc && !descBox.value) descBox.value = saved.desc;
+        if (noteBox && saved.note && !noteBox.value) noteBox.value = saved.note;
+        map.setPin(saved.lat, saved.lng, 16);
+        map.confirm();
+      } catch (restoreError) { /* the typed address still works */ }
     }
+  } else if (map && map.redraw) {
+    // Nothing to do: the map is up, the customer moves the pin.
+  }
+  // The fields a signed-in customer should never retype.
+  var profile = window.undalProfile ? window.undalProfile() : null;
+  if (profile) {
+    if (nameBox && !nameBox.value && profile.name) nameBox.value = profile.name;
+    if (phoneBox && !phoneBox.value && profile.phone) phoneBox.value = profile.phone;
   }
 
   window.undalRender();
+  syncHiddenFields();
+ } catch (error) {
+  // Nothing here is allowed to fail quietly: if the script stopped early the
+  // customer is told, and the plain form underneath still posts the order.
+  var fallbackHost = document.getElementById("undal-result")
+    || document.getElementById("undal-order-result")
+    || document.getElementById("main-content");
+  if (fallbackHost) {
+    fallbackHost.innerHTML = '<div class="notice error">Part of this page did not load properly on this phone, so the ' +
+      'scripted checkout is not running. <strong>You can still order:</strong> fill in your name, number and address and ' +
+      'tap the button — it posts straight to the kitchen. The Undal app orders in one tap if you would rather.</div>';
+  }
+ }
 })();`;
 
   return page({
@@ -672,8 +927,10 @@ export async function handleCheckout(env: Env, request: Request): Promise<Respon
     body,
     script,
     active: "basket",
-    catalogue: catalogueFor(menu),
+    catalogue,
     store: menu.store,
+    coupons: menu.coupons ?? [],
+    serverCart: cart,
     cacheSeconds: 0,
     robots: "noindex,follow",
     canonical: canonicalUrl(origin, "/checkout"),
@@ -758,12 +1015,16 @@ export async function handleOrderTracking(orderId: string): Promise<Response> {
     document.getElementById("undal-status-pill").textContent = pair[0];
     document.getElementById("undal-status-pill").className = "pill " + (order.status === "cancelled" ? "closed" : "open");
     document.getElementById("undal-order-title").textContent = "Order " + (order.shortId || "");
-    document.querySelectorAll("#undal-steps li").forEach(function (node) {
+    // A plain for loop, not NodeList.forEach: the tracking page is read on the
+    // oldest phone in the house, and that is the phone that has to show the order.
+    var steps = document.querySelectorAll("#undal-steps li");
+    var sequence = ["placed", "accepted", "ready", "in_delivery", "delivered"];
+    for (var step = 0; step < steps.length; step++) {
+      var node = steps[step];
       var status = node.getAttribute("data-status");
       node.className = status === order.status ? "now" : "";
-      var order_ = ["placed", "accepted", "ready", "in_delivery", "delivered"];
-      if (order_.indexOf(order.status) > order_.indexOf(status)) node.className = "done";
-    });
+      if (sequence.indexOf(order.status) > sequence.indexOf(status)) node.className = "done";
+    }
     var noteHost = document.getElementById("undal-note");
     if (order.status === "cancelled") {
       noteHost.innerHTML = '<div class="notice error"><strong>Cancelled:</strong> ' +

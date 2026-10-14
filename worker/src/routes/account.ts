@@ -70,7 +70,7 @@ function webApiKey(env: Env): string {
   return key;
 }
 
-async function identityToolkit<T>(env: Env, path: string, body: Record<string, unknown>): Promise<T> {
+export async function identityToolkit<T>(env: Env, path: string, body: Record<string, unknown>): Promise<T> {
   const key = webApiKey(env);
   let response: Response;
   try {
@@ -141,7 +141,7 @@ export function passwordProblem(raw: string): string | null {
   return null;
 }
 
-interface TokenResponse {
+export interface TokenResponse {
   idToken?: string;
   refreshToken?: string;
   expiresIn?: string;
@@ -149,7 +149,7 @@ interface TokenResponse {
   email?: string;
 }
 
-interface SessionPayload {
+export interface SessionPayload {
   idToken: string;
   refreshToken: string;
   expiresIn: number;
@@ -157,7 +157,7 @@ interface SessionPayload {
   email: string;
 }
 
-function sessionOf(payload: TokenResponse): SessionPayload {
+export function sessionOf(payload: TokenResponse): SessionPayload {
   if (!payload.idToken || !payload.localId) {
     throw new HttpError(502, "account-no-token", "Firebase Authentication answered without a session.");
   }
