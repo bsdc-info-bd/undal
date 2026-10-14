@@ -89,7 +89,13 @@ async function health(env: Env): Promise<Response> {
 
 async function route(request: Request, env: Env): Promise<Response> {
   const url = new URL(request.url);
-  const path = url.pathname.replace(/\/+$/, "") || "/";
+  // Collapse duplicate slashes before matching. A base URL with a trailing slash
+  // — `https://host//healthz` — used to answer "No route for GET //healthz",
+  // which is how a working deployment reported itself as broken, how the release
+  // webhook silently stopped updating /latest.json, and how any client with a
+  // stray slash in its configuration would have been told the route does not
+  // exist. One character of a client's config must never decide that.
+  const path = url.pathname.replace(/\/{2,}/g, "/").replace(/\/+$/, "") || "/";
   const ip = clientIp(request);
 
   if (request.method === "OPTIONS") {

@@ -205,6 +205,16 @@ jobs:
           workingDirectory: worker
           command: deploy
 
+      # The smoke test is the only thing that proves the deployed Worker answers
+      # at all, so it has to be right about the URL it asks for. It was not: a
+      # trailing slash in the secret produced "https://host//healthz", which the
+      # Worker treats as an unknown route — a deploy that worked reported itself
+      # as broken, which is worse than no check at all.
+      #
+      # It also tests the route this deploy just added, not only the health probe:
+      # an order alert that cannot be sent is exactly the failure the alert
+      # ladder exists to prevent, and the endpoint answers without a caller
+      # token (401) when it is reachable, which is the fact being checked.
       - name: Smoke test the deployment
         env:
           WORKER_BASE_URL: ${{ secrets.WORKER_BASE_URL }}
@@ -213,16 +223,35 @@ jobs:
             echo "WORKER_BASE_URL secret is not set yet — skipping the smoke test."
             exit 0
           fi
+          base="${WORKER_BASE_URL%/}"
+          echo "smoke testing $base"
           for i in 1 2 3 4 5; do
-            if curl -fsS "$WORKER_BASE_URL/healthz"; then
+            code=$(curl -sS -o /tmp/healthz.json -w '%{http_code}' "$base/healthz" || true)
+            if [ "$code" = "200" ]; then
+              cat /tmp/healthz.json
               echo ""
               echo "healthz responded."
-              exit 0
+              break
             fi
+            echo "attempt $i: healthz answered ${code:-nothing}"
             sleep 6
           done
-          echo "healthz did not respond in time — check the wrangler output above."
-          exit 1
+          if [ "${code:-}" != "200" ]; then
+            echo "healthz did not respond in time — check the wrangler output above."
+            echo "  (a 404 here usually means WORKER_BASE_URL has a path or a trailing slash)"
+            exit 1
+          fi
+
+          # The notify relay must exist. A caller without a token gets 401/403,
+          # which proves the route is mounted and the auth guard is on; 404 means
+          # this deployment is missing the alert endpoint entirely.
+          relay=$(curl -sS -o /dev/null -w '%{http_code}' -X POST \
+            -H 'content-type: application/json' -d '{}' "$base/notify/test-alert" || true)
+          case "$relay" in
+            401|403) echo "/notify/test-alert is mounted and guarded ($relay)." ;;
+            *) echo "/notify/test-alert answered ${relay:-nothing} — expected 401/403 for a caller with no token."
+               exit 1 ;;
+          esac
 
       - name: Summarise
         env:

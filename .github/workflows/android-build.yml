@@ -245,7 +245,11 @@ jobs:
             echo "Release webhook not configured yet — skipping (in-app update notice stays quiet)."
             exit 0
           fi
-          curl --fail-with-body -sS -X POST "$WORKER_BASE_URL/admin/release" \
+          # Trailing slash trimmed: a doubled slash used to make this 404, which
+          # failed a build whose APK had already been signed and published, and
+          # left /latest.json stale so the in-app update notice never fired.
+          release_base="${WORKER_BASE_URL%/}"
+          curl --fail-with-body -sS -X POST "$release_base/admin/release" \
             -H "content-type: application/json" \
             -H "x-undal-release-secret: $RELEASE_WEBHOOK_SECRET" \
             -d "{\"versionName\":\"1.0.${{ github.run_number }}\",\"versionCode\":${{ github.run_number }},\"notes\":\"Automated build ${{ github.run_number }}\"}"
