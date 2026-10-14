@@ -1,7 +1,13 @@
 package com.undal.syl.app.features.root
 
+import android.content.Context
+import android.content.ContextWrapper
+import android.widget.Toast
+import androidx.activity.ComponentActivity
+import androidx.activity.compose.BackHandler
 import androidx.compose.animation.ExperimentalSharedTransitionApi
 import androidx.compose.animation.SharedTransitionLayout
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
@@ -9,16 +15,25 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableLongStateOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.hilt.navigation.compose.hiltViewModel
+import androidx.lifecycle.Lifecycle
 import androidx.navigation.NavHostController
+import androidx.navigation.NavOptionsBuilder
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
+import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
+import kotlinx.coroutines.delay
 import com.undal.syl.app.core.background.OrderAlertController
 import com.undal.syl.app.core.design.UndalAlertBanner
 import com.undal.syl.app.core.theme.UndalDimens
@@ -40,11 +55,55 @@ import com.undal.syl.app.features.vendor.chats.VendorChatScreen
 import com.undal.syl.app.features.vendor.dashboard.VendorDashboardScreen
 import com.undal.syl.app.features.vendor.inbox.VendorInboxScreen
 import com.undal.syl.app.features.vendor.menu.VendorMenuScreen
+import com.undal.syl.app.features.vendor.menu.VendorMenuViewModel
 import com.undal.syl.app.features.vendor.orders.VendorOrderDetailScreen
 import com.undal.syl.app.features.vendor.orders.VendorOrdersScreen
 import com.undal.syl.app.features.vendor.schedule.VendorScheduleScreen
 import com.undal.syl.app.features.vendor.settings.VendorStoreScreen
 import com.undal.syl.app.features.vendor.DiagnosticsScreen
+
+/** How long a second back press waits before it is a fresh one again. */
+private const val EXIT_WINDOW_MILLIS = 2500L
+
+/** How long a recovered crash's sentence stays on screen. */
+private const val RECOVERY_BANNER_MILLIS = 8000L
+
+/**
+ * The `Context` of the activity hosting this composition, if there is one.
+ *
+ * `LocalContext` is the activity on this app's own phones, but it can arrive
+ * wrapped by a theme or by a host, so the wrappers are walked rather than cast
+ * through — a `ClassCastException` in a back handler would be a crash from a
+ * back press, which is the bug this file exists to remove.
+ */
+private fun Context.findHostActivity(): ComponentActivity? {
+    var current: Context? = this
+    while (current is ContextWrapper) {
+        if (current is ComponentActivity) return current
+        current = current.baseContext
+    }
+    return null
+}
+
+/**
+ * Moves the graph, and refuses to throw while doing it.
+ *
+ * `navigate` throws on a destination it cannot resolve and on a deep link it
+ * cannot parse — and both of those used to happen inside a `LaunchedEffect` or a
+ * tap handler, where an exception is an uncaught exception, which is the app
+ * closing. A refusal is a sentence on the banner instead.
+ */
+private fun navigateSafely(
+    navController: NavHostController,
+    route: String,
+    onFailure: (Throwable) -> Unit,
+    builder: NavOptionsBuilder.() -> Unit = {
+        popUpTo(0) { inclusive = true }
+        launchSingleTop = true
+    }
+) {
+    runCatching { navController.navigate(route, builder) }.onFailure(onFailure)
+}
 
 /**
  * The app shell: one navigation graph, two portals, one authority on where a
@@ -53,17 +112,81 @@ import com.undal.syl.app.features.vendor.DiagnosticsScreen
  * Deep links arriving from a push or a shared link are handed to the graph after
  * the router has decided the portal, so a kitchen alert opens the order it is
  * about and a customer status push opens the right order — never a blank screen.
+ *
+ * The shell also owns the phone's back button, for the whole app: every screen
+ * is a step inside this graph, so the graph itself is the only thing that can
+ * always answer "where does back go from here?".
  */
 @OptIn(ExperimentalSharedTransitionApi::class)
 @Composable
 fun UndalRoot(
     initialDeepLink: String?,
+    recoveredFromCrash: Boolean = false,
     navController: NavHostController = rememberNavController(),
     viewModel: UndalRootViewModel = hiltViewModel()
 ) {
     val destination by viewModel.destination.collectAsState()
     val ringing by OrderAlertController.ringing.collectAsState()
-    val errorMessage by viewModel.errorMessage.collectAsState()
+    val routerError by viewModel.errorMessage.collectAsState()
+    val context = LocalContext.current
+
+    // A crash the guard caught: the app reopened itself, and this is the one
+    // sentence that explains why it is on screen again.
+    var recoveryMessage by remember {
+        mutableStateOf(
+            if (recoveredFromCrash) com.undal.syl.app.core.util.UndalCrashGuard.RECOVERY_SENTENCE else null
+        )
+    }
+    LaunchedEffect(recoveryMessage) {
+        if (recoveryMessage != null) {
+            delay(RECOVERY_BANNER_MILLIS)
+            recoveryMessage = null
+        }
+    }
+
+    /**
+     * One back button for the whole app.
+     *
+     * Every screen is a step inside the graph, so the first rule is the plain
+     * one: leave the step. Only when there is nothing left to leave does the
+     * back press mean the portal itself, and only from a portal's own home does
+     * it mean leaving the app — where it asks first, so a thumb resting on the
+     * edge of the screen cannot close the kitchen's phone mid-order.
+     */
+    val currentEntry by navController.currentBackStackEntryAsState()
+    val currentRoute = currentEntry?.destination?.route
+    var lastExitPress by remember { mutableLongStateOf(0L) }
+
+    fun leavePortal() {
+        val home = if (UndalRoutes.isVendor(currentRoute)) UndalRoutes.VENDOR_CONSOLE else UndalRoutes.CUSTOMER_HOME
+        navigateSafely(navController, home, viewModel::onNavigationFailed) { launchSingleTop = true }
+    }
+
+    fun closeApp() {
+        // No host activity (a preview, a test): fall back to the portal's home
+        // rather than doing nothing at all.
+        context.findHostActivity()?.finish() ?: leavePortal()
+    }
+
+    BackHandler(enabled = true) {
+        val lifecycle = currentEntry?.lifecycle
+        val inGraph = currentEntry != null && lifecycle != null && lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED)
+        if (inGraph && navController.previousBackStackEntry != null) {
+            navController.popBackStack()
+            return@BackHandler
+        }
+        if (inGraph && !UndalRoutes.isRoot(currentRoute)) {
+            leavePortal()
+            return@BackHandler
+        }
+        val now = System.currentTimeMillis()
+        if (now - lastExitPress <= EXIT_WINDOW_MILLIS) {
+            closeApp()
+        } else {
+            lastExitPress = now
+            Toast.makeText(context, "Press back again to leave Undal", Toast.LENGTH_SHORT).show()
+        }
+    }
 
     // The alert's Accept / Reject buttons open the order with the right sheet
     // already raised, so the kitchen never has to hunt for the button.
@@ -72,34 +195,37 @@ fun UndalRoot(
         ?.takeIf { it.isNotBlank() }
 
     // Portal routing: whenever the router changes its mind, the graph follows.
+    // The move replaces the whole back stack with the portal's first screen —
+    // which is what makes back inside a portal always land somewhere real.
     LaunchedEffect(destination) {
         val target = when (destination) {
-            is UndalRootViewModel.Destination.Splash -> UndalRoutes.SPLASH
+            is UndalRootViewModel.Destination.Splash -> return@LaunchedEffect
             is UndalRootViewModel.Destination.Auth -> UndalRoutes.LOGIN
             is UndalRootViewModel.Destination.CustomerLocation -> UndalRoutes.LOCATION_SETUP
             is UndalRootViewModel.Destination.CustomerHome -> UndalRoutes.CUSTOMER_HOME
             is UndalRootViewModel.Destination.VendorDiagnostics -> UndalRoutes.VENDOR_DIAGNOSTICS
             is UndalRootViewModel.Destination.VendorConsole -> UndalRoutes.VENDOR_CONSOLE
-            is UndalRootViewModel.Destination.Error -> UndalRoutes.LOGIN
+            is UndalRootViewModel.Destination.Error -> UndalRoutes.ROUTER_ERROR
         }
-        navController.navigate(target) {
-            popUpTo(0) { inclusive = true }
-            launchSingleTop = true
-        }
+        navigateSafely(navController, target, viewModel::onNavigationFailed)
     }
 
     // A push deep link wins immediately: if the kitchen phone is ringing, the
     // first thing it shows is the order that is ringing.
-    LaunchedEffect(initialDeepLink, ringing) {
+    LaunchedEffect(initialDeepLink) {
         val route = UndalRoutes.routeForDeepLink(initialDeepLink) ?: return@LaunchedEffect
         if (route == UndalRoutes.SPLASH) return@LaunchedEffect
-        navController.navigate(route) { launchSingleTop = true }
+        navigateSafely(navController, route, viewModel::onNavigationFailed) { launchSingleTop = true }
     }
 
     LaunchedEffect(ringing) {
         val active = ringing
         if (active != null) {
-            navController.navigate(UndalRoutes.vendorOrderDetail(active.orderId)) { launchSingleTop = true }
+            navigateSafely(
+                navController,
+                UndalRoutes.vendorOrderDetail(active.orderId),
+                viewModel::onNavigationFailed
+            ) { launchSingleTop = true }
         }
     }
 
@@ -114,6 +240,18 @@ fun UndalRoot(
       ) {
         composable(UndalRoutes.SPLASH) {
             UndalSplash(message = "Opening Undal HomeKitchen…")
+        }
+
+        // The router could not decide where this phone belongs — said in words,
+        // with a retry, instead of a crash and a jump to the home screen.
+        composable(UndalRoutes.ROUTER_ERROR) {
+            UndalRouterErrorScreen(
+                message = routerError
+                    ?: "Undal could not read your account just now.",
+                onRetry = viewModel::onErrorAcknowledged,
+                onSignOut = viewModel::signOut,
+                onOpenSupport = { navigateSafely(navController, UndalRoutes.SUPPORT, viewModel::onNavigationFailed) }
+            )
         }
 
         composable(UndalRoutes.LOGIN) {
@@ -136,9 +274,7 @@ fun UndalRoot(
                 onSaved = viewModel::onAddressSaved,
                 onSignOut = {
                     viewModel.onSignedIn()
-                    navController.navigate(UndalRoutes.LOGIN) {
-                        popUpTo(0) { inclusive = true }
-                    }
+                    navigateSafely(navController, UndalRoutes.LOGIN, viewModel::onNavigationFailed)
                 }
             )
         }
@@ -264,7 +400,7 @@ fun UndalRoot(
             VendorDashboardScreen(
                 onOpenOrders = { navController.navigate(UndalRoutes.VENDOR_ORDERS) },
                 onOpenMenu = { navController.navigate(UndalRoutes.VENDOR_MENU) },
-                onOpenPromos = { navController.navigate(UndalRoutes.VENDOR_MENU) },
+                onOpenPromos = { navController.navigate(UndalRoutes.VENDOR_PROMOS) },
                 onOpenSchedule = { navController.navigate(UndalRoutes.VENDOR_SCHEDULE) },
                 onOpenSettings = { navController.navigate(UndalRoutes.VENDOR_STORE) },
                 onOpenChats = { navController.navigate(UndalRoutes.VENDOR_CHAT_LIST) },
@@ -299,6 +435,15 @@ fun UndalRoot(
             )
         }
 
+        // The studio: the same manager, opened on the offers it is about.
+        composable(UndalRoutes.VENDOR_PROMOS) {
+            VendorMenuScreen(
+                onBack = { navController.popBackStack() },
+                onPreviewAsCustomer = { navController.navigate(UndalRoutes.CUSTOMER_HOME) },
+                startTab = VendorMenuViewModel.Tab.OFFERS
+            )
+        }
+
         composable(UndalRoutes.VENDOR_SCHEDULE) {
             VendorScheduleScreen(onBack = { navController.popBackStack() })
         }
@@ -311,7 +456,7 @@ fun UndalRoot(
                 onPreviewAsCustomer = { navController.navigate(UndalRoutes.CUSTOMER_HOME) },
                 onSignOut = {
                     viewModel.signOut()
-                    navController.navigate(UndalRoutes.LOGIN) { popUpTo(0) }
+                    navigateSafely(navController, UndalRoutes.LOGIN, viewModel::onNavigationFailed)
                 }
             )
         }
@@ -346,15 +491,30 @@ fun UndalRoot(
       }
       }
 
-      if (errorMessage != null) {
+      // Two banners at most, and the recovery one wins: it explains why the app
+      // is on screen again, which is the thing the person is wondering about.
+      val banner = recoveryMessage ?: routerError
+      if (banner != null) {
+          val recovered = recoveryMessage != null
           UndalAlertBanner(
-              text = errorMessage.orEmpty(),
+              text = banner,
               icon = Icons.Filled.Info,
-              containerColour = MaterialTheme.colorScheme.errorContainer,
-              contentColour = MaterialTheme.colorScheme.onErrorContainer,
+              containerColour = if (recovered) {
+                  MaterialTheme.colorScheme.secondaryContainer
+              } else {
+                  MaterialTheme.colorScheme.errorContainer
+              },
+              contentColour = if (recovered) {
+                  MaterialTheme.colorScheme.onSecondaryContainer
+              } else {
+                  MaterialTheme.colorScheme.onErrorContainer
+              },
               modifier = Modifier
                   .align(Alignment.TopCenter)
                   .padding(UndalDimens.md)
+                  .clickable {
+                      if (recovered) recoveryMessage = null else viewModel.onErrorDismissed()
+                  }
           )
       }
     }

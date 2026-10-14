@@ -36,7 +36,18 @@ object UndalRoutes {
     const val VENDOR_STORE = "vendor/store"
     const val VENDOR_CHAT_LIST = "vendor/chats"
 
+    /**
+     * The coupon and discount studio.
+     *
+     * It renders the menu manager opened on its Offers tab rather than a screen of
+     * its own: a promotion belongs beside the dishes it discounts, and two places
+     * to edit a coupon would be two places to disagree. The dashboard's "Offers"
+     * button lands here, on the tab, instead of dropping the owner into Dishes.
+     */
+    const val VENDOR_PROMOS = "vendor/promos"
+
     const val VENDOR_DIAGNOSTICS = "vendor/diagnostics"
+    const val ROUTER_ERROR = "router/error"
     const val VENDOR_INBOX = "vendor/inbox"
     const val POLICY = "policy"
     const val VENDOR_ORDER_DETAIL = "vendor/order/{orderId}"
@@ -56,6 +67,30 @@ object UndalRoutes {
     fun customerItem(itemId: String) = "customer/item/$itemId"
 
     /**
+     * The five screens that start a portal: the places the back button falls back
+     * to. Everything else in the graph is a step *inside* one of them, and the
+     * rule for leaving a step is the pop the graph already knows how to do.
+     */
+    val ROOTS: Set<String> = setOf(
+        SPLASH,
+        LOGIN,
+        REGISTER,
+        LOCATION_SETUP,
+        CUSTOMER_HOME,
+        VENDOR_CONSOLE,
+        VENDOR_DIAGNOSTICS,
+        ROUTER_ERROR,
+    )
+
+    fun isRoot(route: String?): Boolean = route != null && route in ROOTS
+
+    /** True when the route belongs to the kitchen's console rather than the shop. */
+    fun isVendor(route: String?): Boolean = route != null && route.startsWith("vendor/")
+
+    /** True when the route belongs to the customer's shop. */
+    fun isCustomer(route: String?): Boolean = route != null && route.startsWith("customer/")
+
+    /**
      * Translates a push deep link or a shared link into a route the graph knows.
      * Unknown targets land on the store home rather than a blank screen.
      */
@@ -73,9 +108,14 @@ object UndalRoutes {
             path.startsWith("combo/") && id.isNotBlank() -> customerItem(id)
             path.startsWith("order/") && id.isNotBlank() -> customerOrderDetail(id)
             path.startsWith("customer/item/") && id.isNotBlank() -> customerItem(id)
+            path.startsWith("vendor/dashboard") -> VENDOR_CONSOLE
+            path.startsWith("vendor/console") -> VENDOR_CONSOLE
             path.startsWith("vendor/store") -> VENDOR_STORE
             path.startsWith("vendor/orders") -> VENDOR_ORDERS
             path.startsWith("vendor/menu") -> VENDOR_MENU
+            path.startsWith("vendor/promos") -> VENDOR_PROMOS
+            // A push about a promotion opens the studio, not the menu list.
+            path.startsWith("vendor/coupons") -> VENDOR_PROMOS
             path.startsWith("vendor/diagnostics") -> VENDOR_DIAGNOSTICS
             path.startsWith("vendor/inbox") -> VENDOR_INBOX
             path.startsWith("policy") -> POLICY

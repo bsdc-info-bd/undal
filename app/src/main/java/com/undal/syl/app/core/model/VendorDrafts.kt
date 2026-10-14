@@ -1,6 +1,7 @@
 package com.undal.syl.app.core.model
 
 import com.google.firebase.Timestamp
+import com.undal.syl.app.core.util.CouponMath
 import com.undal.syl.app.core.util.Money
 
 /**
@@ -263,7 +264,18 @@ data class CouponDraft(
     val usageLimitText: String = "",
     val expiresAtMillis: Long? = null,
     val description: String = "",
-    val active: Boolean = true
+    val active: Boolean = true,
+    /** Ceiling on a percentage or a free-delivery coupon, in taka text. */
+    val maxDiscountText: String = "",
+    /** "HH:MM" — the daily window, in Asia/Dhaka. A window may cross midnight. */
+    val startsAt: String = "",
+    val endsAt: String = "",
+    /** ["fri", "sat"] — empty means every day. */
+    val days: Set<String> = emptySet(),
+    /** Applied by every basket it helps, with no code typed. */
+    val autoApply: Boolean = true,
+    /** Shown as a banner on the web store and in the app. */
+    val showOnWeb: Boolean = true
 ) {
 
     val normalisedCode: String get() = code.trim().uppercase().replace(' ', '-')
@@ -288,20 +300,100 @@ data class CouponDraft(
         get() = when {
             type == "percent" && (value ?: 0L) !in 1..90 -> "A percentage must be between 1 and 90."
             type == "fixed" && (value ?: 0L) <= 0L -> "A fixed discount must be more than zero."
+            // Free delivery needs no value: it is worth the ride, whatever the ride is.
+            type == "freedelivery" -> null
             else -> null
         }
+
+    /** The ceiling in paisa, or 0 when the coupon is not capped. */
+    val maxDiscountPaisa: Long
+        get() = if (maxDiscountText.isBlank()) 0L else Money.parseTakaToPaisa(maxDiscountText) ?: -1L
+
+    val maxDiscountError: String?
+        get() = when {
+            maxDiscountText.isBlank() -> null
+            maxDiscountPaisa <= 0L -> "Write the cap in taka, like 100."
+            type == "fixed" -> "A fixed-amount coupon is already exact — remove the cap."
+            else -> null
+        }
+
+    /** "HH:MM" or blank, both ends. A window that ends before it starts is fine. */
+    val windowError: String?
+        get() = when {
+            startsAt.isNotBlank() && CouponMath.parseMinutesOfDay(startsAt) == null ->
+                "Start the window as HH:MM, like 18:00."
+            endsAt.isNotBlank() && CouponMath.parseMinutesOfDay(endsAt) == null ->
+                "End the window as HH:MM, like 22:00 or 01:00 after midnight."
+            else -> null
+        }
+
+    /** The coupon this draft describes, for a preview that cannot lie. */
+    fun toCoupon(active: Boolean = this.active): CouponMath.Coupon = CouponMath.Coupon(
+        code = normalisedCode,
+        type = type,
+        value = value ?: 0L,
+        active = active,
+        description = description.trim(),
+        minSubtotalAmountPaisa = minOrderPaisa,
+        maxDiscountPaisa = maxDiscountPaisa.coerceAtLeast(0L),
+        expiresAtMillis = expiresAtMillis ?: 0L,
+        startsAt = startsAt.trim(),
+        endsAt = endsAt.trim(),
+        daysOfWeek = days.toList().sorted(),
+        usageLimit = usageLimit,
+        autoApply = autoApply,
+        showOnWeb = showOnWeb
+    )
+
+    /**
+     * What this coupon would be worth on a typical basket, worked out by the same
+     * rule the customer's phone and the Worker run — so the kitchen sees the
+     * discount it is about to give away before it gives it away.
+     */
+    fun preview(sample: SampleBasket = SampleBasket()): String {
+        val coupon = toCoupon(active = true)
+        val verdict = CouponMath.evaluate(
+            coupon,
+            CouponMath.Context(sample.subtotalPaisa, sample.deliveryPaisa)
+        )
+        val basket = "on a ${Money.format(sample.subtotalPaisa)} basket with " +
+            "${Money.format(sample.deliveryPaisa)} delivery"
+        return if (verdict.eligible) {
+            "${coupon.headline} — ${Money.format(verdict.discountPaisa)} off $basket."
+        } else {
+            "Nothing off $basket (${verdict.reason})."
+        }
+    }
+
+    /** The basket a preview is quoted against. */
+    data class SampleBasket(
+        val subtotalPaisa: Long = 50_000L,
+        val deliveryPaisa: Long = 5_000L
+    )
 
     val minOrderPaisa: Long get() = Money.parseTakaToPaisa(minOrderText) ?: 0L
 
     val usageLimit: Long get() = usageLimitText.trim().toLongOrNull()?.coerceIn(0L, 100_000L) ?: 0L
 
-    val isValid: Boolean get() = codeError == null && valueError == null
+    val isValid: Boolean
+        get() = codeError == null && valueError == null && maxDiscountError == null && windowError == null
 
+    /**
+     * The document the customer's phone, the Worker and the web store all read.
+     * `maxDiscountPaisa: 0` is written as 0 rather than omitted, because "no cap"
+     * is a decision and not a missing field.
+     */
     fun writeFields(): Map<String, Any?> = mapOf(
         "type" to type,
         "value" to (value ?: 0L),
         "active" to active,
         "minSubtotalAmountPaisa" to minOrderPaisa,
+        "maxDiscountPaisa" to maxDiscountPaisa.coerceAtLeast(0L),
+        "startsAt" to startsAt.trim(),
+        "endsAt" to endsAt.trim(),
+        "daysOfWeek" to days.toList().sorted(),
+        "autoApply" to autoApply,
+        "showOnWeb" to showOnWeb,
         "usageLimit" to usageLimit,
         "usedCount" to 0L,
         "expiresAt" to expiresAtMillis?.let { Timestamp(java.util.Date(it)) },
@@ -328,7 +420,13 @@ data class CouponDraft(
             usageLimitText = if (coupon.usageLimit > 0L) coupon.usageLimit.toString() else "",
             expiresAtMillis = coupon.expiresAtMillis,
             description = coupon.description,
-            active = coupon.active
+            active = coupon.active,
+            maxDiscountText = if (coupon.maxDiscountPaisa > 0L) Money.formatPlain(coupon.maxDiscountPaisa) else "",
+            startsAt = coupon.startsAt,
+            endsAt = coupon.endsAt,
+            days = coupon.daysOfWeek.toSet(),
+            autoApply = coupon.autoApply,
+            showOnWeb = coupon.showOnWeb
         )
     }
 }
@@ -343,8 +441,48 @@ data class VendorCoupon(
     val usageLimit: Long,
     val usedCount: Long,
     val expiresAtMillis: Long?,
-    val description: String
+    val description: String,
+    val maxDiscountPaisa: Long = 0L,
+    val startsAt: String = "",
+    val endsAt: String = "",
+    val daysOfWeek: List<String> = emptyList(),
+    val autoApply: Boolean = true,
+    val showOnWeb: Boolean = true
 ) {
+
+    /** The shared rule's shape, so the kitchen's list and the cart agree. */
+    val math: CouponMath.Coupon get() = CouponMath.Coupon(
+        code = code,
+        type = type,
+        value = value,
+        active = active,
+        description = description,
+        minSubtotalAmountPaisa = minSubtotalAmountPaisa,
+        maxDiscountPaisa = maxDiscountPaisa,
+        expiresAtMillis = expiresAtMillis ?: 0L,
+        startsAt = startsAt,
+        endsAt = endsAt,
+        daysOfWeek = daysOfWeek,
+        usageLimit = usageLimit,
+        usedCount = usedCount,
+        autoApply = autoApply,
+        showOnWeb = showOnWeb
+    )
+
+    /** "20% off, up to ৳ 100" · "৳ 50 off" · "Free delivery". */
+    val headline: String get() = math.headline
+
+    /** "On orders over ৳ 250 · 18:00–22:00 · fri". */
+    val conditionLabel: String get() = CouponMath.conditionLine(math)
+
+    /** How the coupon reaches people: automatically, by code, or on the web only. */
+    val reachLabel: String
+        get() = when {
+            autoApply && showOnWeb -> "Applies itself · shown on the web store"
+            autoApply -> "Applies itself · hidden from the web store"
+            showOnWeb -> "Code only · shown on the web store"
+            else -> "Code only · hidden from the web store"
+        }
 
     val valueLabel: String
         get() = if (type == "percent") "$value % off" else "${Money.format(value)} off"
@@ -373,7 +511,16 @@ data class VendorCoupon(
             usageLimit = (map["usageLimit"] as? Number)?.toLong() ?: 0L,
             usedCount = (map["usedCount"] as? Number)?.toLong() ?: 0L,
             expiresAtMillis = (map["expiresAt"] as? Timestamp)?.toDate()?.time,
-            description = (map["description"] as? String).orEmpty()
+            description = (map["description"] as? String).orEmpty(),
+            maxDiscountPaisa = (map["maxDiscountPaisa"] as? Number)?.toLong() ?: 0L,
+            startsAt = (map["startsAt"] as? String).orEmpty(),
+            endsAt = (map["endsAt"] as? String).orEmpty(),
+            daysOfWeek = CouponMath.days(map["daysOfWeek"]),
+            // Both defaults are opt-out, and they are the same in three places:
+            // coupons.ts, cart-client.ts and here. A coupon the kitchen created is
+            // meant to be used.
+            autoApply = map["autoApply"] != false,
+            showOnWeb = map["showOnWeb"] != false
         )
     }
 }

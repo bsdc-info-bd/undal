@@ -27,9 +27,12 @@ import kotlinx.coroutines.tasks.await
  *
  * Runs only while a vendor session is active and shows a quiet, low-importance
  * ongoing notification so the owner always knows the kitchen is "connected".
- * Stopping this service does not stop the heartbeat entirely — the fifteen
- * minute WorkManager fallback keeps beating, which is what makes the auto-offline
- * rule trustworthy after a reboot.
+ *
+ * Stopping this service does not stop the heartbeat entirely: the alert watchdog
+ * brings it back within nine minutes if Android killed the app, and the
+ * fifteen-minute WorkManager job keeps beating across a reboot. That chain is
+ * what makes the auto-offline rule trustworthy — the Worker pauses a kitchen
+ * that really has gone away, and a paused kitchen comes back by itself.
  */
 class PresenceHeartbeatService : Service() {
 
@@ -109,6 +112,32 @@ class PresenceHeartbeatService : Service() {
         stopSelf()
     }
 
+    /**
+     * Undal was swiped off the recents list. The heartbeat loop dies with the
+     * process, and the Worker would pause the store ten minutes later — so the
+     * watchdog is armed first, and a beat is written now, which keeps the store
+     * open if the process survives the swipe.
+     */
+    override fun onTaskRemoved(rootIntent: Intent?) {
+        AlertWatchdog.arm(this, AlertWatchdog.SWIPE_GRACE_MILLIS)
+        scope.launch { beatNow() }
+        super.onTaskRemoved(rootIntent)
+    }
+
+    private suspend fun beatNow() {
+        runCatching {
+            FirebaseDatabase.getInstance().getReference("presence").child("vendor")
+                .setValue(
+                    mapOf(
+                        "lastSeen" to ServerValue.TIMESTAMP,
+                        "online" to true,
+                        "device" to "vendor-app"
+                    )
+                )
+                .await()
+        }
+    }
+
     override fun onDestroy() {
         loop?.cancel()
         loop = null
@@ -118,7 +147,7 @@ class PresenceHeartbeatService : Service() {
     companion object {
         const val ACTION_STOP = "com.undal.syl.app.action.STOP_HEARTBEAT"
 
-        /** Five minutes: comfortably inside the Worker's fifteen-minute window. */
+        /** Five minutes: two whole beats inside the Worker's ten-minute window. */
         const val BEAT_INTERVAL_MILLIS = 5 * 60 * 1000L
     }
 }

@@ -71,6 +71,13 @@ object TimeDhaka {
         }
     }
 
+    /** "2026-10-14" for the day in Dhaka right now — the presence log's key. */
+    fun todayKey(): String = dateKey(today())
+
+    /** A wall clock reading from epoch millis: "8:34 PM". */
+    fun wallClock(millis: Long): String =
+        if (millis <= 0L) "—" else formatInstant(Instant.ofEpochMilli(millis))
+
     fun formatInstant(instant: Instant?): String =
         instant?.let { fromInstant(it).format(timeFormatter) } ?: "—"
 

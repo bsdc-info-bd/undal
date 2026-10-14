@@ -132,14 +132,23 @@ class UndalFcmService : FirebaseMessagingService() {
         val body = data["body"].orEmpty()
         val kind = data["kind"].orEmpty()
 
+        // Which channel decides how it interrupts: an order that cannot be
+        // answered is an alert (bypasses Do Not Disturb), a reminder that a
+        // service is starting is a message. Both are one tap from the switch
+        // that answers them.
+        val quietKinds = kind == "prep_due" || kind == "missed" || kind == "opening_soon" || kind == "store_back_online"
+        // The console is where the open/close switch and the reopen banner live,
+        // so every one of these lands there rather than on a settings page that
+        // cannot answer the question the push asked.
+        val consoleKinds = kind == "auto_offline" || kind == "store_back_online" || kind == "opening_soon"
+
         postNotification(
-            channelId = if (kind == "prep_due" || kind == "missed") AlarmChannels.VENDOR_GENERAL
-            else AlarmChannels.VENDOR_NEW_ORDER,
+            channelId = if (quietKinds) AlarmChannels.VENDOR_GENERAL else AlarmChannels.VENDOR_NEW_ORDER,
             notificationId = (kind + title).hashCode() and 0x7FFFFFFF,
             title = title,
             body = body,
-            deepLink = if (kind == "auto_offline") "vendor/store" else "vendor/orders",
-            highPriority = true,
+            deepLink = if (consoleKinds) "vendor/dashboard" else "vendor/orders",
+            highPriority = !quietKinds,
             ongoing = false
         )
 

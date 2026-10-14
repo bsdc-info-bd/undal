@@ -47,6 +47,7 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import coil3.compose.AsyncImage
+import com.undal.syl.app.core.design.UndalAlertBanner
 import com.undal.syl.app.core.design.UndalPrimaryButton
 import com.undal.syl.app.core.design.UndalSecondaryButton
 import com.undal.syl.app.core.design.UndalStatusPill
@@ -762,16 +763,49 @@ fun CouponEditorSheet(
                 selected = draft.type == "fixed",
                 onClick = { viewModel.onCouponDraftChange(draft.copy(type = "fixed")) }
             )
+            VendorChip(
+                label = "Free delivery",
+                selected = draft.type == "freedelivery",
+                onClick = { viewModel.onCouponDraftChange(draft.copy(type = "freedelivery")) }
+            )
+        }
+        if (draft.type != "freedelivery") {
+            Spacer(Modifier.height(UndalDimens.xs))
+            UndalTextField(
+                value = draft.valueText,
+                onValueChange = { viewModel.onCouponDraftChange(draft.copy(valueText = it)) },
+                label = if (draft.type == "percent") "Percent off (1–90)" else "Taka off",
+                hint = if (draft.type == "percent") "10" else "50",
+                error = draft.valueError,
+                keyboardType = KeyboardType.Number,
+                singleLine = true
+            )
+        } else {
+            Spacer(Modifier.height(UndalDimens.xs))
+            Text(
+                text = "The kitchen pays the whole ride — the single most effective coupon when " +
+                    "delivery is charged by the kilometre. Cap it below to stop a far-away order " +
+                    "from eating the margin.",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
         }
         Spacer(Modifier.height(UndalDimens.xs))
         UndalTextField(
-            value = draft.valueText,
-            onValueChange = { viewModel.onCouponDraftChange(draft.copy(valueText = it)) },
-            label = if (draft.type == "percent") "Percent off (1–90)" else "Taka off",
-            hint = if (draft.type == "percent") "10" else "50",
-            error = draft.valueError,
+            value = draft.maxDiscountText,
+            onValueChange = { viewModel.onCouponDraftChange(draft.copy(maxDiscountText = it)) },
+            label = "Maximum discount (optional)",
+            hint = "100",
+            error = draft.maxDiscountError,
             keyboardType = KeyboardType.Number,
             singleLine = true
+        )
+        Spacer(Modifier.height(UndalDimens.xs))
+        // The same rule the customer's cart runs: what this coupon is worth on a
+        // normal basket, said in money, before it is published.
+        UndalAlertBanner(
+            text = draft.preview(),
+            icon = Icons.Filled.Star
         )
         Spacer(Modifier.height(UndalDimens.xs))
         UndalTextField(
@@ -792,6 +826,68 @@ fun CouponEditorSheet(
             singleLine = true
         )
         Spacer(Modifier.height(UndalDimens.xs))
+        Row(horizontalArrangement = Arrangement.spacedBy(UndalDimens.xs)) {
+            Box(modifier = Modifier.weight(1f)) {
+                UndalTextField(
+                    value = draft.startsAt,
+                    onValueChange = { viewModel.onCouponDraftChange(draft.copy(startsAt = it)) },
+                    label = "From (HH:MM)",
+                    hint = "18:00",
+                    error = if (draft.windowError != null && draft.startsAt.isNotBlank()) draft.windowError else null,
+                    singleLine = true
+                )
+            }
+            Box(modifier = Modifier.weight(1f)) {
+                UndalTextField(
+                    value = draft.endsAt,
+                    onValueChange = { viewModel.onCouponDraftChange(draft.copy(endsAt = it)) },
+                    label = "To (HH:MM)",
+                    hint = "22:00",
+                    error = if (draft.windowError != null && draft.endsAt.isNotBlank()) draft.windowError else null,
+                    singleLine = true
+                )
+            }
+        }
+        Text(
+            text = "Leave both blank for all day. A window that ends before it starts is a " +
+                "late-night offer — 20:00 to 01:00 works.",
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        Spacer(Modifier.height(UndalDimens.xs))
+        Text(text = "Days", style = MaterialTheme.typography.labelLarge)
+        Spacer(Modifier.height(UndalDimens.xs))
+        Row(horizontalArrangement = Arrangement.spacedBy(UndalDimens.xs)) {
+            listOf("fri", "sat", "sun").forEach { day ->
+                VendorChip(
+                    label = day.uppercase(),
+                    selected = day in draft.days,
+                    onClick = {
+                        val next = if (day in draft.days) draft.days - day else draft.days + day
+                        viewModel.onCouponDraftChange(draft.copy(days = next))
+                    }
+                )
+            }
+        }
+        Spacer(Modifier.height(UndalDimens.xs))
+        Row(horizontalArrangement = Arrangement.spacedBy(UndalDimens.xs)) {
+            listOf("mon", "tue", "wed", "thu").forEach { day ->
+                VendorChip(
+                    label = day.uppercase(),
+                    selected = day in draft.days,
+                    onClick = {
+                        val next = if (day in draft.days) draft.days - day else draft.days + day
+                        viewModel.onCouponDraftChange(draft.copy(days = next))
+                    }
+                )
+            }
+        }
+        Text(
+            text = if (draft.days.isEmpty()) "Every day." else "Only on ${draft.days.sorted().joinToString(", ")}.",
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        Spacer(Modifier.height(UndalDimens.xs))
         VendorDateField(
             label = "Expires",
             millis = draft.expiresAtMillis,
@@ -810,6 +906,22 @@ fun CouponEditorSheet(
             label = "Note for your own records (optional)",
             hint = "First-order code, printed on the fridge.",
             singleLine = true
+        )
+        Spacer(Modifier.height(UndalDimens.xs))
+        SwitchRow(
+            label = "Apply automatically",
+            detail = "On: every basket it can help gets it, with no code typed — the app and the web " +
+                "store both do this. Off: a secret code that only works when a customer types it.",
+            checked = draft.autoApply,
+            onChange = { viewModel.onCouponDraftChange(draft.copy(autoApply = it)) }
+        )
+        Spacer(Modifier.height(UndalDimens.xs))
+        SwitchRow(
+            label = "Show on the web store",
+            detail = "On: the coupon appears as a banner on your web page and in the cart. " +
+                "Off: it exists but nobody is told about it.",
+            checked = draft.showOnWeb,
+            onChange = { viewModel.onCouponDraftChange(draft.copy(showOnWeb = it)) }
         )
         Spacer(Modifier.height(UndalDimens.xs))
         SwitchRow(

@@ -40,6 +40,12 @@ class MainActivity : ComponentActivity() {
 
     private var deepLink by mutableStateOf<String?>(null)
 
+    /**
+     * Set when this activity was launched by the crash guard after a crash, so
+     * the root can say what happened instead of pretending nothing did.
+     */
+    private var recoveredFromCrash by mutableStateOf(false)
+
     override fun onCreate(savedInstanceState: Bundle?) {
         installSplashScreen()
         enableEdgeToEdge()
@@ -47,11 +53,12 @@ class MainActivity : ComponentActivity() {
 
         AlarmChannels.ensureChannels(this)
         deepLink = extractDeepLink(intent)
+        recoveredFromCrash = com.undal.syl.app.core.util.UndalCrashGuard.isRecoveryLaunch(intent)
         showOverLockScreen()
 
         setContent {
             UndalTheme {
-                UndalRoot(initialDeepLink = deepLink)
+                UndalRoot(initialDeepLink = deepLink, recoveredFromCrash = recoveredFromCrash)
             }
         }
 

@@ -22,6 +22,9 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.debounce
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import javax.inject.Inject
 
@@ -63,6 +66,12 @@ class CartViewModel @Inject constructor(
         val couponMessage: String? = null,
         val couponIsError: Boolean = false,
         val couponChecking: Boolean = false,
+        /** True when the discount on the bill was applied by the kitchen, not typed. */
+        val autoApplied: Boolean = false,
+        /** "SAVE10 applied automatically — ৳ 50 off." */
+        val autoMessage: String? = null,
+        /** "20% off, up to ৳ 100" — what the automatic coupon is worth. */
+        val autoHeadline: String = "",
         val note: String = "",
         val blockers: List<String> = emptyList(),
         val placing: Boolean = false,
@@ -90,6 +99,11 @@ class CartViewModel @Inject constructor(
                 ?: "Add your address to see the exact delivery fee."
     }
 
+    /** Half a second of quiet: a customer tapping "+" four times is one basket. */
+    private companion object {
+        const val AUTO_OFFER_DEBOUNCE_MILLIS = 450L
+    }
+
     private val _state = MutableStateFlow(State())
     val state: StateFlow<State> = _state.asStateFlow()
 
@@ -100,32 +114,74 @@ class CartViewModel @Inject constructor(
     /** The coupon as the server described it, kept so the discount tracks the subtotal. */
     private var appliedCoupon: CouponRepo.Coupon? = null
 
+    /**
+     * The coupon the kitchen's own board would apply to this basket, priced
+     * whenever the basket changes. Null until the first answer arrives, and null
+     * forever on a phone with no network — the basket is then priced without it,
+     * which is the honest outcome.
+     */
+    private val autoOfferFlow = MutableStateFlow<CouponRepo.Offer?>(null)
+
+    /** Everything the screen is built from, so the offer can join the combine. */
+    private data class Inputs(
+        val store: StoreConfig,
+        val menu: MenuSnapshot,
+        val cart: Cart,
+        val address: UndalLocation?,
+        val note: String
+    )
+
     init {
         viewModelScope.launch { refreshAddress() }
         viewModelScope.launch {
-            combine(
+            val inputs = combine(
                 storeRepo.observeStore(),
                 menuRepo.observeMenu(),
                 cartRepo.cart,
                 addressFlow,
                 noteFlow
-            ) { store, menu, cart, address, note ->
-                buildState(store, menu, cart, address, note)
-            }.collect { next -> _state.value = next }
+            ) { store, menu, cart, address, note -> Inputs(store, menu, cart, address, note) }
+            // The automatic offer is a sixth input, so the bill, the badge and the
+            // "applied automatically" line always describe one basket.
+            combine(inputs, autoOfferFlow) { current, offer -> buildState(current, offer) }
+                .collect { next -> _state.value = next }
         }
+        viewModelScope.launch {
+            // Re-price the automatic coupon when the basket or the ride changes —
+            // not on every keystroke, and never because the discount itself moved
+            // (that would be a loop: the offer changes the very number watched).
+            _state
+                .map { it.subtotalPaisa to it.deliveryPaisa }
+                .distinctUntilChanged()
+                .debounce(AUTO_OFFER_DEBOUNCE_MILLIS)
+                .collect { (subtotal, delivery) -> refreshAutomaticCoupon(subtotal, delivery) }
+        }
+    }
+
+    /**
+     * Asks the kitchen's board what it would give this basket, unless the customer
+     * has already chosen a code of their own — a typed code always wins and is
+     * never silently replaced by an automatic one.
+     */
+    private suspend fun refreshAutomaticCoupon(subtotalPaisa: Long, deliveryPaisa: Long) {
+        if (appliedCoupon != null || subtotalPaisa <= 0L) {
+            if (autoOfferFlow.value != null) autoOfferFlow.value = null
+            return
+        }
+        val offer = couponRepo.automatic(subtotalPaisa, deliveryPaisa)
+        if (offer != autoOfferFlow.value) autoOfferFlow.value = offer
     }
 
     fun refreshAddress() {
         viewModelScope.launch { addressFlow.value = authRepo.loadProfileLocation() }
     }
 
-    private suspend fun buildState(
-        store: StoreConfig,
-        menu: MenuSnapshot,
-        cart: Cart,
-        address: UndalLocation?,
-        note: String
-    ): State {
+    private suspend fun buildState(inputs: Inputs, autoOffer: CouponRepo.Offer?): State {
+        val store = inputs.store
+        val menu = inputs.menu
+        val cart = inputs.cart
+        val address = inputs.address
+        val note = inputs.note
         // Reconcile the cart with the live menu before showing anything.
         val unavailable = mutableSetOf<String>()
         var reconciled = cart
@@ -164,12 +220,16 @@ class CartViewModel @Inject constructor(
             reconciled = cartRepo.current()
         }
 
-        val discount = appliedCoupon?.discountFor(reconciled.subtotalPaisa) ?: 0L
-        val effectiveDiscount = if (unavailable.isEmpty()) discount else 0L
-
         val distance = if (address != null) store.distanceFrom(address.lat, address.lng) else null
         val delivery = distance?.let { store.deliveryFeeFor(it) } ?: 0L
         val subtotal = reconciled.subtotalPaisa
+
+        // A typed code wins; otherwise the kitchen's own automatic offer, priced by
+        // the same rule the server runs before it writes the order.
+        val typedDiscount = appliedCoupon?.discountFor(subtotal, delivery) ?: 0L
+        val automatic = autoOffer.takeIf { appliedCoupon == null && typedDiscount <= 0L }
+        val discount = typedDiscount + (automatic?.discountPaisa ?: 0L)
+        val effectiveDiscount = if (unavailable.isEmpty()) discount else 0L
         val total = Money.grandTotal(subtotal, delivery, effectiveDiscount)
         val openState = StoreOpenState.of(store)
 
@@ -190,6 +250,9 @@ class CartViewModel @Inject constructor(
             couponMessage = _state.value.couponMessage,
             couponIsError = _state.value.couponIsError,
             couponChecking = false,
+            autoApplied = automatic != null && unavailable.isEmpty(),
+            autoMessage = automatic?.message?.takeIf { unavailable.isEmpty() },
+            autoHeadline = automatic?.headline.orEmpty(),
             note = note,
             blockers = blockersFor(openState, store, address, distance, subtotal, unavailable, reconciled),
             placing = _state.value.placing,
@@ -282,6 +345,7 @@ class CartViewModel @Inject constructor(
     fun clearCart() {
         viewModelScope.launch {
             appliedCoupon = null
+            autoOfferFlow.value = null
             cartRepo.clear()
             _state.value = _state.value.copy(
                 couponCode = "",
@@ -304,9 +368,13 @@ class CartViewModel @Inject constructor(
         }
         _state.value = current.copy(couponChecking = true, couponMessage = null)
         viewModelScope.launch {
-            when (val outcome = couponRepo.validate(code, current.subtotalPaisa)) {
+            when (val outcome = couponRepo.validate(code, current.subtotalPaisa, current.deliveryPaisa)) {
                 is CouponRepo.Outcome.Valid -> {
                     appliedCoupon = outcome.coupon
+                    // A typed code replaces the automatic one rather than stacking
+                    // with it: two discounts on one order is not a promotion, it is
+                    // a mistake.
+                    autoOfferFlow.value = null
                     cartRepo.applyCoupon(outcome.coupon.code)
                     _state.value = _state.value.copy(
                         couponCode = outcome.coupon.code,
@@ -333,6 +401,8 @@ class CartViewModel @Inject constructor(
         viewModelScope.launch {
             appliedCoupon = null
             cartRepo.clearCoupon()
+            // Removing a typed code lets the kitchen's own offer come back.
+            refreshAutomaticCoupon(_state.value.subtotalPaisa, _state.value.deliveryPaisa)
             _state.value = _state.value.copy(
                 couponCode = "",
                 couponMessage = "Coupon removed.",
@@ -372,7 +442,10 @@ class CartViewModel @Inject constructor(
                 customerName = authRepo.loadProfileName().orEmpty().ifBlank { "Undal customer" },
                 phone = authRepo.loadProfilePhone().orEmpty(),
                 lines = current.lines,
-                couponCode = current.couponCode,
+                // Whatever the bill shows is what the order records: a typed code,
+                // or the kitchen's own automatic one. The order path re-checks it
+                // with the same rule before it writes anything.
+                couponCode = current.couponCode.ifBlank { autoOfferFlow.value?.code.orEmpty() },
                 note = current.note
             )
             when (val result = orderRepo.placeOrder(draft)) {

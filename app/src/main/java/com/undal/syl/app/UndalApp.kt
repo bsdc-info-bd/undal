@@ -9,6 +9,7 @@ import com.google.firebase.database.FirebaseDatabase
 import com.google.firebase.firestore.FirebaseFirestore
 import com.google.firebase.firestore.FirebaseFirestoreSettings
 import com.google.firebase.firestore.PersistentCacheSettings
+import com.undal.syl.app.core.background.AlertWatchdog
 import com.undal.syl.app.core.background.PresenceHeartbeatWorker
 import com.undal.syl.app.core.session.AuthSession
 import com.undal.syl.app.core.telemetry.UndalTelemetry
@@ -63,6 +64,10 @@ class UndalApp : Application(), Configuration.Provider {
 
     override fun onCreate() {
         super.onCreate()
+        // Installed before Crashlytics can install its own handler, so that a
+        // crash can be reported, counted against a loop budget, and followed by a
+        // clean reopening of the app instead of a jump to the home screen.
+        com.undal.syl.app.core.util.UndalCrashGuard.install(this)
         // Crash reporting and the cold-start trace start before anything else can
         // be slow: a performance trace that misses the first 300 ms is theatre.
         telemetry.configureForBuild(BuildConfig.DEBUG)
@@ -76,9 +81,13 @@ class UndalApp : Application(), Configuration.Provider {
         // Channels are created on every start: a ROM update can silently drop
         // them, and a missing channel means a silent order alert.
         AlarmChannels.ensureChannels(this)
-        // The kitchen's fifteen-minute heartbeat fallback must survive process
-        // death, so it is ensured at every start rather than only after login.
+        // The heartbeat has to outlive this process two ways: the WorkManager job
+        // (fifteen minutes, the floor WorkManager allows) across a reboot, and the
+        // alert watchdog (nine minutes) across Android killing the app. Both are
+        // ensured at every start rather than only after a login, so a phone that
+        // came back from a crash is armed again without anyone signing in.
         PresenceHeartbeatWorker.ensureScheduled(this)
+        AlertWatchdog.arm(this)
         // A kitchen phone must never be signed out by surprise: the watchdog
         // refreshes the token and re-checks the vendor claim every 20 minutes
         // for as long as the process lives (V-002).

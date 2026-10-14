@@ -144,6 +144,19 @@
                 android:value="kitchen-presence" />
         </service>
 
+        <!-- The alert watchdog: an alarm the system holds on Undal's behalf, so a
+             kitchen phone whose app was swiped away or killed by a battery
+             cleaner rebuilds its order watcher without anyone opening anything.
+             Never armed on a customer phone. -->
+        <receiver
+            android:name=".core.background.AlertWatchdogReceiver"
+            android:enabled="true"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="com.undal.syl.app.action.ALERT_WATCHDOG" />
+            </intent-filter>
+        </receiver>
+
         <!-- Brings the heartbeat, the token registration and the channels back
              after a reboot, an app update or a timezone change. -->
         <receiver

@@ -7,6 +7,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -26,6 +27,7 @@ import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -52,8 +54,18 @@ fun UndalScaffold(
     content: @Composable (PaddingValues) -> Unit
 ) {
     val hostState = snackbarHostState ?: remember { SnackbarHostState() }
+    // The title bar hides itself as the page scrolls, which is what gives a long
+    // menu or a long order list the whole screen back on a small phone. It is a
+    // standard Material effect driven by the page's own scroll, so it costs the
+    // list nothing.
+    val titleBar = TopAppBarDefaults.enterAlwaysScrollBehavior()
     Scaffold(
-        modifier = modifier.fillMaxSize(),
+        modifier = modifier
+            .fillMaxSize()
+            // The keyboard is part of the layout: with the window edge-to-edge,
+            // a chat box or a form at the bottom of the screen must rise with it.
+            .imePadding()
+            .nestedScroll(titleBar.nestedScrollConnection),
         containerColor = MaterialTheme.colorScheme.background,
         snackbarHost = { SnackbarHost(hostState) },
         floatingActionButton = floatingActionButton,
@@ -63,10 +75,17 @@ fun UndalScaffold(
                 TopAppBar(
                     navigationIcon = {
                         if (onBack != null) {
-                            IconButton(onClick = onBack) {
+                            // 48dp of glass and a description a screen reader can
+                            // read: the back arrow is the one control every single
+                            // screen has, so it is the one that must never be a
+                            // lucky tap.
+                            IconButton(
+                                onClick = onBack,
+                                modifier = Modifier.size(UndalDimens.touchTarget)
+                            ) {
                                 Icon(
                                     Icons.AutoMirrored.Filled.ArrowBack,
-                                    contentDescription = "Go back",
+                                    contentDescription = "Back",
                                     modifier = Modifier.size(UndalDimens.iconMd)
                                 )
                             }
@@ -95,7 +114,8 @@ fun UndalScaffold(
                     colors = TopAppBarDefaults.topAppBarColors(
                         containerColor = MaterialTheme.colorScheme.background,
                         titleContentColor = MaterialTheme.colorScheme.onBackground
-                    )
+                    ),
+                    scrollBehavior = titleBar
                 )
             }
         }

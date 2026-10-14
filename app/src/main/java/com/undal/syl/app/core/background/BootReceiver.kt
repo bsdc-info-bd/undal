@@ -17,7 +17,9 @@ import com.undal.syl.app.core.fcm.AlarmChannels
  *     opens the app,
  *   · brings the heartbeat foreground service back for a signed-in kitchen,
  *   · brings the live order watcher back, so a rebooted phone rings for an order
- *     that arrives before anybody touches it.
+ *     that arrives before anybody touches it,
+ *   · arms the alert watchdog, which is what keeps all of the above true after
+ *     Android kills the app for its own reasons (see [AlertWatchdog]).
  *
  * It never touches the customer experience: if nobody is signed in, it simply
  * recreates the channels and returns.
@@ -50,9 +52,13 @@ class BootReceiver : BroadcastReceiver() {
             // A rebooted kitchen phone must be able to ring again immediately,
             // so the alert channel state is verified as part of the boot path.
             OrderAlertController.stop()
+            // The watchdog outlives everything else here: the two services above
+            // can be killed later in the day, and this is what brings them back.
+            AlertWatchdog.arm(context)
         } else if (user != null) {
             // A customer device must never keep the kitchen's watcher alive.
             KitchenWatchService.stop(context)
+            AlertWatchdog.cancel(context)
         }
     }
 

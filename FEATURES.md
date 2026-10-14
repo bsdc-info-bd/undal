@@ -74,7 +74,7 @@ Legend: `[x]` shipped and wired · `[ ]` still to ship.
 - [x] C-049 · Inline quantity editing
 - [x] C-050 · Swipe to remove with undo
 - [x] C-051 · Clear cart
-- [x] C-052 · Coupon apply with transaction validation (expiry, minimum, usage limit, active) and precise error copy
+- [x] C-052 · Coupon apply through one shared rule (percent, fixed, free delivery, cap, daily window, chosen days, expiry, usage limit) with precise error copy — and the best automatic coupon applied to the basket with no code typed
 - [x] C-053 · Subtotal line
 - [x] C-054 · Live km-based delivery fee with a distance caption
 - [x] C-055 · Discount line item
@@ -168,9 +168,9 @@ Legend: `[x]` shipped and wired · `[ ]` still to ship.
 - [x] V-060 · Combo create, read, update, delete with photo
 - [x] V-061 · Campaign create with percent or fixed discount, date range, banner text and scope
 - [x] V-062 · Campaign list, edit and disable
-- [x] V-063 · Coupon create with upper-normalised code, type, value, minimum order, expiry and usage limit
-- [x] V-064 · Coupon list showing used against limit with an active toggle
-- [x] V-065 · Coupon delete guard
+- [x] V-063 · Coupon studio: percent, fixed or free delivery; a maximum discount cap; a minimum basket; a daily window that may cross midnight; chosen days; an expiry and a usage limit — with a live preview of what it costs on a typical basket
+- [x] V-064 · Coupon list showing the headline, conditions, used-against-limit, reach (applies itself or code only, shown on the web store or not) and an active toggle
+- [x] V-065 · Coupon delete guard, keeping the used count across edits and moving a renamed code instead of losing its history
 - [x] V-066 · Featured item toggle for the home highlight
 - [x] V-067 · Optional category image through Cloudinary
 - [x] V-068 · Preview-as-customer mode
@@ -181,9 +181,9 @@ Legend: `[x]` shipped and wired · `[ ]` still to ship.
 - [x] V-073 · Special dates with a date picker for closed days or custom hours
 - [x] V-074 · Explainer line showing today's derived status
 - [x] V-075 · Manual open/close override with a note customers can see
-- [x] V-076 · Auto-offline: fifteen minutes without a heartbeat closes the store and pushes a Reopen now notice
-- [x] V-077 · Reopen and reconnect flow
-- [x] V-078 · Presence and heartbeat status tile
+- [x] V-076 · Auto-offline: ten minutes without a heartbeat closes the store and pushes a notice saying why; the Worker reopens it by itself when the phone comes back inside thirty minutes
+- [x] V-077 · Reopen and reconnect flow: the Worker restores a blink by itself, and asks the owner to confirm after a long outage or outside the kitchen's hours
+- [x] V-078 · Presence analytics: heartbeat age, uptime percentage from the Worker's own five-minute samples, the day's offline windows and every automatic pause and restore
 - [x] V-079 · Delivery per-kilometre fee editor
 - [x] V-080 · Delivery radius slider from one to fifteen kilometres with a live circle preview
 - [x] V-081 · Store location pin picker with a grab-my-GPS button
@@ -223,7 +223,7 @@ Legend: `[x]` shipped and wired · `[ ]` still to ship.
 - [x] P-002 · FCM HTTP v1 with service-account OAuth2 (RS256 JWT minted in Web Crypto, token cached in KV)
 - [x] P-003 · Firebase ID-token RS256 verification against Google certificates plus the role claim check
 - [x] P-004 · Daily 18:00 Asia/Dhaka offer broadcast to the promos topic
-- [x] P-005 · Five-minute presence watchdog that auto-closes an unreachable kitchen
+- [x] P-005 · Five-minute presence watchdog: ten minutes of silence pauses an open kitchen, restores it when the phone returns, and records a per-day online/offline document
 - [x] P-006 · KV: OAuth token cache, menu snapshot cache and latest.json release manifest
 - [x] P-007 · Edge rate limiting per caller per minute with a 429 JSON response
 - [x] P-008 · Security headers (CSP, frame options, content-type options) on every web route
@@ -237,7 +237,7 @@ Legend: `[x]` shipped and wired · `[ ]` still to ship.
 - [x] P-016 · Download page with QR code and an unknown-sources guide
 - [x] P-017 · Web page stating honestly which features are app-only
 - [x] P-018 · Order sound asset copied into res/raw by the workflows
-- [x] P-019 · Boot receiver rescheduling the heartbeat and the notification retry workers
+- [x] P-019 · Boot receiver rescheduling the heartbeat, the retry workers and the alert watchdog, plus a nine-minute alarm watchdog that rebuilds the order watcher and the heartbeat after Android kills or a swipe closes the app
 - [x] P-020 · WorkManager retry queue for failed notification relays
 - [x] P-021 · Firestore offline persistence tuned to a 100 MB local cache
 - [x] P-022 · Realtime Database keepSynced for chat and live order flags
@@ -262,7 +262,7 @@ Legend: `[x]` shipped and wired · `[ ]` still to ship.
 - [x] P-041 · Dhaka time utilities for cron and schedule alignment
 - [x] P-042 · Consistent motion system (spring specs and shared-element transitions)
 - [x] P-043 · Automatic dark and light theme with dynamic colour on Android 12+
-- [x] P-044 · Accessibility pass: descriptions, 48 dp targets and TalkBack order
+- [x] P-044 · Accessibility pass: descriptions, 48 dp targets, TalkBack order, and a back button that works on every screen — step back, then portal home, then a double-press exit with the door left open
 - [x] P-045 · No-placeholder grep gate that fails CI on unfinished markers
 
 ### The web storefront, the web account and search (P-046 … P-059)

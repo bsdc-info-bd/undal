@@ -109,6 +109,20 @@ class KitchenWatchService : Service() {
         return START_STICKY
     }
 
+    /**
+     * Android is taking the task off the screen — either the owner swiped Undal
+     * away or the system is reclaiming it. `stopWithTask="false"` keeps this
+     * service alive on most phones, but a manufacturer's cleaner can still end
+     * the process outright, so the watchdog is armed here, at the last moment
+     * this code is guaranteed to run, and the heartbeat is written now rather
+     * than at the next five-minute mark.
+     */
+    override fun onTaskRemoved(rootIntent: Intent?) {
+        AlertWatchdog.arm(this, AlertWatchdog.SWIPE_GRACE_MILLIS)
+        PresenceHeartbeat.startService(this)
+        super.onTaskRemoved(rootIntent)
+    }
+
     private fun startForegroundNotification() {
         val open = PendingIntent.getActivity(
             this,
@@ -206,12 +220,17 @@ class KitchenWatchService : Service() {
             val intent = Intent(context, KitchenWatchService::class.java).apply { action = ACTION_START }
             runCatching { ContextCompat.startForegroundService(context, intent) }
                 .onFailure { Log.w(TAG, "could not start the kitchen watch", it) }
+            // Armed from here rather than from every caller: the watchdog is the
+            // same promise as the watcher — "this phone rings for orders" — so it
+            // is armed and cancelled with it, in the one place that knows.
+            AlertWatchdog.arm(context)
         }
 
         /** Stops it — used on sign-out, so a customer phone never watches. */
         fun stop(context: Context) {
             val intent = Intent(context, KitchenWatchService::class.java).apply { action = ACTION_STOP }
             runCatching { ContextCompat.startForegroundService(context, intent) }
+            AlertWatchdog.cancel(context)
         }
 
         /**

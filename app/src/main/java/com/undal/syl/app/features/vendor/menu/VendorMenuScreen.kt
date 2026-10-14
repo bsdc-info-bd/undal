@@ -32,6 +32,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
@@ -73,13 +74,23 @@ import com.undal.syl.app.features.vendor.tick
 fun VendorMenuScreen(
     onBack: () -> Unit,
     onPreviewAsCustomer: () -> Unit,
+    /**
+     * The tab to open on. The studio (`vendor/promos`) passes Offers so the
+     * dashboard's "Offers" button lands on the promotions themselves; the manager
+     * itself opens on Dishes.
+     */
+    startTab: VendorMenuViewModel.Tab? = null,
     viewModel: VendorMenuViewModel = hiltViewModel()
 ) {
     val state by viewModel.state.collectAsState()
     val haptics = LocalHapticFeedback.current
 
+    LaunchedEffect(startTab) {
+        if (startTab != null) viewModel.onTab(startTab)
+    }
+
     UndalScaffold(
-        title = "Menu manager",
+        title = if (state.tab == VendorMenuViewModel.Tab.OFFERS) "Coupons and discounts" else "Menu manager",
         subtitle = "${state.menu.items.size} dish(es) · ${state.menu.combos.size} combo(s) · " +
             "${state.menu.categories.size} section(s)",
         onBack = onBack,
@@ -683,8 +694,10 @@ private fun OffersTab(
     ) {
         item {
             VendorSection(
-                title = "Coupons",
-                subtitle = "Codes customers type at checkout. One use per order, counted atomically."
+                title = "Coupons and discounts",
+                subtitle = "Percent, fixed taka or free delivery — with a cap, a daily window, " +
+                    "chosen days and an expiry. Turn auto-apply on and every basket gets it " +
+                    "without anyone typing a code."
             ) {
                 Column {
                     UndalSecondaryButton(
@@ -706,10 +719,29 @@ private fun OffersTab(
                                 Column(modifier = Modifier.weight(1f)) {
                                     Text(text = coupon.code, style = MaterialTheme.typography.titleSmall)
                                     Text(
-                                        text = "${coupon.valueLabel} · ${coupon.usedLabel}" +
+                                        // The headline is written by the shared coupon rule, so
+                                        // what the kitchen reads here is what a customer reads on
+                                        // the web store banner.
+                                        text = "${coupon.headline} · ${coupon.usedLabel}" +
                                             if (coupon.expired) " · expired" else "",
                                         style = MaterialTheme.typography.bodySmall,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                    if (coupon.conditionLabel.isNotBlank()) {
+                                        Text(
+                                            text = coupon.conditionLabel,
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                    }
+                                    Text(
+                                        text = coupon.reachLabel,
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = if (coupon.autoApply) {
+                                            MaterialTheme.colorScheme.primary
+                                        } else {
+                                            MaterialTheme.colorScheme.onSurfaceVariant
+                                        }
                                     )
                                 }
                                 Switch(

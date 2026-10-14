@@ -163,6 +163,17 @@ class OrderAlertService : Service() {
         }.onFailure { Log.w(TAG, "Could not restore alert queue", it) }
     }
 
+    /**
+     * The alert is playing and the task is being taken off the screen. The sound
+     * keeps running (the service is not tied to the task), but if this phone's
+     * ROM kills the process anyway, the watchdog revives the watcher and the
+     * heartbeat — and the persisted queue means the ring resumes where it was.
+     */
+    override fun onTaskRemoved(rootIntent: Intent?) {
+        AlertWatchdog.arm(this, AlertWatchdog.SWIPE_GRACE_MILLIS)
+        super.onTaskRemoved(rootIntent)
+    }
+
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onCreate() {

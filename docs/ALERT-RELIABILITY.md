@@ -726,6 +726,63 @@ restart a sticky service — and the saved queue has a 15-minute expiry precisel
 a phone that was off overnight does not wake up ringing for an order the kitchen
 already handled.
 
+### The watchdog: when Android kills the app anyway
+
+`stopWithTask="false"` and `START_STICKY` cover the polite half of Android. The
+other half is a battery cleaner, a low-memory kill, or an owner who swiped Undal
+off the recents list — and the kitchen then looks armed while it is not:
+
+| file | what it is |
+| --- | --- |
+| `core/background/AlertWatchdog.kt` | an `AlarmManager` alarm the *system* holds for Undal |
+| `core/background/AlertWatchdogReceiver.kt` | what the alarm wakes up: rebuilt services, or a warning |
+
+```kotlin
+// AlertWatchdog
+fun arm(context: Context, delayMillis: Long = WATCHDOG_MILLIS)   // 9 min
+fun cancel(context: Context)                                     // any sign-out
+fun isArmed(context: Context): Boolean                           // the diagnostics row
+const val SWIPE_GRACE_MILLIS = 2 * 60 * 1000L                     // armed from onTaskRemoved
+
+// AlertWatchdogReceiver
+if (!AlertWatchdog.isKitchenDevice()) { AlertWatchdog.cancel(app); return }
+AlarmChannels.ensureChannels(app)
+PresenceHeartbeat.startService(app)
+KitchenWatchService.start(app)
+AlertWatchdog.arm(app)   // the chain continues whether or not this pass worked
+```
+
+**Why an alarm and not a service.** A service dies with the process; an alarm is
+held by the system, addressed to the package, and delivered by handing the app a
+fresh process. It is the only one of the two that survives the kill this section
+is about.
+
+**Why nine minutes.** The Worker's rule is that ten minutes of silence pauses an
+open kitchen, so a watchdog on a slower cadence would be watching from behind.
+Nine minutes is also the shortest interval Android still delivers to a Dozing
+phone (a woken app gets one precise alarm per nine minutes) — asking for less
+would buy nothing and cost battery.
+
+**What the owner experiences.** The phone is swiped away or killed; within nine
+minutes it has rebuilt its own order watcher and heartbeat, without anybody
+touching it. If the pause the Worker applied was shorter than thirty minutes the
+store reopens itself and a push says so; if it was longer, or outside the
+kitchen's hours, the owner is asked to confirm instead — see `crons/presence.ts`.
+
+**When it cannot work.** A ROM that refuses `setExactAndAllowWhileIdle`, or an
+exact-alarm permission the owner never granted, leaves the alarm inexact: it
+still fires, just not to the minute. If Android refuses the foreground-service
+start when the alarm fires, the receiver posts a visible *"Undal could not
+restart its alerts"* notification rather than failing silently, and the alarm is
+re-armed anyway. The diagnostics screen reports all of this in words —
+`AlertWatchdog.describe()` — with its own repair action, so a phone that is
+quietly unarmed says so on the screen the owner already checks.
+
+**On a customer phone** the alarm is never kept: the receiver checks the vendor
+claim on delivery and cancels itself, and every sign-out path
+(`UndalRootViewModel`, `VendorDashboardViewModel`, `ProfileViewModel`) stops the
+watcher, the alert and the watchdog together.
+
 ---
 
 ## 12. The manifest

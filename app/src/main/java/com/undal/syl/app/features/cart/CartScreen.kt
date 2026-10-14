@@ -270,6 +270,24 @@ fun CartScreen(
                         TextButton(onClick = viewModel::removeCoupon) { Text("Remove") }
                     }
                 }
+                // The kitchen's own offer, applied without typing anything. It is
+                // shown even before a code is entered, because a discount the
+                // customer cannot see is a discount they will not believe.
+                if (state.autoApplied && state.couponCode.isBlank()) {
+                    Spacer(Modifier.height(UndalDimens.xs))
+                    UndalStatusPill(
+                        text = state.autoHeadline.ifBlank { "Applied automatically" },
+                        containerColour = MaterialTheme.colorScheme.tertiaryContainer,
+                        contentColour = MaterialTheme.colorScheme.onTertiaryContainer,
+                        icon = Icons.Filled.Check
+                    )
+                    Spacer(Modifier.height(UndalDimens.xs))
+                    Text(
+                        text = state.autoMessage.orEmpty(),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                }
                 if (state.couponMessage != null) {
                     Spacer(Modifier.height(UndalDimens.xs))
                     Text(
@@ -293,7 +311,10 @@ fun CartScreen(
                 UndalKeyValueRow("Food subtotal", state.subtotalLabel)
                 UndalKeyValueRow("Delivery", if (state.distanceKm == null) "—" else state.deliveryLabel)
                 if (state.discountPaisa > 0L) {
-                    UndalKeyValueRow("Coupon ${state.couponCode}", state.discountLabel)
+                    UndalKeyValueRow(
+                        "Coupon ${state.couponCode.ifBlank { "applied automatically" }}",
+                        state.discountLabel
+                    )
                 }
                 Spacer(Modifier.height(UndalDimens.xs))
                 UndalKeyValueRow("Total to pay the rider", state.totalLabel, emphasise = true)

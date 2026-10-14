@@ -38,16 +38,48 @@ class RoleGate @Inject constructor(
         data class Failed(val message: String) : RoleResolution
     }
 
-    suspend fun resolve(): RoleResolution {
+    /**
+     * Decides where this phone belongs. It answers with a sentence rather than an
+     * exception, always — see [Routed], [NeedsProfile], [NotSignedIn], [Failed].
+     *
+     * That contract is not decoration. This runs inside the root router's
+     * coroutine, and an exception that escapes a `viewModelScope` job is an
+     * uncaught exception: the process is killed and the person is looking at
+     * their home screen. The ordinary case that produced it was plain and cruel —
+     * signing in on a *new* phone, where the token and the `vendor/{uid}` check
+     * are the first reads the device has ever made and the connection is often
+     * the weakest it will ever be.
+     */
+    suspend fun resolve(): RoleResolution = runCatching { decide() }.getOrElse { error ->
+        RoleResolution.Failed(
+            com.undal.syl.app.core.util.UndalErrors.firestore(error, operation = "opening your account")
+        )
+    }
+
+    private suspend fun decide(): RoleResolution {
         val user = session.currentUser ?: return RoleResolution.NotSignedIn
-        var isVendor = claimIsVendor(user.getIdToken(false).await().claims)
+
+        // A cached read: no network, no wait, and it is what the installed app
+        // already has in hand. If even this fails the phone simply has no claim
+        // to read yet, which the document check below can still settle.
+        var isVendor = readClaim(user, forceRefresh = false)
 
         if (!isVendor && userRegisteredAsVendor(user.uid)) {
             // The account is the kitchen but the cached token does not say so:
             // the claim was granted after this phone signed in. One forced refresh
             // settles it, and only the kitchen ever pays for it — a customer's
             // `vendor/{uid}` does not exist, so their cold start is unchanged.
-            isVendor = claimIsVendor(user.getIdToken(true).await().claims)
+            val refreshed = runCatching { user.getIdToken(true).await() }
+            if (refreshed.isFailure) {
+                // The document says kitchen, the token cannot confirm it, and the
+                // rules read the token. Rather than showing a console whose every
+                // read is refused, say what happened and offer another try.
+                return RoleResolution.Failed(
+                    "This phone holds the kitchen's account, but Undal could not confirm it with the server just now. " +
+                        "Check the connection and try again — the kitchen's orders are safe while you do."
+                )
+            }
+            isVendor = claimIsVendor(refreshed.getOrNull()?.claims)
         }
 
         if (isVendor) {
@@ -71,6 +103,10 @@ class RoleGate @Inject constructor(
             )
         }
     }
+
+    /** The cached claim, or false when it cannot be read at all. Never throws. */
+    private suspend fun readClaim(user: com.google.firebase.auth.FirebaseUser, forceRefresh: Boolean): Boolean =
+        runCatching { claimIsVendor(user.getIdToken(forceRefresh).await().claims) }.getOrDefault(false)
 
     private fun claimIsVendor(claims: Map<String, Any>?): Boolean =
         claims?.get(AuthSession.VENDOR_CLAIM_KEY) == true

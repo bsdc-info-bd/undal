@@ -193,11 +193,13 @@ Battery and autostart paths by brand (Android 13–15):
 **Honest caveat:** Android can always throttle background work under extreme
 memory pressure, and a device that is switched off receives nothing. The app is
 built for that reality: the alert has three independent triggers — the live
-Firestore listener, the RTDB `orderLive` mirror and the Worker's FCM push — and
-a fourth safety net on the server side: if the kitchen goes silent for fifteen
-minutes while the store is open, the Worker closes the store automatically and
-pushes you a **Reopen now** notice, so a sleeping phone can never quietly take
-orders it does not see.
+Firestore listener, the RTDB `orderLive` mirror and the Worker's FCM push — plus
+a watchdog of its own on the device, an alarm the system holds on Undal's behalf
+that rebuilds the order watcher and the heartbeat within nine minutes of a swipe
+or a kill. On the server side, ten minutes of silence while the store is open
+closes the store automatically — and when the phone comes back inside half an
+hour the Worker reopens it and says so, so a sleeping phone can never quietly
+take orders it does not see, and a blink never costs the kitchen an evening.
 
 Every rung of that ladder — the data-only payload, the OAuth2 minting, the topic
 fallback, the re-alert windows, the alarm channel, the looping player, the

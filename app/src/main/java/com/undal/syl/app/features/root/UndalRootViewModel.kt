@@ -12,6 +12,7 @@ import com.undal.syl.app.core.session.SessionState
 import com.undal.syl.app.core.session.RoleGate
 import com.undal.syl.app.core.session.UndalRole
 import dagger.hilt.android.lifecycle.HiltViewModel
+import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -69,15 +70,39 @@ class UndalRootViewModel @Inject constructor(
 
     val draftAddress = progress.draftAddress
 
+    /**
+     * Nothing in this class is allowed to end the process.
+     *
+     * An exception that leaves a `viewModelScope` job is uncaught, and an
+     * uncaught exception on Android is the app closing itself — the exact symptom
+     * of signing in on a new phone with a weak connection, where the router's
+     * first reads (a token, then `vendor/{uid}`) are the first reads that device
+     * has ever made. With this handler attached, a failure becomes one sentence
+     * on the screen with a Try-again next to it.
+     */
+    private val failures = CoroutineExceptionHandler { _, error ->
+        val message = com.undal.syl.app.core.util.UndalErrors.firestore(error, operation = "opening Undal")
+        _errorMessage.value = message
+        val current = _destination.value
+        // A failure while the splash is still up has to become something the
+        // person can act on; a failure anywhere else must not yank them out of
+        // the screen they are using.
+        if (current is Destination.Splash || current is Destination.Error) {
+            _destination.value = Destination.Error(message)
+        }
+    }
+
     init {
-        viewModelScope.launch {
+        viewModelScope.launch(failures) {
             session.state.collect { state ->
                 when (state) {
-                    is SessionState.Loading -> {
-                        _destination.value = Destination.Splash
-                    }
+                    // The splash is the cold start's own screen; it is never a
+                    // state this router paints, so a re-resolution cannot make the
+                    // app flicker back to it.
+                    is SessionState.Loading -> Unit
 
                     is SessionState.SignedOut -> {
+                        _errorMessage.value = null
                         _destination.value = Destination.Auth
                     }
 
@@ -93,9 +118,16 @@ class UndalRootViewModel @Inject constructor(
 
     /** Re-runs the router after sign-in, sign-out, address save or wizard finish. */
     fun resolveRole() {
-        viewModelScope.launch {
-            _destination.value = Destination.Splash
-            when (val resolution = roleGate.resolve()) {
+        viewModelScope.launch(failures) {
+            // The screen the person is on stays on screen until the router knows
+            // where it is sending them: the splash used to be painted here first,
+            // which made every address save flash the splash and re-run the graph.
+            val resolution = runCatching { roleGate.resolve() }.getOrElse { error ->
+                RoleGate.RoleResolution.Failed(
+                    com.undal.syl.app.core.util.UndalErrors.firestore(error, operation = "opening your account")
+                )
+            }
+            when (resolution) {
                 is RoleGate.RoleResolution.NotSignedIn -> _destination.value = Destination.Auth
 
                 is RoleGate.RoleResolution.NeedsProfile -> _destination.value = Destination.CustomerLocation
@@ -131,23 +163,25 @@ class UndalRootViewModel @Inject constructor(
     }
 
     private fun registerDevice(uid: String, isVendor: Boolean) {
-        viewModelScope.launch {
-            // Best effort: a failed token write must never block the portal.
-            tokenRegistrar.register(uid = uid, isVendor = isVendor, subscribeToPromos = !isVendor)
+        viewModelScope.launch(failures) {
+            // Best effort, every step of it: a failed token write, a refused
+            // notification permission or a service the ROM will not let us start
+            // must never block the portal the person is trying to reach.
+            runCatching { tokenRegistrar.register(uid = uid, isVendor = isVendor, subscribeToPromos = !isVendor) }
 
             // Who is signed in decides which alert routes exist on this phone: the
             // kitchen gets the live watcher, everyone else has it switched off.
             // The fact is also remembered, because a push can arrive in a fresh
             // process before the claim is refreshed.
-            progress.setKitchenDevice(isVendor)
-            com.undal.syl.app.core.fcm.PushDeviceRole.remember(applicationContext(), uid, isVendor)
-            KitchenWatchService.sync(applicationContext(), isVendor)
+            runCatching { progress.setKitchenDevice(isVendor) }
+            runCatching { com.undal.syl.app.core.fcm.PushDeviceRole.remember(applicationContext(), uid, isVendor) }
+            runCatching { KitchenWatchService.sync(applicationContext(), isVendor) }
         }
     }
 
     /** The kitchen signs out from store settings; the role gate re-resolves immediately. */
     fun signOut() {
-        viewModelScope.launch {
+        viewModelScope.launch(failures) {
             // Silence anything that is ringing and drop the watcher before the
             // session goes: a signed-out phone must not keep watching orders.
             KitchenWatchService.stop(applicationContext())
@@ -171,14 +205,31 @@ class UndalRootViewModel @Inject constructor(
     }
 
     fun onDiagnosticsFinished() {
-        viewModelScope.launch {
+        viewModelScope.launch(failures) {
             progress.markDiagnosticsDone()
             _destination.value = Destination.VendorConsole
         }
     }
 
+    /**
+     * Try again, from the screen that says something went wrong: the banner goes
+     * away and the router re-runs. Nothing is remembered about the failure, so a
+     * connection that came back is enough to move on.
+     */
     fun onErrorAcknowledged() {
+        _errorMessage.value = null
         resolveRole()
+    }
+
+    /** The root banner's own dismissal, when the person does not want to retry yet. */
+    fun onErrorDismissed() {
+        _errorMessage.value = null
+    }
+
+    /** A navigation the graph refused, reported instead of thrown. */
+    fun onNavigationFailed(error: Throwable) {
+        _errorMessage.value =
+            com.undal.syl.app.core.util.UndalErrors.firestore(error, operation = "opening that screen")
     }
 
     fun emailAddress(): String? = auth.currentUser?.email

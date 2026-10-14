@@ -4,6 +4,8 @@ import android.content.Context
 import android.net.Uri
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.undal.syl.app.core.background.KitchenWatchService
+import com.undal.syl.app.core.background.OrderAlertController
 import com.undal.syl.app.core.background.PresenceHeartbeat
 import com.undal.syl.app.core.background.PresenceHeartbeatWorker
 import com.undal.syl.app.core.maps.UndalLocation
@@ -233,6 +235,10 @@ class ProfileViewModel @Inject constructor(
             PresenceHeartbeat.stopService(context)
             PresenceHeartbeatWorker.cancel(context)
             heartbeat.markOffline()
+            // No session, no ringing: whichever screen signs out, the watcher,
+            // the alert and the watchdog that revives them go with the account.
+            KitchenWatchService.stop(context)
+            OrderAlertController.stop()
             session.signOut()
         }
     }
@@ -246,6 +252,8 @@ class ProfileViewModel @Inject constructor(
                 is UndalResult.Success -> {
                     PresenceHeartbeat.stopService(context)
                     PresenceHeartbeatWorker.cancel(context)
+                    KitchenWatchService.stop(context)
+                    OrderAlertController.stop()
                     _state.value = _state.value.copy(
                         deleting = false,
                         notice = "Your account has been deleted.",
