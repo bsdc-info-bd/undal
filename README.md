@@ -358,3 +358,35 @@ Three decisions are worth knowing about:
 - **An account is optional.** A guest can order. The profile document is written
   only once a pin exists, because the app reads a missing `users/{uid}` as
   "onboarding not finished" and a half-written document would lie to it.
+
+### The offers a customer sees
+
+A promotion the kitchen creates in the app reaches the website with no second
+step, and the basket applies the best one **by itself** — nobody has to know a
+code exists:
+
+| The kitchen's two switches | What the customer gets |
+| --- | --- |
+| **Apply automatically** on | the basket prices it with no code typed, on the web and in the app |
+| **Apply automatically** off | it works only when the code is typed — but it can still be advertised |
+| **Show on the web store** on | it appears in the offer strip on `/`, `/store` and `/basket`, with the tag *Applied automatically* or *Type this code at checkout* |
+
+Both switches default to **on**, in the console, in the app's own reader and in
+the Worker, because a coupon the owner created and switched on has to reach
+somebody. Turning *Show on the web store* off keeps an automatic coupon working
+in silence — a voucher for people who already know its name. Turning *Apply
+automatically* off makes a code-only offer: the strip can advertise it, and the
+checkout will never apply it to a customer who did not type it.
+
+The rule that decides whether a code is valid, what it is worth, and whether it
+may run today lives in **one place per surface, proven to be the same rule**:
+`worker/src/web/coupons.ts`, the storefront's own script, and
+`app/…/core/util/CouponMath.kt`. `tools/check-web-rules.mjs` replays the app's
+own JVM test vectors through both JavaScript copies, and
+`tools/check-coupon-parity.mjs` proves the wiring. The checkout re-reads the live
+coupon document before it writes an order, so a browser that lies about a
+discount changes nothing: the price the kitchen sees is the price the server
+computed.
+
+Orders pay cash on delivery. There is no card, no wallet and no payment gateway
+anywhere in this repository.
