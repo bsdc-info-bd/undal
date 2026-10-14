@@ -155,6 +155,10 @@ fun UndalRoot(
             enterTransition = null,
             exitTransition = null
         ) {
+            // The customer's notification permission is part of this product's
+            // promise: without it Android drops every order update silently.
+            val consentViewModel: com.undal.syl.app.core.fcm.NotificationConsentViewModel = hiltViewModel()
+            com.undal.syl.app.core.fcm.CustomerNotificationConsent(progress = consentViewModel.progress)
             StoreScreen(
                 onOpenItem = { itemId ->
                     navController.navigate(UndalRoutes.customerItem(itemId)) { launchSingleTop = true }

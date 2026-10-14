@@ -260,6 +260,23 @@ check(
 );
 
 // ---------------------------------------------------------------------------
+// 8 · the customer half: an order update has to be allowed to arrive
+// ---------------------------------------------------------------------------
+check(
+  "the customer is asked for notification permission",
+  /POST_NOTIFICATIONS/.test(read("app/src/main/java/com/undal/syl/app/core/fcm/NotificationConsent.kt")) &&
+    /CustomerNotificationConsent/.test(read("app/src/main/java/com/undal/syl/app/features/root/UndalRoot.kt")),
+  "Android 13+ drops every notification until the permission is granted, and nothing asks the customer",
+);
+check(
+  "the customer's status relay is wired end to end",
+  /STATUS_COPY/.test(read(WORKER_NOTIFY)) &&
+    /notifyOrderStatus/.test(read("app/src/main/java/com/undal/syl/app/core/net/WorkerApi.kt")) &&
+    /KIND_ORDER_STATUS -> api.notifyOrderStatus/.test(read("app/src/main/java/com/undal/syl/app/core/background/UndalWorkers.kt")),
+  "the customer must receive a push for each status the kitchen sets",
+);
+
+// ---------------------------------------------------------------------------
 // result
 // ---------------------------------------------------------------------------
 console.log(`check-alert-ladder.mjs — ${passes.length} check(s) passed against ${ROOT.split("/").pop()}/`);
