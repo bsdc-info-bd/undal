@@ -211,6 +211,9 @@ jobs:
           ls -l undal.apk
           sha256sum undal.apk
 
+      - name: Prove the order sound is inside the signed APK
+        run: python3 tools/check-apk-alert-assets.py undal.apk
+
       - name: Upload the APK artifact
         uses: actions/upload-artifact@v4
         with:

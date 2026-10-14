@@ -20,6 +20,13 @@
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
 
     <!-- notifications + background survival -->
+    <!--
+        MODIFY_AUDIO_SETTINGS is a normal permission: granted at install, never
+        prompted. It is what lets the alert raise the ALARM stream when an order
+        arrives on a phone whose alarm volume is at zero — the one state in which
+        a fully armed kitchen rings with nothing audible.
+    -->
+    <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />

@@ -7,6 +7,7 @@ import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.stringPreferencesKey
 import com.undal.syl.app.core.maps.UndalLocation
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -61,6 +62,18 @@ class OnboardingProgress @Inject constructor(
 
     suspend fun setKitchenDevice(value: Boolean) {
         dataStore.edit { preferences -> preferences[KEY_KITCHEN_DEVICE] = value }
+    }
+
+    /**
+     * True once the customer has been asked for notification permission — whether
+     * they allowed it or refused. Asking again is nagging, and Android's own
+     * settings stay available either way.
+     */
+    suspend fun notificationConsentAsked(): Boolean =
+        dataStore.data.first()[KEY_NOTIFICATION_CONSENT_ASKED] ?: false
+
+    suspend fun markNotificationConsentAsked() {
+        dataStore.edit { preferences -> preferences[KEY_NOTIFICATION_CONSENT_ASKED] = true }
     }
 
     val draftAddress: Flow<DraftAddress?> = dataStore.data.map { preferences ->
@@ -144,6 +157,7 @@ class OnboardingProgress @Inject constructor(
         private val KEY_WELCOME_SEEN = booleanPreferencesKey("welcome_seen")
         private val KEY_DIAGNOSTICS_DONE = booleanPreferencesKey("diagnostics_done")
         private val KEY_KITCHEN_DEVICE = booleanPreferencesKey("kitchen_device")
+        private val KEY_NOTIFICATION_CONSENT_ASKED = booleanPreferencesKey("notification_consent_asked")
         private val KEY_DRAFT_LAT = androidx.datastore.preferences.core.doublePreferencesKey("draft_lat")
         private val KEY_DRAFT_LNG = androidx.datastore.preferences.core.doublePreferencesKey("draft_lng")
         private val KEY_DRAFT_TITLE = stringPreferencesKey("draft_title")

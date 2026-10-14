@@ -22,6 +22,7 @@ import com.undal.syl.app.core.background.KitchenWatchService
 import com.undal.syl.app.core.background.KitchenWatchState
 import com.undal.syl.app.core.background.PresenceHeartbeat
 import com.undal.syl.app.core.fcm.AlarmChannels
+import com.undal.syl.app.core.fcm.AlertVolume
 import com.undal.syl.app.core.fcm.TokenRegistrar
 import com.undal.syl.app.core.net.WorkerApi
 import com.undal.syl.app.core.fcm.AlertContract
@@ -57,7 +58,7 @@ class DiagnosticsViewModel @Inject constructor(
     enum class Status { OK, ATTENTION, MISSING }
 
     /** How this check can be repaired, if it can. */
-    enum class Fix { NOTIFICATIONS, CHANNEL, FULL_SCREEN, BATTERY, EXACT_ALARMS, AUTOSTART, TOKEN, WATCH }
+    enum class Fix { NOTIFICATIONS, CHANNEL, FULL_SCREEN, BATTERY, EXACT_ALARMS, AUTOSTART, TOKEN, WATCH, VOLUME }
 
     data class Check(
         val id: String,
@@ -103,6 +104,9 @@ class DiagnosticsViewModel @Inject constructor(
     val state: StateFlow<State> = _state.asStateFlow()
 
     private var testPlayer: MediaPlayer? = null
+
+    /** Application context of the last sound test, so its volume change can be undone. */
+    private var soundContext: Context? = null
 
     fun refresh(context: Context) {
         viewModelScope.launch {
@@ -288,21 +292,44 @@ class DiagnosticsViewModel @Inject constructor(
         val audio = context.getSystemService<AudioManager>()
         val alarmVolume = audio?.getStreamVolume(AudioManager.STREAM_ALARM) ?: 0
         val alarmMax = audio?.getStreamMaxVolume(AudioManager.STREAM_ALARM) ?: 1
-        val volumeHealthy = alarmMax > 0 && alarmVolume * 100 / alarmMax >= 50
+        val volumePercent = if (alarmMax > 0) alarmVolume * 100 / alarmMax else 0
+        val volumeHealthy = volumePercent >= AlertVolume.AUDIBLE_PERCENT
         add(
             Check(
                 id = "alarm-volume",
                 title = "Alarm volume",
+                // This is a blocking check, not a note. The order sound — the
+                // notification's and the ringing player's alike — plays on the
+                // ALARM stream, so at zero percent this phone rings silently and
+                // no permission, token or watcher can make it audible.
                 detail = if (volumeHealthy) {
-                    "Alarm volume is at ${alarmVolume * 100 / alarmMax}% — the order sound uses this stream."
+                    "Alarm volume is at $volumePercent% — the order sound uses this stream, so a " +
+                        "phone on silent still rings."
                 } else {
-                    "Alarm volume is low (${alarmVolume * 100 / alarmMax}%). Raise it in the sound settings — " +
-                        "the order alert rings on the alarm stream on purpose, so a muted phone still rings."
+                    "Alarm volume is at $volumePercent%, and every order alert plays on this stream: " +
+                        "this phone rings in silence. Undal raises it while an order is ringing, but the " +
+                        "fix below raises it now and leaves it raised."
                 },
-                status = if (volumeHealthy) Status.OK else Status.ATTENTION
+                status = if (volumeHealthy) Status.OK else Status.MISSING,
+                fix = if (volumeHealthy) null else Fix.VOLUME,
+                blocking = !volumeHealthy
             )
         )
     }
+
+    /**
+     * Raises the alarm stream to maximum for the owner, from the readiness screen.
+     * The ring does this for itself while an order is waiting; this is the version
+     * that stays raised, because the owner asked for it.
+     */
+    fun raiseAlarmVolume(context: Context): String =
+        if (AlertVolume.raise(context)) {
+            "Alarm volume is now ${AlertVolume.percent(context)}%. An order rings on this stream, " +
+                "so this phone can be heard from the kitchen."
+        } else {
+            "Could not raise the alarm volume — a phone in Do Not Disturb refuses the change. " +
+                "Turn Do Not Disturb off and try again."
+        }
 
     /** Subscription state, reported without pretending to know FCM's own list. */
     fun topicSummary(): String = AlertContract.KITCHEN_TOPIC
@@ -429,27 +456,55 @@ class DiagnosticsViewModel @Inject constructor(
         return alarms.canScheduleExactAlarms()
     }
 
-    /** Plays the official order sound once, at alarm volume, as a real test. */
+    /**
+     * Plays the official order sound once, at alarm volume, as a real test.
+     *
+     * It reproduces the ring exactly, in the two ways that matter: the alarm
+     * stream is raised first, because a test on a silent phone proves nothing,
+     * and the audio attributes are set **before** `prepare()` — set afterwards,
+     * the platform resets the player and `start()` throws, which is precisely the
+     * failure a test is meant to catch.
+     */
     fun testOrderSound(context: Context) {
         if (_state.value.soundTesting) {
             stopSoundTest()
             return
         }
+        AlertVolume.arm(context)
+        soundContext = context.applicationContext
         _state.value = _state.value.copy(soundTesting = true)
-        testPlayer = runCatching {
-            MediaPlayer.create(context, R.raw.undal_order_alert)?.apply {
+        val opened = runCatching {
+            MediaPlayer().apply {
                 setAudioAttributes(
                     android.media.AudioAttributes.Builder()
                         .setUsage(android.media.AudioAttributes.USAGE_ALARM)
                         .setContentType(android.media.AudioAttributes.CONTENT_TYPE_SONIFICATION)
                         .build()
                 )
+                val afd = context.resources.openRawResourceFd(R.raw.undal_order_alert)
+                if (afd == null) {
+                    // Compressed in this build: the tone only exists as a stream.
+                    val copy = java.io.File(context.cacheDir, "undal_order_alert.mp3")
+                    context.resources.openRawResource(R.raw.undal_order_alert).use { input ->
+                        copy.outputStream().use { output -> input.copyTo(output) }
+                    }
+                    setDataSource(copy.absolutePath)
+                } else {
+                    setDataSource(afd.fileDescriptor, afd.startOffset, afd.length)
+                    afd.close()
+                }
                 setOnCompletionListener { stopSoundTest() }
+                prepare()
                 start()
             }
-        }.getOrElse {
-            _state.value = _state.value.copy(soundTesting = false)
+        }.getOrElse { error ->
+            android.util.Log.e("UndalSoundTest", "the order sound would not play", error)
             null
+        }
+        testPlayer = opened
+        if (opened == null) {
+            AlertVolume.restore(context)
+            _state.value = _state.value.copy(soundTesting = false)
         }
     }
 
@@ -457,6 +512,9 @@ class DiagnosticsViewModel @Inject constructor(
         runCatching { testPlayer?.stop() }
         runCatching { testPlayer?.release() }
         testPlayer = null
+        // The owner's own volume goes back the moment the test is over; the
+        // readiness row above is where it stays raised, by their own choice.
+        soundContext?.let { AlertVolume.restore(it) }
         _state.value = _state.value.copy(soundTesting = false)
     }
 

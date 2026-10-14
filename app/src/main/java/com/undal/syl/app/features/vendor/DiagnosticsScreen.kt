@@ -142,6 +142,8 @@ fun DiagnosticsScreen(
             DiagnosticsViewModel.Fix.TOKEN -> viewModel.reregister(context)
 
             DiagnosticsViewModel.Fix.WATCH -> viewModel.startWatcher(context)
+
+            DiagnosticsViewModel.Fix.VOLUME -> viewModel.raiseAlarmVolume(context)
         }
         Unit
     }
@@ -492,6 +494,7 @@ private fun fixLabel(fix: DiagnosticsViewModel.Fix): String = when (fix) {
     DiagnosticsViewModel.Fix.AUTOSTART -> "Open autostart settings"
     DiagnosticsViewModel.Fix.TOKEN -> "Register this device again"
     DiagnosticsViewModel.Fix.WATCH -> "Start the live watcher"
+    DiagnosticsViewModel.Fix.VOLUME -> "Raise the alarm volume now"
 }
 
 /**

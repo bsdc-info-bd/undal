@@ -8,6 +8,8 @@ import android.content.Intent
 import android.content.pm.ServiceInfo
 import android.media.AudioAttributes
 import android.media.MediaPlayer
+import android.media.Ringtone
+import android.media.RingtoneManager
 import android.os.Build
 import android.os.IBinder
 import android.os.Handler
@@ -29,7 +31,9 @@ import com.google.firebase.database.ValueEventListener
 import com.undal.syl.app.MainActivity
 import com.undal.syl.app.R
 import com.undal.syl.app.core.fcm.AlarmChannels
+import com.undal.syl.app.core.fcm.AlertVolume
 import com.undal.syl.app.core.util.OrderStatus
+import java.io.File
 
 /**
  * The order alert (PART I-2).
@@ -44,6 +48,21 @@ import com.undal.syl.app.core.util.OrderStatus
  *      this phone or the other kitchen phone — answers the order.
  *
  * The sound stops ONLY when no order is left waiting.
+ *
+ * The sound has to be impossible to lose
+ * --------------------------------------
+ * Three things can silence a phone that is otherwise perfectly armed, and each
+ * one is closed here rather than assumed away:
+ *
+ *   · **the alarm stream at zero** — the stream both the channel and the player
+ *     use. [AlertVolume.arm] raises it for the duration of the ring and puts the
+ *     owner's own value back when the ring ends;
+ *   · **attributes set after `prepare()`** — the platform then resets the player
+ *     and `start()` throws. The player is built attributes-first for that reason;
+ *   · **a resource that will not open** — the tone is then read again from a copy
+ *     in the app's own cache, and if even that fails the phone's own alarm tone
+ *     rings in its place. A fallback ring is worse than the Undal sound and far
+ *     better than a missed order.
  *
  * Two orders are not one order
  * ----------------------------
@@ -66,6 +85,9 @@ class OrderAlertService : Service() {
 
     private val handler = Handler(Looper.getMainLooper())
     private var player: MediaPlayer? = null
+
+    /** The phone's own alarm tone. Only ever used if the bundled sound will not decode. */
+    private var ringtone: Ringtone? = null
     private var vibrator: Vibrator? = null
     private var liveReference: com.google.firebase.database.DatabaseReference? = null
     private var currentOrderId: String? = null
@@ -84,6 +106,18 @@ class OrderAlertService : Service() {
             waiting.remove(idle)
             if (waiting.isEmpty()) stopAlert(null) else ringHead()
         }
+    }
+
+    /**
+     * A `Ringtone` plays once and stops; an unanswered order must not. This
+     * re-plays the phone's own alarm tone for as long as anything is waiting.
+     */
+    private val replayRinger = Runnable {
+        if (waiting.isEmpty()) return@Runnable
+        val tone = ringtone ?: return@Runnable
+        runCatching { tone.stop() }
+        runCatching { tone.play() }
+        handler.postDelayed(replayRinger, RINGER_REPLAY_MILLIS)
     }
 
     private data class Waiting(
@@ -224,8 +258,8 @@ class OrderAlertService : Service() {
         )
         notifyManager().notify(AlarmChannels.ORDER_ALERT_NOTIFICATION_ID, buildNotification(next))
         watchOrderLive(next.orderId)
-        if (player?.isPlaying != true) startSound()
-        if (player?.isPlaying == true && vibrator == null) startVibration()
+        if (player?.isPlaying != true && ringtone == null) startSound()
+        if ((player?.isPlaying == true || ringtone != null) && vibrator == null) startVibration()
     }
 
     /** "2 orders waiting" when the queue is longer than one. */
@@ -241,28 +275,123 @@ class OrderAlertService : Service() {
     }
 
     private fun startSound() {
-        if (player != null) return
-        player = runCatching {
-            MediaPlayer.create(this, R.raw.undal_order_alert)?.apply {
-                setAudioAttributes(
-                    AudioAttributes.Builder()
-                        .setUsage(AudioAttributes.USAGE_ALARM)
-                        .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
-                        .build()
-                )
-                isLooping = true
+        if (player != null || ringtone != null) return
+
+        // Both the notification's sound and this player use the ALARM stream, so
+        // a phone whose alarm volume is at zero is a phone that rings silently.
+        // Raise it for the duration of the ring, and only if it has to be raised.
+        val raised = AlertVolume.arm(this)
+        if (raised) {
+            Log.i(TAG, "alarm volume was below the audible line and was raised for this order")
+        }
+
+        player = createOrderPlayer()
+        if (player == null) {
+            Log.e(TAG, "the bundled order sound would not start; using the phone's own alarm tone")
+            playSystemRinger()
+        }
+    }
+
+    /**
+     * A prepared, looping, alarm-routed player — or null, never a half-open one.
+     *
+     * `setAudioAttributes` is called **before** `prepare()` on purpose. The
+     * platform documents that the attributes only take effect immediately when
+     * they are set first; set afterwards, the player is reset underneath you and
+     * `start()` throws, which is how a kitchen ends up with a notification and no
+     * sound at all. That was this app's bug, so the order here is not cosmetic.
+     */
+    private fun buildPlayer(configure: MediaPlayer.() -> Unit): MediaPlayer? {
+        val attributes = AudioAttributes.Builder()
+            .setUsage(AudioAttributes.USAGE_ALARM)
+            .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
+            .build()
+
+        var opened: MediaPlayer? = null
+        return runCatching {
+            MediaPlayer().apply {
+                opened = this
+                setAudioAttributes(attributes)
                 // The player holds a partial wake lock for us, which is exactly
                 // what is needed for the sound to survive a locked screen.
                 setWakeMode(applicationContext, PowerManager.PARTIAL_WAKE_LOCK)
+                configure()
+                isLooping = true
                 setOnErrorListener { _, what, extra ->
                     Log.e(TAG, "order sound failed (what=$what extra=$extra)")
                     true
                 }
+                prepare()
                 start()
             }
-        }.getOrElse { error ->
-            Log.e(TAG, "could not start the order sound", error)
-            null
+        }.onFailure { error ->
+            Log.e(TAG, "the order sound would not start", error)
+            runCatching { opened?.release() }
+        }.getOrNull()
+    }
+
+    /**
+     * Two independent ways to the same tone, in order of cost:
+     *
+     *   1. straight off the packaged resource, through its file descriptor;
+     *   2. a copy of that resource in this app's own cache, played as a plain
+     *      file — which also covers a build in which the tone was compressed,
+     *      where `openRawResourceFd` hands back nothing.
+     */
+    private fun createOrderPlayer(): MediaPlayer? =
+        buildPlayer {
+            val afd = resources.openRawResourceFd(R.raw.undal_order_alert)
+            if (afd != null) {
+                setDataSource(afd.fileDescriptor, afd.startOffset, afd.length)
+                afd.close()
+            } else {
+                setDataSource(cachedOrderSound().absolutePath)
+            }
+        } ?: buildPlayer { setDataSource(cachedOrderSound().absolutePath) }
+
+    /** The packaged tone written once into this app's cache and reused. */
+    private fun cachedOrderSound(): File {
+        val packed = File(cacheDir, "undal_order_alert.mp3")
+        if (packed.length() > 0L) return packed
+        val partial = File(cacheDir, "undal_order_alert.part")
+        resources.openRawResource(R.raw.undal_order_alert).use { input ->
+            partial.outputStream().use { output -> input.copyTo(output) }
+        }
+        if (!partial.renameTo(packed)) {
+            partial.copyTo(packed, overwrite = true)
+            partial.delete()
+        }
+        return packed
+    }
+
+    /**
+     * The last resort, and the reason a kitchen phone is never silent: the
+     * phone's own alarm tone, re-played until the queue is empty. It is not the
+     * Undal sound, but a missed order costs more than a wrong ringtone.
+     */
+    private fun playSystemRinger() {
+        val uri = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_ALARM)
+            ?: RingtoneManager.getDefaultUri(RingtoneManager.TYPE_RINGTONE)
+        if (uri == null) {
+            Log.e(TAG, "this phone has no alarm or ringtone to fall back to")
+            return
+        }
+        val tone = runCatching { RingtoneManager.getRingtone(applicationContext, uri) }.getOrNull()
+        if (tone == null) {
+            Log.e(TAG, "the phone's alarm tone could not be opened")
+            return
+        }
+        tone.audioAttributes = AudioAttributes.Builder()
+            .setUsage(AudioAttributes.USAGE_ALARM)
+            .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
+            .build()
+        ringtone = tone
+        val playing = runCatching { tone.play() }.isSuccess
+        if (playing) {
+            handler.postDelayed(replayRinger, RINGER_REPLAY_MILLIS)
+        } else {
+            Log.e(TAG, "the phone's alarm tone refused to play")
+            ringtone = null
         }
     }
 
@@ -382,6 +511,13 @@ class OrderAlertService : Service() {
         runCatching { player?.release() }
         player = null
 
+        handler.removeCallbacks(replayRinger)
+        runCatching { ringtone?.stop() }
+        ringtone = null
+
+        // Whatever the ring had to change is put back now that nothing is ringing.
+        AlertVolume.restore(this)
+
         runCatching { vibrator?.cancel() }
         vibrator = null
 
@@ -399,6 +535,10 @@ class OrderAlertService : Service() {
         liveReference?.removeEventListener(liveListener)
         runCatching { player?.release() }
         player = null
+        handler.removeCallbacks(replayRinger)
+        runCatching { ringtone?.stop() }
+        ringtone = null
+        AlertVolume.restore(this)
         runCatching { vibrator?.cancel() }
         vibrator = null
         handler.removeCallbacks(stopTestRunnable)
@@ -425,6 +565,14 @@ class OrderAlertService : Service() {
 
         /** How long a "ring my phone" test rings before it stops itself. */
         private const val TEST_SECONDS = 45
+
+        /**
+         * How often the phone's own alarm tone is restarted while an order waits.
+         * A `Ringtone` cannot loop, so the loop is ours: twenty seconds is longer
+         * than the gap between two alarm tones and short enough that a phone
+         * whose fallback tone is brief still sounds like a ringing phone.
+         */
+        private const val RINGER_REPLAY_MILLIS = 20_000L
 
         private val VIBRATION_PATTERN = longArrayOf(0, 500, 250, 500, 250, 500)
 
