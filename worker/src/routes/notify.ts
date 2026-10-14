@@ -13,8 +13,9 @@
  */
 import type { Env } from "../env";
 import { fsGet } from "../firestore";
-import { sendToTokens, type FanOutResult } from "../fcmv1";
+import { sendToTokens } from "../fcmv1";
 import { rtdbUpdate } from "../rtdb";
+import { raiseKitchenAlert } from "../alerting";
 import { HttpError, json, readJson } from "../util/http";
 import { formatPaisa } from "../util/money";
 import { purgeTokens, tokensForUser, vendorTokens, vendorUid } from "../recipients";
@@ -68,23 +69,33 @@ export async function handleOrderCreated(env: Env, request: Request): Promise<Re
   const total = Number(order.totalAmountPaisa ?? 0);
   const shortId = stringField(order, "shortId");
 
-  const tokens = await vendorTokens(env);
-  const outcome: FanOutResult = await sendToTokens(env, tokens, {
-    data: {
-      type: "order_created",
+  const outcome = await raiseKitchenAlert(
+    env,
+    {
       orderId,
       shortId,
       title: `New order ${shortId}`.trim(),
       body: `${items.length} item(s) · ${formatPaisa(total)} · cash on delivery`,
-      channelId: "vendor_new_order",
-      clickAction: "vendor_order",
+      ttl: ORDER_ALERT_TTL,
     },
-    ttl: ORDER_ALERT_TTL,
-    collapseKey: `order-${orderId}`,
-  });
+    `order-${orderId}`,
+  );
 
-  await purgeTokens(env, await vendorUid(env), outcome.unregisteredTokens);
-  return json({ ok: true, sent: outcome.sent, failed: outcome.failed, devices: tokens.length });
+  // A kitchen with no reachable device is a fact the caller must see. It used to
+  // be swallowed, which is how a silent kitchen stayed silent for a whole day.
+  if (outcome.warning) {
+    console.warn("undal-kitchen-alert", outcome.warning, JSON.stringify({ orderId, shortId }));
+  }
+  return json({
+    ok: true,
+    delivered: outcome.delivered,
+    devices: outcome.tokens,
+    sent: outcome.tokenSent,
+    failed: outcome.tokenFailed,
+    topic: outcome.topic,
+    topicSent: outcome.topicSent,
+    warning: outcome.warning ?? null,
+  });
 }
 
 export async function handleOrderStatus(env: Env, request: Request): Promise<Response> {
@@ -210,4 +221,55 @@ export async function handleVendorSelf(env: Env, request: Request): Promise<Resp
   await purgeTokens(env, await vendorUid(env), outcome.unregisteredTokens);
 
   return json({ ok: true, sent: outcome.sent, failed: outcome.failed, devices: tokens.length });
+}
+
+/**
+ * "Ring my phone" — the one test that proves the whole chain.
+ *
+ * The readiness check on the kitchen phone can verify everything the device is
+ * allowed to know: the permission is granted, the channel is loud, the token is
+ * registered, the heartbeat is fresh. Only a real push proves the part it cannot
+ * see — that the Worker can reach FCM, that FCM accepts the token, and that the
+ * device rings. So this sends the *real* `order_created` message with a `test`
+ * marker, and the app rings exactly as it would for a real order, labels itself
+ * as a test and stops itself.
+ *
+ * The failure detail matters more than the success: `TOKEN_UNREGISTERED`, a
+ * missing vendor document and a topic that FCM refused are three different
+ * repairs, and the response says which one it is.
+ */
+export async function handleTestAlert(env: Env, request: Request): Promise<Response> {
+  const claims = await requireVendor(env, request);
+  const body = await readJson<{ shortId?: string }>(request).catch(() => ({ shortId: undefined }));
+  const shortId = (body.shortId ?? `TEST-${new Date().toISOString().slice(11, 19)}`).slice(0, 40);
+
+  const outcome = await raiseKitchenAlert(
+    env,
+    {
+      orderId: `test-${crypto.randomUUID()}`,
+      shortId,
+      title: "Kitchen alert test",
+      body: "This is a test. If you can hear this, the kitchen will ring for a real order.",
+      ttl: "120s",
+      test: true,
+      extra: { kind: "test" },
+    },
+    undefined,
+  );
+
+  return json(
+    {
+      ok: true,
+      caller: claims.sub,
+      devices: outcome.tokens,
+      sent: outcome.tokenSent,
+      failed: outcome.tokenFailed,
+      topic: outcome.topic,
+      topicSent: outcome.topicSent,
+      delivered: outcome.delivered,
+      warning: outcome.warning ?? null,
+    },
+    200,
+    { "cache-control": "no-store" },
+  );
 }

@@ -43,11 +43,11 @@ class InboxViewModel @Inject constructor(
         val uid = session.uid
         if (uid == null) {
             _state.value = State(loading = false, notice = "Sign in to see your notifications.")
-            return
-        }
-        viewModelScope.launch {
-            repo.observe(uid).collect { items ->
-                _state.value = _state.value.copy(loading = false, items = items)
+        } else {
+            viewModelScope.launch {
+                repo.observe(uid).collect { items ->
+                    _state.value = _state.value.copy(loading = false, items = items)
+                }
             }
         }
     }

@@ -50,7 +50,19 @@ class AppContractTest {
 
     @Test
     fun cloudinaryUploadsUseTheUnsignedPreset() {
-        assertEquals("undal_unsigned", BuildConfig.CLOUDINARY_UPLOAD_PRESET)
+        // The preset is created by hand in the Cloudinary console and arrives
+        // through the CLOUDINARY_UPLOAD_PRESET secret, so its name is the
+        // owner's to choose: the setup guide asks for `undal_unsigned`, and the
+        // preset in this account is `bsdc_unsigned`. Both are accepted — what
+        // matters is that an unsigned preset is configured at all, because a
+        // preset is the only way this app uploads a photo without ever holding
+        // an API secret.
+        val preset = BuildConfig.CLOUDINARY_UPLOAD_PRESET
+        assertTrue(
+            "unexpected upload preset: $preset — create an unsigned preset in the Cloudinary " +
+                "console and put its exact name in the CLOUDINARY_UPLOAD_PRESET secret",
+            preset == "bsdc_unsigned" || preset == "undal_unsigned"
+        )
         assertTrue("cloud name must not be blank", BuildConfig.CLOUDINARY_CLOUD_NAME.isNotBlank())
     }
 

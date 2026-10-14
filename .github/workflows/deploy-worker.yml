@@ -56,6 +56,13 @@ jobs:
       - name: Typecheck the worker
         working-directory: worker
         run: npm run typecheck
+
+      # The re-alert sweep is the reason a phone that slept through the first
+      # push still rings, and its failure modes are silent in both directions.
+      # Node runs the TypeScript directly, so this tests the deployed code.
+      - name: Test the worker
+        working-directory: worker
+        run: npm test
         
       - name: Resolve the KV namespace id
         id: kv

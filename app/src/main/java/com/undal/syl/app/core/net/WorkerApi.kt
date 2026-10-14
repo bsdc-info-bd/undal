@@ -60,6 +60,38 @@ class WorkerApi @Inject constructor(
         return post("/notify/vendor-self", payload)
     }
 
+    /**
+     * "Ring my phone" — asks the Worker to send a real order alert to this
+     * kitchen, and returns what the server says it managed to reach.
+     *
+     * The readiness screen can verify everything the device knows about itself.
+     * It cannot verify that the server can reach *it* — and that is exactly the
+     * link that failed silently before: no vendor document, no device token, a
+     * topic nobody subscribed to. This call is the missing half of the test.
+     */
+    suspend fun testAlert(): Result<String> = runCatching {
+        val token = auth.currentUser?.getIdToken(false)?.await()?.token
+            ?: error("Not signed in")
+        val request = Request.Builder()
+            .url("$baseUrl/notify/test-alert")
+            .header("authorization", "Bearer $token")
+            .header("content-type", "application/json")
+            .post(JSONObject().toString().toRequestBody(JSON_MEDIA_TYPE))
+            .build()
+        client.newBuilder()
+            .callTimeout(25, TimeUnit.SECONDS)
+            .build()
+            .newCall(request)
+            .execute()
+            .use { response ->
+                val body = response.body?.string().orEmpty()
+                if (!response.isSuccessful) {
+                    error("The kitchen relay refused the test (HTTP ${response.code}).")
+                }
+                body
+            }
+    }
+
     suspend fun health(): Result<String> = runCatching {
         val request = Request.Builder().url("$baseUrl/healthz").get().build()
         client.newCall(request).execute().use { response ->

@@ -3,6 +3,8 @@ package com.undal.syl.app.features.root
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.google.firebase.auth.FirebaseAuth
+import com.undal.syl.app.core.background.KitchenWatchService
+import com.undal.syl.app.core.background.OrderAlertController
 import com.undal.syl.app.core.fcm.TokenRegistrar
 import com.undal.syl.app.core.session.AuthSession
 import com.undal.syl.app.core.session.OnboardingProgress
@@ -31,7 +33,8 @@ class UndalRootViewModel @Inject constructor(
     private val roleGate: RoleGate,
     private val tokenRegistrar: TokenRegistrar,
     private val progress: OnboardingProgress,
-    private val auth: FirebaseAuth
+    private val auth: FirebaseAuth,
+    @dagger.hilt.android.qualifiers.ApplicationContext private val appContext: android.content.Context
 ) : ViewModel() {
 
     sealed interface Destination {
@@ -131,16 +134,31 @@ class UndalRootViewModel @Inject constructor(
         viewModelScope.launch {
             // Best effort: a failed token write must never block the portal.
             tokenRegistrar.register(uid = uid, isVendor = isVendor, subscribeToPromos = !isVendor)
+
+            // Who is signed in decides which alert routes exist on this phone: the
+            // kitchen gets the live watcher, everyone else has it switched off.
+            // The fact is also remembered, because a push can arrive in a fresh
+            // process before the claim is refreshed.
+            progress.setKitchenDevice(isVendor)
+            KitchenWatchService.sync(applicationContext(), isVendor)
         }
     }
 
     /** The kitchen signs out from store settings; the role gate re-resolves immediately. */
     fun signOut() {
         viewModelScope.launch {
+            // Silence anything that is ringing and drop the watcher before the
+            // session goes: a signed-out phone must not keep watching orders.
+            KitchenWatchService.stop(applicationContext())
+            OrderAlertController.stop()
             session.signOut()
             resolveRole()
         }
     }
+
+    /** Application context, for services that outlive this screen. */
+    private fun applicationContext(): android.content.Context = appContext
+
 
     fun onSignedIn() {
         resolveRole()

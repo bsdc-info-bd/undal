@@ -1,5 +1,6 @@
 package com.undal.syl.app.data.repo
 
+import android.net.Uri
 import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.edit
@@ -10,6 +11,7 @@ import com.undal.syl.app.core.model.StoreConfig
 import com.undal.syl.app.core.model.StoreOpenState
 import com.undal.syl.app.core.model.StoreSlot
 import com.undal.syl.app.core.model.StoreSpecialDate
+import com.undal.syl.app.core.net.CloudinaryUploader
 import com.undal.syl.app.core.util.Money
 import com.undal.syl.app.core.util.TimeDhaka
 import com.undal.syl.app.core.util.UndalErrors
@@ -17,6 +19,7 @@ import com.undal.syl.app.core.util.UndalResult
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.tasks.await
 import org.json.JSONArray
 import org.json.JSONObject
 import java.time.LocalDate
@@ -34,7 +37,8 @@ import javax.inject.Singleton
 @Singleton
 class VendorStoreRepo @Inject constructor(
     private val firestore: FirebaseFirestore,
-    private val dataStore: DataStore<Preferences>
+    private val dataStore: DataStore<Preferences>,
+    private val uploader: CloudinaryUploader
 ) {
 
     data class ScheduleSnapshot(
@@ -188,6 +192,19 @@ class VendorStoreRepo @Inject constructor(
         onSuccess = { UndalResult.Success(Unit) },
         onFailure = { UndalResult.Failure(it.message ?: UndalErrors.firestore(it), it) }
     )
+
+    // ------------------------------------------------------------------ uploads
+
+    /**
+     * The storefront banner and logo go through the same unsigned Cloudinary
+     * preset as the menu (V-072). The repo hands back the `secure_url` itself, so
+     * the screen only ever deals in one string.
+     */
+    suspend fun uploadImage(uri: Uri, onProgress: (Float) -> Unit): UndalResult<String> =
+        when (val result = uploader.uploadImage(uri, onProgress)) {
+            is UndalResult.Success -> UndalResult.Success(result.value.secureUrl)
+            is UndalResult.Failure -> result
+        }
 
     // --------------------------------------------------------------- explainers
 

@@ -48,6 +48,21 @@ class OnboardingProgress @Inject constructor(
 
     val diagnosticsDone: Flow<Boolean> = dataStore.data.map { it[KEY_DIAGNOSTICS_DONE] ?: false }
 
+    /**
+     * True when the account signed in on this device is the kitchen.
+     *
+     * The vendor claim in the ID token is authoritative but can be up to an hour
+     * old, and a push can arrive before it refreshes. A kitchen notice dropped
+     * because of that is a notice nobody ever sees, so the last role the app
+     * resolved is remembered here and the push handler believes whichever of the
+     * two says "kitchen".
+     */
+    val kitchenDevice: Flow<Boolean> = dataStore.data.map { it[KEY_KITCHEN_DEVICE] ?: false }
+
+    suspend fun setKitchenDevice(value: Boolean) {
+        dataStore.edit { preferences -> preferences[KEY_KITCHEN_DEVICE] = value }
+    }
+
     val draftAddress: Flow<DraftAddress?> = dataStore.data.map { preferences ->
         val lat = preferences[KEY_DRAFT_LAT] ?: return@map null
         val lng = preferences[KEY_DRAFT_LNG] ?: return@map null
@@ -128,6 +143,7 @@ class OnboardingProgress @Inject constructor(
     companion object {
         private val KEY_WELCOME_SEEN = booleanPreferencesKey("welcome_seen")
         private val KEY_DIAGNOSTICS_DONE = booleanPreferencesKey("diagnostics_done")
+        private val KEY_KITCHEN_DEVICE = booleanPreferencesKey("kitchen_device")
         private val KEY_DRAFT_LAT = androidx.datastore.preferences.core.doublePreferencesKey("draft_lat")
         private val KEY_DRAFT_LNG = androidx.datastore.preferences.core.doublePreferencesKey("draft_lng")
         private val KEY_DRAFT_TITLE = stringPreferencesKey("draft_title")

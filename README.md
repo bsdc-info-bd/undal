@@ -24,7 +24,7 @@ laptop step, no CLI step, no paid service anywhere in the stack.
 | A3 | `PACKAGE_NAME` | `com.undal.syl.app` | **fixed** — never change it |
 | A4 | `FIREBASE_PROJECT_ID` | e.g. `undal-kitchen` | Firebase Console |
 | A5 | `CLOUDINARY_CLOUD_NAME` | e.g. `dxxxxxx` | Cloudinary dashboard |
-| A6 | `CLOUDINARY_UPLOAD_PRESET` | `undal_unsigned` | Cloudinary → Settings → Upload |
+| A6 | `CLOUDINARY_UPLOAD_PRESET` | `bsdc_unsigned` (the exact name of your unsigned preset) | Cloudinary → Settings → Upload |
 | A7 | `WORKER_DOMAIN` | `undal.your-subdomain.workers.dev` | Cloudflare dashboard |
 | A8 | `ORDER_SOUND_PATH` | `assets/sound/undal_order_alert.mp3` | already in this repository |
 
@@ -52,7 +52,7 @@ lists exactly what is missing if you forget one):
 | `VENDOR_EMAIL` | the kitchen login, e.g. `kitchen@undal.local` |
 | `VENDOR_PASSWORD` | 12+ characters; this is the kitchen's own password |
 | `CLOUDINARY_CLOUD_NAME` | Cloudinary dashboard, top bar |
-| `CLOUDINARY_UPLOAD_PRESET` | `undal_unsigned` (must be an **unsigned** preset) |
+| `CLOUDINARY_UPLOAD_PRESET` | the exact name of your **unsigned** preset — this project's account uses `bsdc_unsigned` |
 | `WORKER_HOST` | `undal.your-subdomain.workers.dev` (no `https://`) |
 | `WORKER_BASE_URL` | the same host **with** `https://` |
 | `CLOUDFLARE_API_TOKEN` | Cloudflare → My Profile → API Tokens → Create Token → *Edit Cloudflare Workers* template |
@@ -80,8 +80,10 @@ Keep the Spark (free) plan: everything here fits inside it.
 ### 2c · Cloudinary and Cloudflare (browser only)
 
 * Cloudinary → create the free account → **Settings → Upload → Upload presets →
-  Add upload preset**, name it `undal_unsigned`, signing mode **Unsigned**,
-  allowed formats `jpg,png,webp`, maximum 10 MB.
+  Add upload preset**, signing mode **Unsigned**, allowed formats
+  `jpg,png,webp`, maximum 10 MB. The name is yours — this project's preset is
+  `bsdc_unsigned` — but the `CLOUDINARY_UPLOAD_PRESET` secret must hold that
+  exact name, or every photo upload is refused by the account.
 * Cloudflare → create the free account → **Workers & Pages → Create →
   Worker**, name it `undal`, and copy the `*.workers.dev` sub-domain.
   You do **not** need to create the KV namespace by hand — the deploy workflow

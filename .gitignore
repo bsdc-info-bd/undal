@@ -48,3 +48,10 @@ Thumbs.db
 # NOTE: app/src/main/res/raw/undal_order_alert.mp3 is intentionally NOT ignored —
 # the bootstrap workflow commits the official order sound into res/raw so that
 # every later build (local or CI) resolves R.raw.undal_order_alert.
+
+# Python bytecode from the gate scripts
+__pycache__/
+*.pyc
+
+# Wrangler build output
+worker/dist/

@@ -102,6 +102,19 @@
                 android:value="order-alerts" />
         </service>
 
+        <!-- The live order watcher: a Firestore listener in the foreground, so an
+             order rings this phone even when push does not arrive at all. Silent
+             notification on purpose — it is a guarantee, not an interruption. -->
+        <service
+            android:name=".core.background.KitchenWatchService"
+            android:exported="false"
+            android:foregroundServiceType="specialUse"
+            android:stopWithTask="false">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="order-watch" />
+        </service>
+
         <!-- Sticky prep countdown with the ten-second tick. -->
         <service
             android:name=".core.background.PrepTimerService"

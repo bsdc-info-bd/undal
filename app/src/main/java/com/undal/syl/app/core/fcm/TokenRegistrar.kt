@@ -16,8 +16,18 @@ import javax.inject.Singleton
  * can be reached on every phone they own, and the Worker can delete a token the
  * moment FCM reports it dead.
  *
- * Customer devices also subscribe to the `promos_all` topic used by the daily
- * 18:00 Asia/Dhaka offer broadcast.
+ * Two topic subscriptions ride along, and both exist for the same reason: a
+ * topic does not need the server to find the device's account.
+ *
+ *   · customer devices subscribe to `promos_all` (the daily 18:00 broadcast);
+ *   · **kitchen devices subscribe to `undal_kitchen`**, which is how an order
+ *     alert reaches the kitchen even when the server's `vendorUid()` lookup
+ *     returns nothing — the failure that used to silence every order silently.
+ *
+ * The registration is verified, not assumed: the token document is read back
+ * after the write. Registration used to be fire-and-forget, so a security-rule
+ * refusal or an offline moment left a device that believed it was reachable and
+ * a kitchen that never rang.
  */
 @Singleton
 class TokenRegistrar @Inject constructor(
@@ -42,12 +52,42 @@ class TokenRegistrar @Inject constructor(
             )
         ).await()
 
+        // Read it back. A token the server cannot see is a phone that will not
+        // ring, and only this round trip can tell the difference.
+        if (!document.get().await().exists()) {
+            error("the device token was not accepted by the database")
+        }
+
         if (subscribeToPromos) {
             // Fire-and-forget: a failed subscription must never block sign-in.
             runCatching { messaging.subscribeToTopic(PROMO_TOPIC).await() }
         }
+
+        if (isVendor) {
+            // The kitchen route. Deliberately not from the customer path: only a
+            // device signed in as the kitchen may receive order alerts.
+            runCatching { messaging.subscribeToTopic(AlertContract.KITCHEN_TOPIC).await() }
+                .onFailure { subscribeFailure = it.message.orEmpty() }
+        } else {
+            // A phone that used to be the kitchen must stop receiving alert
+            // fan-outs the moment a customer signs in on it.
+            runCatching { messaging.unsubscribeFromTopic(AlertContract.KITCHEN_TOPIC).await() }
+        }
         token
     }
+
+    /** Why the kitchen-topic subscription failed on the last attempt, if it did. */
+    var subscribeFailure: String? = null
+        private set
+
+    /**
+     * Subscribes again and reports whether the subscription is in place. Safe to
+     * call as often as the readiness check likes: subscribing twice is a no-op.
+     */
+    suspend fun ensureKitchenSubscription(): Boolean = runCatching {
+        messaging.subscribeToTopic(AlertContract.KITCHEN_TOPIC).await()
+        true
+    }.getOrDefault(false)
 
     suspend fun currentToken(): String? = runCatching { messaging.token.await() }.getOrNull()
 

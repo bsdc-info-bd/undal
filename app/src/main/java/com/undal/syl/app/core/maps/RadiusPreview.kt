@@ -69,9 +69,11 @@ fun UndalRadiusPreview(
                         maxZoomLevel = 20.0
                         controller.setZoom(zoomForRadius(radiusKm))
                         controller.setCenter(GeoPoint(storeLat, storeLng))
-                        overlays.add(
-                            org.osmdroid.views.overlay.CopyrightOverlay(ctx, UndalMaps.ATTRIBUTION)
-                        )
+                        // CopyrightOverlay takes only the Context: it paints the
+                        // tile source's own copyright notice, so the attribution
+                        // still shows on the map. The full sentence is repeated
+                        // in the caption under the circle below.
+                        overlays.add(org.osmdroid.views.overlay.CopyrightOverlay(ctx))
 
                         val circle = Polygon(this).apply {
                             points = buildCircle(storeLat, storeLng, radiusKm)

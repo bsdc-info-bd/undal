@@ -5,6 +5,7 @@ import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.preferencesDataStore
 import com.undal.syl.app.BuildConfig
+import com.undal.syl.app.core.config.UndalBuildInfo
 import dagger.Module
 import dagger.Provides
 import dagger.hilt.InstallIn

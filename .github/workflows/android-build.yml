@@ -26,6 +26,9 @@ on:
 
 permissions:
   contents: write
+  # Only used by the failure reporter below: it puts the `e: file:///…` lines on
+  # the pull request, so a kotlin error is readable without opening the raw log.
+  pull-requests: write
 
 concurrency:
   group: android-build-${{ github.ref }}
@@ -66,6 +69,21 @@ jobs:
       - name: No-placeholder gate (LAW-1)
         run: bash tools/check_no_placeholders.sh
 
+      # Two-second static checks for the mistakes that cost a full build: a
+      # missing extension import, a top-level type used from another package
+      # without its import, an unbalanced brace. Gradle is the real compiler —
+      # this only makes sure it is never started on a file that cannot compile.
+      - name: Kotlin shape and import gates
+        run: |
+          python3 tools/check_kotlin_shape.py
+          python3 tools/check_import_contracts.py
+
+      # The kitchen's ability to ring spans the Worker and the app: a topic name,
+      # a message type, a channel id, a cron and a route. None of them can be
+      # felt by a test, so they are read from both sides and compared here.
+      - name: Alert ladder gate
+        run: node tools/check-alert-ladder.mjs
+
       - name: Set up JDK 17
         uses: actions/setup-java@v4
         with:
@@ -89,16 +107,18 @@ jobs:
 
       - name: Unit tests
         run: |
+          set -o pipefail
           ./gradlew :app:testReleaseUnitTest --no-daemon --stacktrace \
             -PundalVersionCode=${{ github.run_number }} \
-            -PundalVersionName=1.0.${{ github.run_number }}
+            -PundalVersionName=1.0.${{ github.run_number }} 2>&1 | tee "$RUNNER_TEMP/undal-build.log"
 
       - name: Assemble signed-ready release APK
         run: |
+          set -o pipefail
           ./gradlew :app:assembleRelease --no-daemon --stacktrace \
             -PundalVersionCode=${{ github.run_number }} \
             -PundalVersionName=1.0.${{ github.run_number }} \
-            -PundalMinify=${UNDAL_MINIFY}
+            -PundalMinify=${UNDAL_MINIFY} 2>&1 | tee -a "$RUNNER_TEMP/undal-build.log"
 
       - name: Keystore fingerprint
         id: fingerprint
@@ -113,15 +133,77 @@ jobs:
           echo "sha256=$SHA" >> "$GITHUB_OUTPUT"
           echo "Signing certificate SHA-256: $SHA"
 
+      # zipalign + apksigner from the SDK this runner already has. The action this
+      # replaced looked for build-tools 29.0.3, which no current runner image
+      # installs, so the signing step failed after a good APK had been built.
+      # zipalign + apksigner from the SDK this runner already has. The action this
+      # replaced looked for build-tools 29.0.3, which no current runner image
+      # installs, so signing failed after a good APK had been built.
+      #
+      # The keystore's type is sniffed and passed explicitly: `keytool` reads a
+      # PKCS12 store whatever it is called, but `apksigner` takes the type from
+      # the file name, and `keytool -genkeypair` on JDK 9+ writes PKCS12.
       - name: Sign the release APK
         id: sign
-        uses: r0adkll/sign-android-release@v1
-        with:
-          releaseDirectory: app/build/outputs/apk/release
-          signingKeyBase64: ${{ secrets.KEYSTORE_BASE64 }}
-          alias: ${{ secrets.KEY_ALIAS }}
-          keyStorePassword: ${{ secrets.KEYSTORE_PASSWORD }}
-          keyPassword: ${{ secrets.KEY_PASSWORD }}
+        env:
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          {
+            SDK="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}}"
+            TOOLS=$(ls -d "$SDK"/build-tools/*/ 2>/dev/null | sort -V | tail -1) || true
+            if [ -z "$TOOLS" ]; then
+              echo "::error::No Android build-tools on this runner — cannot zipalign or sign."
+              exit 1
+            fi
+            echo "build-tools: $TOOLS"
+            "${TOOLS}apksigner" version || true
+
+            UNSIGNED=""
+            for candidate in app/build/outputs/apk/release/*.apk; do
+              if [ -f "$candidate" ]; then UNSIGNED="$candidate"; break; fi
+            done
+            if [ -z "$UNSIGNED" ]; then
+              echo "::error::Gradle produced no release APK to sign."
+              exit 1
+            fi
+            echo "unsigned APK: $UNSIGNED"
+
+            KEYSTORE="$RUNNER_TEMP/undal-release.keys"
+            printf '%s' "$KEYSTORE_BASE64" | base64 -d > "$KEYSTORE"
+            MAGIC=$(head -c 4 "$KEYSTORE" | od -An -tx1 | tr -d ' \n')
+            if [ "${MAGIC:0:4}" = "3082" ]; then
+              KS_TYPE="PKCS12"
+            else
+              KS_TYPE="JKS"
+            fi
+            echo "keystore: $(wc -c < "$KEYSTORE") bytes, magic $MAGIC, type $KS_TYPE"
+
+            # And the password: a PKCS12 store has one. `keytool -genkeypair`
+            # warns that it ignores -keypass, so the entries are protected by the
+            # store password and handing apksigner a different one fails.
+            UNLOCK="$KEY_PASSWORD"
+            if [ "$KS_TYPE" = "PKCS12" ]; then
+              UNLOCK="$KEYSTORE_PASSWORD"
+            fi
+
+            "${TOOLS}zipalign" -f 4 "$UNSIGNED" "$RUNNER_TEMP/undal-aligned.apk"
+            "${TOOLS}apksigner" sign \
+              --ks "$KEYSTORE" \
+              --ks-type "$KS_TYPE" \
+              --ks-key-alias "$KEY_ALIAS" \
+              --ks-pass "pass:$KEYSTORE_PASSWORD" \
+              --key-pass "pass:$UNLOCK" \
+              --out app/build/outputs/apk/release/undal-signed.apk \
+              "$RUNNER_TEMP/undal-aligned.apk"
+            echo "signed:"
+            "${TOOLS}apksigner" verify --print-certs \
+              app/build/outputs/apk/release/undal-signed.apk | sed -n '1,8p'
+            echo "signedReleaseFile=$PWD/app/build/outputs/apk/release/undal-signed.apk" >> "$GITHUB_OUTPUT"
+          } 2>&1 | tee -a "$RUNNER_TEMP/undal-build.log"
 
       - name: Publish the fixed asset name
         run: |
@@ -181,3 +263,45 @@ jobs:
             echo ""
             echo "Paste the SHA-256 into the **APP_SIGNING_SHA256** repository secret so App Links verify."
           } >> "$GITHUB_STEP_SUMMARY"
+
+      # A Gradle failure is only ever useful as its `e: file:///…` lines. This
+      # collects them into the job summary and onto the pull request, so the fix
+      # can be read on a phone in one place instead of scrolling a 20 MB log.
+      - name: Report what Gradle said
+        if: failure()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          LOG="$RUNNER_TEMP/undal-build.log"
+          OUT="$RUNNER_TEMP/gradle-errors.md"
+          if [ ! -f "$LOG" ]; then
+            echo "::error::The run failed before Gradle wrote a log — read the failing step above."
+            exit 0
+          fi
+          mapfile -t LINES < <(
+            grep -aE '^e: |^w: .*(deprecat|never used)|^> Task .* FAILED|^FAILURE: |^Execution failed for task|The query requires an index|error:|^Caused by: |^Exception|^Error|^Usage:|apksigner|zipalign|^Caused by' "$LOG" \
+              | sed -e 's|file:///[^ ]*/java/com/|java/com/|' -e 's/[[:space:]]*$//' \
+              | sort -u | head -100
+          )
+          {
+            echo "## This build stopped here"
+            echo ""
+            if [ "${#LINES[@]}" -eq 0 ]; then
+              echo "Nothing matched the reporter's patterns — the failing step above has the message."
+            else
+              echo "${#LINES[@]} line(s) from the Gradle output:"
+              echo ""
+              echo '```'
+              printf '%s\n' "${LINES[@]}"
+              echo '```'
+            fi
+          } > "$OUT"
+          # A failing unit test says nothing useful in the log itself, so the
+          # JUnit XML — test class, test name, assertion message — is appended.
+          python3 tools/read-test-results.py app/build/test-results/testReleaseUnitTest >> "$OUT" || true
+          cat "$OUT" >> "$GITHUB_STEP_SUMMARY"
+          echo "::error::The build failed — the lines that explain it are in the pull-request comment and the job summary."
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            gh pr comment "${{ github.event.pull_request.number }}" \
+              --body-file "$OUT" --edit-last --create-if-none
+          fi

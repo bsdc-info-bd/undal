@@ -26,6 +26,9 @@ FIREBASE_WEB_API_KEY = "REPLACE_FIREBASE_WEB_API_KEY"
 APP_PACKAGE_NAME = "com.undal.syl.app"
 GITHUB_REPO_SLUG = "REPLACE_GITHUB_REPO_SLUG"
 PROMO_TOPIC = "promos_all"
+# The topic every kitchen device subscribes to. It must match the constant in the
+# Android app; tools/check-web-rules.mjs fails the build if the two ever differ.
+KITCHEN_TOPIC = "undal_kitchen"
 
 [[kv_namespaces]]
 binding = "UNDAL_KV"
@@ -33,8 +36,12 @@ id = "REPLACE_KV_NAMESPACE_ID"
 
 [triggers]
 crons = [
+  # presence sweep
   "*/5 * * * *",
-  "0 12 * * *"
+  # daily promo broadcast (18:00 Asia/Dhaka)
+  "0 12 * * *",
+  # re-alert unanswered orders — the kitchen must never be able to miss one
+  "* * * * *"
 ]
 
 [observability]

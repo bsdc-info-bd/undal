@@ -14,6 +14,7 @@
     <string name="channel_customer_promos">customer_promos</string>
     <string name="channel_vendor_new_order">vendor_new_order</string>
     <string name="channel_vendor_general">vendor_general</string>
+    <string name="channel_vendor_watch">vendor_watch</string>
 
     <!-- Notification channel display names -->
     <string name="channel_customer_orders_title">Order updates</string>
@@ -24,4 +25,12 @@
     <string name="channel_vendor_new_order_desc">Rings the Undal order sound until the order is accepted or rejected.</string>
     <string name="channel_vendor_general_title">Kitchen updates</string>
     <string name="channel_vendor_general_desc">Prep timers, store status and device health notices.</string>
+    <string name="channel_vendor_watch_title">Kitchen watch</string>
+    <string name="channel_vendor_watch_desc">A quiet line that stays while the kitchen is watching for orders. It never buzzes.</string>
+
+    <!-- Kitchen alerts -->
+    <string name="alert_test_title">Kitchen alert test</string>
+    <string name="alert_test_body">If you can hear this, the kitchen will ring for a real order. This test stops by itself.</string>
+    <string name="watch_title">Watching for orders</string>
+    <string name="watch_body">The kitchen rings the moment an order arrives, even with this screen off.</string>
 </resources>

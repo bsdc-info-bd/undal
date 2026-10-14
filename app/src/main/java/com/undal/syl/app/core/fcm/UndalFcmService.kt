@@ -19,6 +19,7 @@ import dagger.hilt.android.AndroidEntryPoint
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import javax.inject.Inject
 
@@ -42,6 +43,7 @@ import javax.inject.Inject
 class UndalFcmService : FirebaseMessagingService() {
 
     @Inject lateinit var inboxRepo: NotifInboxRepo
+    @Inject lateinit var progress: com.undal.syl.app.core.session.OnboardingProgress
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
@@ -78,7 +80,22 @@ class UndalFcmService : FirebaseMessagingService() {
 
         // The sound loop is the product promise: it starts even if the process
         // was dead a second ago, and it keeps ringing until somebody answers.
-        OrderAlertService.ring(applicationContext, orderId, shortId, title, body)
+        // A `test` marker keeps the diagnostics alert honest: it rings exactly
+        // like a real order, labels itself and stops itself.
+        val isTest = data["test"] == "true"
+        OrderAlertService.ring(
+            context = applicationContext,
+            orderId = orderId,
+            shortId = shortId,
+            title = title,
+            body = body,
+            isTest = isTest,
+            source = OrderAlertService.SOURCE_PUSH
+        )
+
+        // A repeated push (the Worker's re-alert sweep) has already done its job
+        // by ringing; recording it again in the inbox would just be noise.
+        if (isTest || data["repeated"] == "true") return
 
         if (uid != null) {
             scope.launch {
@@ -94,13 +111,24 @@ class UndalFcmService : FirebaseMessagingService() {
     }
 
     private fun handleVendorSelf(data: Map<String, String>, uid: String?, isVendor: Boolean) {
-        if (!isVendor) return
         val title = data["title"].orEmpty().ifBlank { "Undal kitchen" }
+        if (!isVendor) {
+            // The claim can be an hour stale, and this message is a kitchen
+            // notice (auto-offline, prep due, an order nobody answered) that
+            // must not be dropped on a technicality: ask the device what it
+            // resolved last, and only then decide.
+            scope.launch {
+                val remembered = runCatching { progress.kitchenDevice.first() }.getOrDefault(false)
+                if (remembered) handleVendorSelf(data, uid, isVendor = true)
+            }
+            return
+        }
         val body = data["body"].orEmpty()
         val kind = data["kind"].orEmpty()
 
         postNotification(
-            channelId = if (kind == "prep_due") AlarmChannels.VENDOR_GENERAL else AlarmChannels.VENDOR_NEW_ORDER,
+            channelId = if (kind == "prep_due" || kind == "missed") AlarmChannels.VENDOR_GENERAL
+            else AlarmChannels.VENDOR_NEW_ORDER,
             notificationId = (kind + title).hashCode() and 0x7FFFFFFF,
             title = title,
             body = body,
@@ -278,11 +306,14 @@ class UndalFcmService : FirebaseMessagingService() {
 
     companion object {
         private const val TAG = "UndalFcm"
-        const val TYPE_ORDER_CREATED = "order_created"
-        const val TYPE_ORDER_STATUS = "order_status"
-        const val TYPE_CHAT = "chat"
-        const val TYPE_PROMO = "promo"
-        const val TYPE_VENDOR_SELF = "vendor_self"
+
+        // One source of truth, shared with the Worker and checked by
+        // tools/check-alert-ladder.mjs: these strings are a wire format.
+        const val TYPE_ORDER_CREATED = AlertContract.TYPE_ORDER_CREATED
+        const val TYPE_ORDER_STATUS = AlertContract.TYPE_ORDER_STATUS
+        const val TYPE_CHAT = AlertContract.TYPE_CHAT
+        const val TYPE_PROMO = AlertContract.TYPE_PROMO
+        const val TYPE_VENDOR_SELF = AlertContract.TYPE_VENDOR_SELF
 
         /** Used by the diagnostics screen to queue a test that exercises the real path. */
         fun scheduleRetry(context: Context, orderId: String, kind: String) {

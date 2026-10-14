@@ -30,8 +30,10 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import com.undal.syl.app.core.design.UndalAlertBanner
 import com.undal.syl.app.core.design.UndalCard
 import com.undal.syl.app.core.design.UndalScaffold
+import com.undal.syl.app.core.design.UndalStatusPill
 import com.undal.syl.app.core.design.UndalTextButton
 import com.undal.syl.app.core.theme.UndalDimens
+import com.undal.syl.app.core.theme.undalSemantics
 import com.undal.syl.app.features.vendor.VendorEmptyState
 import com.undal.syl.app.features.vendor.VendorStatusPill
 import com.undal.syl.app.features.vendor.tick
@@ -122,7 +124,7 @@ fun VendorChatListScreen(
                                 Spacer(Modifier.height(UndalDimens.xs))
                                 Row(verticalAlignment = Alignment.CenterVertically) {
                                     if (row.unread > 0) {
-                                        VendorStatusPill(
+                                        UndalStatusPill(
                                             text = "${row.unread} unread",
                                             containerColour = MaterialTheme.undalSemantics.closedContainer,
                                             contentColour = MaterialTheme.undalSemantics.onClosedContainer

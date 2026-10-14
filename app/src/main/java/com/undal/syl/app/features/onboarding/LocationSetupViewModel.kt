@@ -47,6 +47,8 @@ class LocationSetupViewModel @Inject constructor(
         val titleError: String? = null,
         val descError: String? = null,
         val noteError: String? = null,
+        val phone: String = "",
+        val phoneError: String? = null,
         val busy: Boolean = false,
         val locating: Boolean = false,
         val permissionNeeded: Boolean = false,
@@ -68,7 +70,6 @@ class LocationSetupViewModel @Inject constructor(
     val state: StateFlow<State> = _state.asStateFlow()
 
     private var displayName: String = ""
-    private var phone: String = ""
 
     init {
         viewModelScope.launch {
@@ -77,12 +78,24 @@ class LocationSetupViewModel @Inject constructor(
             // registration.
             val draftProfile = progress.draftProfile.first()
             displayName = draftProfile?.name ?: authRepo.loadProfileName().orEmpty()
-            phone = draftProfile?.phone.orEmpty()
+
+            // The rider has to be able to call. The number typed at registration
+            // is the usual source; an address re-pin falls back to the number
+            // already saved on the profile. If neither exists the customer types
+            // it in the field below — an empty number is refused by the security
+            // rules, and a walk to the door should not be what discovers that.
+            val knownPhone = draftProfile?.phone?.takeIf { it.isNotBlank() }
+                ?: authRepo.loadProfilePhone().orEmpty()
+            if (knownPhone.isNotBlank()) {
+                _state.value = _state.value.copy(phone = knownPhone)
+            }
 
             val draft = progress.draftAddress.first()
             val saved = if (draft == null) authRepo.loadProfileLocation() else null
 
-            val restored = draft ?: saved
+            // A draft is a different type from a saved address, so the draft is
+            // normalised into an UndalLocation before anything is read off it.
+            val restored: UndalLocation? = draft?.toLocation() ?: saved
             if (restored != null) {
                 _state.value = _state.value.copy(
                     lat = restored.lat,
@@ -96,15 +109,18 @@ class LocationSetupViewModel @Inject constructor(
         }
     }
 
+    /**
+     * The screen calls this from its permission callback. On a grant it also
+     * calls [captureCurrentLocation] with the context it already holds, so there
+     * is nothing to start here; on a refusal the flag makes the next use-my-location
+     * tap open the rationale instead of a silent prompt.
+     */
     fun onPermissionResult(granted: Boolean) {
-        if (granted) {
-            captureCurrentLocation()
-        } else {
-            _state.value = _state.value.copy(
-                permissionNeeded = true,
-                banner = "Without location permission you can still drag the pin by hand — the map below works either way."
-            )
-        }
+        if (granted) return
+        _state.value = _state.value.copy(
+            permissionNeeded = true,
+            banner = "Without location permission you can still drag the pin by hand — the map below works either way."
+        )
     }
 
     fun requestPermission() {
@@ -168,6 +184,12 @@ class LocationSetupViewModel @Inject constructor(
         _state.value = _state.value.copy(note = value, noteError = null, banner = null)
     }
 
+    /** Digits only, eleven of them: what the rules store as 01XXXXXXXXX. */
+    fun onPhoneChange(value: String) {
+        val digits = value.filter { it.isDigit() }.take(11)
+        _state.value = _state.value.copy(phone = digits, phoneError = null, banner = null)
+    }
+
     fun toggleOsmFallback() {
         _state.value = _state.value.copy(showOsmFallback = !_state.value.showOsmFallback)
     }
@@ -177,15 +199,30 @@ class LocationSetupViewModel @Inject constructor(
         val titleError = Validators.addressTitle(current.title)
         val descError = Validators.addressDescription(current.desc)
         val noteError = Validators.deliveryNote(current.note)
-        if (titleError != null || descError != null || noteError != null) {
-            _state.value = current.copy(titleError = titleError, descError = descError, noteError = noteError)
+        val phoneError = Validators.bdMobile(current.phone)
+        if (titleError != null || descError != null || noteError != null || phoneError != null) {
+            _state.value = current.copy(
+                titleError = titleError,
+                descError = descError,
+                noteError = noteError,
+                phoneError = phoneError
+            )
             return
         }
 
         _state.value = current.copy(busy = true, banner = null)
         viewModelScope.launch {
             val name = displayName.ifBlank { auth.currentUser?.displayName.orEmpty() }
-            when (val result = authRepo.saveCustomerProfile(name, phone, current.location)) {
+            // Keep the number on the device as well, so an interrupted save (a
+            // call, a flat battery) does not lose it.
+            progress.saveDraftProfile(
+                OnboardingProgress.DraftProfile(
+                    name = name,
+                    email = auth.currentUser?.email.orEmpty(),
+                    phone = current.phone
+                )
+            )
+            when (val result = authRepo.saveCustomerProfile(name, current.phone, current.location)) {
                 is UndalResult.Success -> {
                     progress.clearDraftAddress()
                     _state.value = _state.value.copy(busy = false, saved = true)

@@ -21,14 +21,18 @@ import com.undal.syl.app.R
  */
 object AlarmChannels {
 
-    const val VENDOR_NEW_ORDER = "vendor_new_order"
-    const val VENDOR_GENERAL = "vendor_general"
-    const val CUSTOMER_ORDERS = "customer_orders"
-    const val CUSTOMER_PROMOS = "customer_promos"
+    // The ids live in AlertContract, next to the topic and the message types the
+    // Worker also names: one file to read when the two sides have to agree.
+    const val VENDOR_NEW_ORDER = AlertContract.CHANNEL_VENDOR_NEW_ORDER
+    const val VENDOR_GENERAL = AlertContract.CHANNEL_VENDOR_GENERAL
+    const val VENDOR_WATCH = AlertContract.CHANNEL_VENDOR_WATCH
+    const val CUSTOMER_ORDERS = AlertContract.CHANNEL_CUSTOMER_ORDERS
+    const val CUSTOMER_PROMOS = AlertContract.CHANNEL_CUSTOMER_PROMOS
 
     const val ORDER_ALERT_NOTIFICATION_ID = 9101
     const val PREP_TIMER_NOTIFICATION_ID = 9102
     const val HEARTBEAT_NOTIFICATION_ID = 9103
+    const val WATCH_NOTIFICATION_ID = 9109
 
     /** Creates every channel. Safe to call on each app start; existing ones are untouched. */
     fun ensureChannels(context: Context) {
@@ -54,7 +58,18 @@ object AlarmChannels {
             )
             setShowBadge(true)
             lockscreenVisibility = android.app.Notification.VISIBILITY_PUBLIC
+            // Keeps the alert audible when Do Not Disturb is on, provided the
+            // owner grants notification-policy access. ReadinessReports tells them
+            // whether they have, instead of leaving it invisible.
             setBypassDnd(true)
+            // A channel's sound and importance are frozen the moment it is
+            // created: an owner who ever muted this channel would otherwise be
+            // un-mutable from inside the app forever. Deleting and recreating it
+            // restores the alarm sound, and ReadinessReports says when to do it.
+            if (isMuted(context, VENDOR_NEW_ORDER)) {
+                manager.deleteNotificationChannel(VENDOR_NEW_ORDER)
+                manager.createNotificationChannel(this)
+            }
         }
 
         val vendorGeneral = NotificationChannel(
@@ -64,6 +79,18 @@ object AlarmChannels {
         ).apply {
             description = context.getString(R.string.channel_vendor_general_desc)
             enableVibration(true)
+        }
+
+        // Deliberately the quietest channel Android has. It proves the kitchen
+        // is armed without buzzing for it — an ongoing notification is what
+        // keeps a foreground service alive, not a way to get attention.
+        val vendorWatch = NotificationChannel(
+            VENDOR_WATCH,
+            context.getString(R.string.channel_vendor_watch_title),
+            NotificationManager.IMPORTANCE_MIN
+        ).apply {
+            description = context.getString(R.string.channel_vendor_watch_desc)
+            setShowBadge(false)
         }
 
         val customerOrders = NotificationChannel(
@@ -84,7 +111,30 @@ object AlarmChannels {
             description = context.getString(R.string.channel_customer_promos_desc)
         }
 
-        manager.createNotificationChannels(listOf(vendorOrder, vendorGeneral, customerOrders, customerPromos))
+        manager.createNotificationChannels(
+            listOf(vendorOrder, vendorGeneral, vendorWatch, customerOrders, customerPromos)
+        )
+    }
+
+    /**
+     * True when the owner has switched this channel off or dropped it to a
+     * silent importance — the two settings that make a ringing kitchen silent
+     * without changing anything else in the app.
+     */
+    fun isMuted(context: Context, channelId: String): Boolean {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return false
+        val manager = context.getSystemService<NotificationManager>() ?: return false
+        val channel = manager.getNotificationChannel(channelId) ?: return false
+        return channel.importance == NotificationManager.IMPORTANCE_NONE ||
+            (channel.importance < NotificationManager.IMPORTANCE_HIGH && channel.sound == null)
+    }
+
+    /** True when the alarm sound is still attached to the channel. */
+    fun hasOrderSound(context: Context): Boolean {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return true
+        val manager = context.getSystemService<NotificationManager>() ?: return true
+        val channel = manager.getNotificationChannel(VENDOR_NEW_ORDER) ?: return true
+        return channel.sound != null
     }
 
     /** The official order sound as a notification sound URI (res/raw is exposeable). */
@@ -112,6 +162,23 @@ object AlarmChannels {
         }
         return intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
     }
+
+    /**
+     * Android 14's "alerts may open over the lock screen" screen.
+     *
+     * `USE_FULL_SCREEN_INTENT` is granted at install for calling and alarm apps
+     * and *revoked by default for everything else*, which is why a kitchen phone
+     * can ring with the order hidden behind the keyguard. The permission cannot
+     * be requested at runtime — only this screen can grant it.
+     */
+    fun fullScreenIntentSettings(context: Context): Intent =
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+            Intent(android.provider.Settings.ACTION_MANAGE_APP_USE_FULL_SCREEN_INTENT)
+                .setData(Uri.parse("package:${context.packageName}"))
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        } else {
+            appNotificationSettings(context)
+        }
 
     fun batteryOptimisationSettings(): Intent =
         Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS)

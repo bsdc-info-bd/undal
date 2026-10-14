@@ -15,8 +15,7 @@
 import type { Env } from "../env";
 import { projectId } from "../env";
 import { fsGet, fsPatchWithServerTimestamps } from "../firestore";
-import { sendToTokens, type FanOutResult } from "../fcmv1";
-import { purgeTokens, vendorTokens, vendorUid } from "../recipients";
+import { raiseKitchenAlert } from "../alerting";
 import { rtdbSet } from "../rtdb";
 import { HttpError, json, readJson } from "../util/http";
 import { formatPaisa } from "../util/money";
@@ -236,24 +235,33 @@ interface StoredOrder {
   status: string;
 }
 
-/** Best-effort kitchen alert; a push failure must never fail the order. */
+/**
+ * Kitchen alert for a web order.
+ *
+ * Best-effort in the sense that a push failure must never fail the order — but
+ * never silent: the outcome is logged, including the case that used to disappear
+ * (`if (tokens.length === 0) return`), which is a kitchen that stopped ringing
+ * for the web store and gave nobody a clue why.
+ */
 async function alertKitchen(env: Env, orderId: string, shortId: string, itemCount: number, totalPaisa: number): Promise<void> {
-  const tokens = await vendorTokens(env).catch(() => [] as string[]);
-  if (tokens.length === 0) return;
-  const outcome: FanOutResult = await sendToTokens(env, tokens, {
-    data: {
-      type: "order_created",
+  const outcome = await raiseKitchenAlert(
+    env,
+    {
       orderId,
       shortId,
       title: `New order ${shortId}`,
       body: `${itemCount} item(s) · ${formatPaisa(totalPaisa)} · cash on delivery (web)`,
-      channelId: "vendor_new_order",
-      clickAction: "vendor_order",
+      ttl: ORDER_ALERT_TTL,
+      extra: { source: "web" },
     },
-    ttl: ORDER_ALERT_TTL,
-    collapseKey: `order-${orderId}`,
+    `order-${orderId}`,
+  ).catch((error) => {
+    console.error("undal-web-kitchen-alert failed", error);
+    return null;
   });
-  await purgeTokens(env, await vendorUid(env), outcome.unregisteredTokens).catch(() => undefined);
+  if (outcome?.warning) {
+    console.warn("undal-web-kitchen-alert", outcome.warning, JSON.stringify({ orderId, shortId }));
+  }
 }
 
 /**

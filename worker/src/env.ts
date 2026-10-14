@@ -21,6 +21,12 @@ export interface Env {
   GITHUB_REPO_SLUG: string;
   PROMO_TOPIC: string;
   /**
+   * Optional override for the topic kitchen devices subscribe to. The default
+   * lives in `alerting.ts` as `KITCHEN_TOPIC`, so a deployment that never sets
+   * this still alerts every subscribed phone.
+   */
+  KITCHEN_TOPIC?: string;
+  /**
    * Firebase Web API key: the public identifier used for anonymous sign-in on
    * the web store. It is not a secret (it ships inside every Firebase app), but
    * it is kept in the deploy workflow's secrets so no key ever lands in a file.
