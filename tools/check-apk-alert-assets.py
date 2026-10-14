@@ -96,6 +96,12 @@ def main(argv: list[str]) -> int:
             print(f"  · customer channel: {CUSTOMER_CHANNEL} is in resources.arsc")
 
     if problems:
+        # Diagnostic only: what the APK does contain, so the failure is actionable.
+        with zipfile.ZipFile(apk) as archive:
+            names = archive.namelist()
+        raw = sorted(n for n in names if n.startswith("res/raw") or "raw" in n.lower())
+        print(f"  · APK has {len(names)} entries; raw-related entries: {raw[:20] or 'none'}")
+        print("  · sample entries: " + ", ".join(sorted(names)[:12]))
         return fail(problems)
 
     print(f"\nRESULT: {apk.name} carries the order sound, the tick and the channels.\n")
