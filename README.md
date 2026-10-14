@@ -10,7 +10,7 @@ laptop step, no CLI step, no paid service anywhere in the stack.
 
 > Status of the build plan: **Response 1 of 5** is complete — foundation,
 > security rules, Worker, pipelines and the counted feature list.
-> `FEATURES.md` tracks the 235 features and ticks each one only when it is
+> `FEATURES.md` tracks the 256 features and ticks each one only when it is
 > really implemented.
 
 ---
@@ -199,6 +199,13 @@ minutes while the store is open, the Worker closes the store automatically and
 pushes you a **Reopen now** notice, so a sleeping phone can never quietly take
 orders it does not see.
 
+Every rung of that ladder — the data-only payload, the OAuth2 minting, the topic
+fallback, the re-alert windows, the alarm channel, the looping player, the
+full-screen intent, the OEM exemption screens and the boot receiver — is written
+up with its code, its file path and the reason it exists in
+**`docs/ALERT-RELIABILITY.md`**, together with the device acceptance matrix that
+has to be run on the real kitchen phone.
+
 ---
 
 ## 7 · What costs nothing
@@ -240,7 +247,8 @@ first build of the project cannot fail on a bleeding-edge version skew.
 ```
 undal/
 ├── README.md                       this runbook
-├── FEATURES.md                     the counted 235-feature checklist
+├── FEATURES.md                     the counted 256-feature checklist
+├── docs/ALERT-RELIABILITY.md       the alert ladder: payload, channels, manifest, acceptance
 ├── assets/sound/                   the official Undal order sound
 ├── app/                            the Android app (customer + kitchen)
 ├── firebase/                       rules, indexes, firebase.json
@@ -272,17 +280,17 @@ Steering the build with the task owner's command phrases: `Continue`,
 
 ## 11 · Acceptance table (PART R)
 
-Sixteen things that have to be true before this is called finished. The **result**
+Eighteen things that have to be true before this is called finished. The **result**
 column is what was actually run for this build; the **your phone** column is the
 step only you can do, because it needs your own Firebase project.
 
 | # | What is checked | How | Result |
 | --- | --- | --- | --- |
 | 1 | The Worker compiles | `cd worker && npx tsc --noEmit` | **0 errors** |
-| 2 | The Android sources hang together without a compiler | `python3 tools/check_kotlin_shape.py` | **120 files**: balanced, no split strings, every `com.undal.syl.app` import and member call resolves |
-| 3 | No unfinished markers anywhere | `bash tools/check_no_placeholders.sh` | **clean across 168 files** |
+| 2 | The Android sources hang together without a compiler | `python3 tools/check_kotlin_shape.py` and `check_import_contracts.py` | **128 files**: balanced, no split strings, every `com.undal.syl.app` import and member call resolves, 283 cross-package names indexed |
+| 3 | No unfinished markers anywhere | `bash tools/check_no_placeholders.sh` | **clean across 188 files** |
 | 4 | The web prices food exactly like the app | `node tools/check-web-rules.mjs` | **17 rule families · 130 comparisons**, all from the app's own test vectors (82 assertions shared, app-only rules declared out loud) |
-| 5 | Every storefront page renders | local `wrangler dev` probe | `/ /store /login /basket /checkout /track /about /download /manifest.webmanifest /sw.js /icons/icon-512.png /healthz` → **all 200** |
+| 5 | Every page renders and every route has a handler | `cd worker && npm test` | **114 tests across 8 files**; `/ /store /item/{id} /about /basket /checkout /login /account /track /order/{id} /download /robots.txt /sitemap.xml /manifest.webmanifest /sw.js /icons/* /healthz /api/store/* /api/account/*` are asserted by name, and the rendered pages are asserted as HTML |
 | 6 | The API refuses politely | `curl` probes | no web key → a sentence, not a stack trace; order without a token → `missing-id-token`; rate buckets 90/120/300 per minute per IP |
 | 7 | Icons and QR codes are real images | decoded with `pngjs`; QR matrix compared with `qrcode@1.5.4` | icons **1744 / 5868 / 4054 bytes**, QR **exact match on 43 URLs** |
 | 8 | The web store installs as an app | manifest + service worker + `/download` with two QR codes and the unknown-sources guide | shipped (P-014, P-016) |
@@ -294,6 +302,8 @@ step only you can do, because it needs your own Firebase project.
 | 14 | Failures are visible to you, not to customers | Crashlytics (user id, custom keys, non-fatal records, release builds only), Analytics (order placed, accept latency, offer opened), Performance (cold start → first frame, order submission) | wired in `core/telemetry` |
 | 15 | It is usable without sight | 71 labelled controls and icons, 48 dp minimum targets, TalkBack reading order and spoken state on the timeline and countdown ring | `core/design/UndalAccessibility.kt` |
 | 16 | Nothing here costs money | Spark plan, Cloudinary free, Workers free, OpenStreetMap tiles, Actions free — see §7 | no billing account anywhere |
+| 17 | The order alert leaves the Worker in the only shape that can ring a phone | `worker/test/fcm-alert.test.ts` | **14 tests**: data-only with no `notification` block anywhere, `android.priority HIGH`, `ttl 300s`, APNs headers at a priority Apple permits, topic fallback when the device list is empty, dead tokens purged |
+| 18 | The web account is the app's account, and only its owner can touch it | `worker/test/account.test.ts` against a fake Firebase that signs real RS256 tokens | **27 tests**: a uid only ever comes from a verified ID token, a forged one is refused by the real signature check, a profile is written only in the shape the Firestore rules accept, the history needs no composite index |
 
 **What only your project can prove.** Four checks need your real Firebase project,
 your Cloudinary account and a signed keystore, so run them once after §3e:
@@ -309,3 +319,40 @@ your Cloudinary account and a signed keystore, so run them once after §3e:
 
 Everything in this table was run on the build date and the numbers are real; the
 four checks above are the first things to do on the phone, in that order.
+
+---
+
+## 12 · The website a customer uses
+
+The Worker serves a complete storefront, not a landing page. It is
+server-rendered, so the first paint arrives with the food already on screen and
+every page reads with JavaScript switched off.
+
+| Route | What it is |
+| --- | --- |
+| `/` and `/store` | the live menu: search, section filters, sorting, campaigns |
+| `/item/{id}`, `/dish/{id}`, `/combo/{id}` | one dish, its price and its structured data |
+| `/basket` | the basket, kept on the device |
+| `/checkout` | **the map tick**: an OpenStreetMap pin the customer drags, reads and ticks before the order can be placed |
+| `/login` | sign in, create an account, reset a password |
+| `/account` | profile, address book, order history, password, close the account |
+| `/about` | the kitchen, its live schedule, delivery economics and the FAQ |
+| `/track`, `/order/{id}` | order status, updating itself |
+| `/download`, `/app`, `/open` | the APK with QR codes, and deep-link smart open |
+| `/robots.txt`, `/sitemap.xml` | built from the live catalogue on every request |
+
+Three decisions are worth knowing about:
+
+- **The pin is the address.** A typed address is a guess and a pin is a fact: the
+  delivery fee is the distance from the kitchen to the pin, the radius verdict is
+  measured from the same point, and the rider is sent to it. An order cannot be
+  placed until the pin is ticked, and the distance the customer saw is the
+  distance sent to the server — which prices it again from live data.
+- **One account, two doors.** `/api/account/*` talks to the same Firebase
+  Authentication project and writes the same `users/{uid}` document as the app, so
+  a web order appears in the app's history and a password changed in the browser
+  changes it on the phone. The browser never sees the project's API key and never
+  trusts a uid from a request body: every uid comes from a verified ID token.
+- **An account is optional.** A guest can order. The profile document is written
+  only once a pin exists, because the app reads a missing `users/{uid}` as
+  "onboarding not finished" and a half-written document would lie to it.

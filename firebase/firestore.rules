@@ -157,6 +157,51 @@ service cloud.firestore {
     }
 
     // ======================================================================
+    // users/{uid}/addresses/{addressId} — the saved address book (web + app)
+    //
+    // A customer keeps up to a dozen pins: home, office, a relative's house.
+    // Each one is a full address in its own right (lat/lng plus the three text
+    // lines an order needs), validated exactly like the address on the profile
+    // document, so a saved pin can be dropped onto an order without a second
+    // round of checks. The count itself is capped in the Worker, which is the
+    // only place that can see the whole collection at once; the rules keep the
+    // shape honest and the book private to its owner.
+    // ======================================================================
+    match /users/{userId}/addresses/{addressId} {
+      allow read, delete: if isOwner(userId);
+      allow create: if isOwner(userId)
+        && request.resource.data.keys().hasAll([
+             'label', 'title', 'desc', 'note', 'lat', 'lng', 'createdAt'
+           ])
+        && request.resource.data.lat is number
+        && request.resource.data.lng is number
+        && request.resource.data.lat >= -90 && request.resource.data.lat <= 90
+        && request.resource.data.lng >= -180 && request.resource.data.lng <= 180
+        && nonBlankString(request.resource.data.title)
+        && nonBlankString(request.resource.data.desc)
+        && nonBlankString(request.resource.data.note)
+        && request.resource.data.label is string
+        && request.resource.data.label.size() <= 40
+        && request.resource.data.title.size() <= 160
+        && request.resource.data.desc.size() <= 300
+        && request.resource.data.note.size() <= 300
+        && request.resource.data.createdAt == request.time;
+      allow update: if isOwner(userId)
+        && !changedKeys().hasAny(['createdAt'])
+        && request.resource.data.lat is number
+        && request.resource.data.lng is number
+        && request.resource.data.lat >= -90 && request.resource.data.lat <= 90
+        && request.resource.data.lng >= -180 && request.resource.data.lng <= 180
+        && nonBlankString(request.resource.data.title)
+        && nonBlankString(request.resource.data.desc)
+        && nonBlankString(request.resource.data.note)
+        && request.resource.data.label.size() <= 40
+        && request.resource.data.title.size() <= 160
+        && request.resource.data.desc.size() <= 300
+        && request.resource.data.note.size() <= 300;
+    }
+
+    // ======================================================================
     // vendor/{vendorUid} — the single kitchen identity
     // ======================================================================
     match /vendor/{vendorId} {

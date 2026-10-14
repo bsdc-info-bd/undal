@@ -1,3 +1,5 @@
+import { MAP_STYLE } from "./map-client";
+
 /** Shared, dependency-free light theme. All pages inherit these responsive primitives. */
 export const DESIGN = `
 :root{color-scheme:light;--brand:#165b3b;--brand-dark:#10432c;--accent:#d97930;--paper:#f8f9f5;--ink:#20392c;--muted:#617065;--line:#e0e7df}
@@ -68,4 +70,74 @@ footer{border-top:1px solid var(--line);font-size:.8rem;line-height:1.8;margin-t
 @media(min-width:900px){main>section.card:only-of-type{margin-top:20px}img.hero{max-height:480px;object-fit:cover}}
 @media(max-width:640px){header{padding:16px;gap:10px}header p{font-size:.7rem}header h1{font-size:1rem}.header-action{display:none}main,footer{padding:20px 16px}nav.store .inner{padding:8px 12px;gap:2px}nav.store a{padding:10px 12px;font-size:.8rem}nav.store a.cart{padding:10px 14px}.store-hero{grid-template-columns:1fr;border-radius:24px;gap:24px}.hero-note{transform:none;padding:20px}.hero-note .hero-mark{display:none}.hero-note hr{margin:14px 0}.hero-note h3{font-size:1.15rem}.card{padding:20px;border-radius:20px}.grid{gap:16px}.menu-heading{align-items:start;flex-direction:column;gap:6px}.search .button{padding-inline:14px!important}dl{grid-template-columns:1fr}dd{margin-bottom:8px}.qr svg{max-width:100%;height:auto}}
 @media(prefers-reduced-motion:reduce){html{scroll-behavior:auto}*,*::before,*::after{animation:none!important;transition:none!important}}
-`;
+
+/* --- footer navigation: the internal links a crawler follows ---------------- */
+footer .footer-links{display:flex;flex-wrap:wrap;gap:6px 18px;margin:0 0 14px;font-size:.85rem}
+footer .footer-links a{color:var(--ink);text-decoration:none;font-weight:600}
+footer .footer-links a:hover{color:var(--brand)}
+
+/* --- account: profile, addresses, history ---------------------------------- */
+.account-grid{display:grid;gap:20px;grid-template-columns:repeat(auto-fit,minmax(min(100%,320px),1fr))}
+.field-note{font-size:.8rem;color:var(--muted);margin:4px 2px 0;line-height:1.5}
+.field-error{font-size:.8rem;color:#8c1d18;margin:4px 2px 0}
+input[aria-invalid=true],textarea[aria-invalid=true]{border-color:#b3261e;background:#fffafa}
+.saved-addresses{list-style:none;margin:0;padding:0;display:grid;gap:12px}
+.saved-address{display:flex;gap:14px;align-items:flex-start;border:1px solid var(--line);border-radius:18px;padding:16px;background:#fffdf9}
+.saved-address .marker{width:38px;height:38px;flex:none;border-radius:12px;background:#eaf2e9;color:var(--brand);display:grid;place-content:center;font-weight:800}
+.saved-address h3{margin:0 0 4px;font-size:1rem}
+.saved-address p{margin:0;font-size:.85rem;color:var(--muted)}
+.saved-address .actions{margin-left:auto;display:flex;gap:8px;flex-wrap:wrap}
+.mini-button{border:1px solid var(--line);background:#fff;color:var(--ink);border-radius:12px;padding:9px 14px;font-weight:700;font-size:.82rem;cursor:pointer;min-height:40px}
+.mini-button.danger{color:#8c1d18;border-color:#f3c6c2}
+.mini-button:disabled{opacity:.5;cursor:not-allowed}
+.history-list{list-style:none;margin:0;padding:0;display:grid;gap:10px}
+.history-row{display:flex;gap:12px;align-items:center;border-bottom:1px solid var(--line);padding:12px 2px}
+.history-row:last-child{border-bottom:0}
+.history-row .who{font-weight:700}
+.history-row .when{font-size:.8rem;color:var(--muted)}
+.history-row .amount{margin-left:auto;font-weight:700;color:var(--brand);white-space:nowrap}
+.status-dot{width:10px;height:10px;border-radius:50%;flex:none;background:var(--brand)}
+.status-dot.cancelled{background:#b3261e}
+.status-dot.placed{background:#d97930}
+.status-dot.in_delivery{background:#1d6fa5}
+.tabs{display:flex;gap:8px;overflow-x:auto;margin:0 0 18px;scrollbar-width:thin}
+.tabs a,.tabs button{white-space:nowrap;padding:10px 16px;border-radius:999px;border:1px solid var(--line);background:#fff;
+color:var(--ink);font-weight:600;font-size:.85rem;text-decoration:none;min-height:44px;cursor:pointer}
+.tabs a.active,.tabs button.active{background:#eaf2e9;border-color:#cfe0cd;color:var(--brand)}
+.auth-split{display:grid;gap:22px;grid-template-columns:repeat(auto-fit,minmax(min(100%,320px),1fr))}
+.password-meter{height:6px;border-radius:99px;background:var(--line);overflow:hidden;margin:6px 2px 0}
+.password-meter span{display:block;height:100%;width:0;background:#b3261e;transition:width .2s,background .2s}
+.sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap;border:0}
+/* --- the about page: hero, the order's journey, facts, FAQ, small print ----- */
+section.hero{background:#edf2e6;border:1px solid #e1e8d9;border-radius:32px;padding:clamp(24px,5vw,52px);margin-bottom:24px;overflow:hidden}
+section.hero h1{font-size:clamp(1.75rem,4vw,2.9rem);letter-spacing:-.045em;line-height:1.12;margin:0 0 16px;max-width:24ch}
+section.hero .pill{margin-bottom:14px}
+.lead{font-size:1.02rem;line-height:1.72;color:var(--muted);max-width:66ch;margin:0 0 12px}
+.note{font-size:.9rem;line-height:1.6;color:var(--muted);margin:10px 0 0}
+.actions{display:flex;flex-wrap:wrap;gap:12px;margin-top:20px}
+.actions .button,.actions a.button{margin:0;flex:0 1 auto}
+.button.ghost,a.button.ghost{background:transparent;color:var(--ink);border:1px solid var(--line)}
+.steps h3{margin:0 0 5px;font-size:1.02rem;letter-spacing:-.01em}
+.steps p{margin:0;font-size:.9rem;line-height:1.68;color:var(--muted)}
+.step-number{flex:none;width:34px;height:34px;border-radius:12px;background:#eaf2e9;color:var(--brand);font-weight:800;display:grid;place-content:center;margin-top:2px}
+.split{display:grid;gap:20px;grid-template-columns:repeat(auto-fit,minmax(min(100%,320px),1fr));margin-bottom:20px}
+.split>.card{margin-bottom:0}
+.facts{grid-template-columns:1fr;gap:0}
+.facts>div{display:grid;grid-template-columns:minmax(128px,.38fr) 1fr;gap:4px 14px;padding:11px 0;border-bottom:1px solid var(--line)}
+.facts>div:last-child{border-bottom:0}
+.facts dt{font-size:.74rem;text-transform:uppercase;letter-spacing:.09em;color:var(--muted);font-weight:800}
+.facts dd{margin:0;font-size:.93rem}
+.faq-item{border-bottom:1px solid var(--line)}
+.faq-item:last-child{border-bottom:0}
+.faq-item summary{cursor:pointer;font-weight:700;padding:14px 2px;list-style:none;display:flex;gap:14px;align-items:center;min-height:44px;line-height:1.4}
+.faq-item summary::-webkit-details-marker{display:none}
+.faq-item summary::after{content:"+";margin-left:auto;flex:none;font-size:1.35rem;font-weight:400;color:var(--brand);line-height:1}
+.faq-item[open] summary::after{content:"–"}
+.faq-item[open] summary{color:var(--brand)}
+.faq-item p{margin:0 0 16px;font-size:.92rem;line-height:1.72;color:var(--muted);max-width:70ch}
+.plain-list{margin:0;padding-left:20px;display:grid;gap:11px;font-size:.93rem;line-height:1.68;color:var(--muted)}
+.plain-list li::marker{color:var(--brand)}
+@media(hover:hover){.faq-item summary:hover{color:var(--brand)}.button.ghost:hover,a.button.ghost:hover{background:#eaf2e9;color:var(--brand)}}
+@media(max-width:640px){section.hero{border-radius:24px;padding:22px}.split{grid-template-columns:1fr;gap:0}.split>.card{margin-bottom:20px}.facts>div{grid-template-columns:1fr;gap:2px}.actions{gap:10px}.actions .button,.actions a.button{flex:1 1 100%}.step-number{width:30px;height:30px;border-radius:10px}}
+
+${MAP_STYLE}`;

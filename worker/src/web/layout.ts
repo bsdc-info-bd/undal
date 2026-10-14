@@ -4,6 +4,7 @@
  */
 import { DESIGN } from "./design";
 import { escapeHtml, securityHeaders } from "../util/http";
+import { DEFAULT_LOCALE, OG_LOCALE_ALTERNATE, SITE_NAME } from "./seo";
 
 export interface PageOptions {
   title: string;
@@ -15,6 +16,12 @@ export interface PageOptions {
   status?: number;
   /** Extra navigational markup under the header (store pages). */
   nav?: string;
+  /** Absolute URL of this page. One per page: the signal a crawler trusts most. */
+  canonical?: string;
+  /** `noindex,follow` for a page that is a key rather than a destination. */
+  robots?: string;
+  /** Serialised `<script type="application/ld+json">` blocks for the head. */
+  jsonLd?: string;
 }
 
 const STYLE = `
@@ -97,23 +104,38 @@ export function renderPage(options: PageOptions): Response {
   const description = escapeHtml(options.description);
   const ogImage = options.ogImage ? `<meta property="og:image" content="${escapeHtml(options.ogImage)}">` : "";
   const ogUrl = options.ogUrl ? `<meta property="og:url" content="${escapeHtml(options.ogUrl)}">` : "";
+  const canonical = options.canonical ? `<link rel="canonical" href="${escapeHtml(options.canonical)}">` : "";
+  const robots = options.robots ? `<meta name="robots" content="${escapeHtml(options.robots)}">` : "";
 
   const document = `<!doctype html>
-<html lang="en">
+<html lang="en-GB">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <title>${title}</title>
 <meta name="description" content="${description}">
+${canonical}
+${robots}
+<meta name="theme-color" content="#165b3b">
+<meta name="color-scheme" content="light">
+<meta name="format-detection" content="telephone=no">
 <meta property="og:type" content="website">
-<meta property="og:site_name" content="Undal HomeKitchen">
+<meta property="og:site_name" content="${SITE_NAME}">
+<meta property="og:locale" content="${DEFAULT_LOCALE}">
+<meta property="og:locale:alternate" content="${OG_LOCALE_ALTERNATE}">
 <meta property="og:title" content="${title}">
 <meta property="og:description" content="${description}">
 ${ogImage}
 ${ogUrl}
 <meta name="twitter:card" content="summary_large_image">
-<meta name="theme-color" content="#0B5A2B">
+<meta name="twitter:title" content="${title}">
+<meta name="twitter:description" content="${description}">
+${options.ogImage ? `<meta name="twitter:image" content="${escapeHtml(options.ogImage)}">` : ""}
 <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="manifest" href="/manifest.webmanifest">
+<link rel="preconnect" href="https://tile.openstreetmap.org" crossorigin>
+<link rel="preconnect" href="https://res.cloudinary.com" crossorigin>
+${options.jsonLd ?? ""}
 <style>${STYLE}
 ${DESIGN}</style>
 </head>
@@ -122,7 +144,7 @@ ${DESIGN}</style>
 <header>
 <a class="brand-link" href="/store">${MARK}
 <div>
-<h1>Undal HomeKitchen</h1>
+<h1>${SITE_NAME}</h1>
 <p>Home-cooked food · Sylhet · cash on delivery</p>
 </div></a>
 <a class="header-action" href="/download">Get the Android app ↗</a>
@@ -132,10 +154,21 @@ ${options.nav ?? ""}
 ${options.body}
 </main>
 <footer>
+<nav class="footer-links" aria-label="More about Undal">
+<a href="/store">Menu</a>
+<a href="/about">The kitchen, hours and delivery</a>
+<a href="/basket">Your basket</a>
+<a href="/track">Track an order</a>
+<a href="/account">Your account</a>
+<a href="/login">Sign in</a>
+<a href="/download">Install the app</a>
+<a href="/app">Open in the app</a>
+</nav>
 Undal HomeKitchen · Sylhet · Delivery inside our radius only · <strong>Cash on delivery only</strong> —
 no card, no wallet, no online payment anywhere in this app.<br>
 Ordering from a phone browser works; live status pushes, in-order chat with the kitchen and the
 Undal order sound are app-only. <a href="/download">Install the app</a> · <a href="/app">Open Undal</a>
+<p class="smallprint">Map data © OpenStreetMap contributors, used to place your delivery pin.</p>
 </footer>
 </body>
 </html>`;

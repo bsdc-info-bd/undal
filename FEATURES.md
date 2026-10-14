@@ -8,14 +8,14 @@ backend** — never when it is merely planned or sketched.
 | --- | --- | --- |
 | Customer portal | C-001 … C-080 | 80 |
 | Vendor portal | V-001 … V-110 | 110 |
-| Platform · web · deep links · CI | P-001 … P-045 | 45 |
-| **Total** | | **235** |
+| Platform · web · deep links · CI | P-001 … P-066 | 66 |
+| **Total** | | **256** |
 
-**Progress: 235 / 235 implemented (100 %)** — every block is ticked: the
+**Progress: 256 / 256 implemented (100 %)** — every block is ticked: the
 customer portal (C-001 … C-080), the vendor portal (V-001 … V-110) and the
-platform, web, deep-link and release block (P-001 … P-045). Nothing here is
+platform, web, deep-link and release block (P-001 … P-066). Nothing here is
 "planned": each line is code in this repository, verified by
-`grep -c '^- \[x\]' FEATURES.md` (235) and by the acceptance table in README §11.
+`grep -c '^- \[x\]' FEATURES.md` (256) and by the acceptance table in README §11.
 
 Legend: `[x]` shipped and wired · `[ ]` still to ship.
 
@@ -217,7 +217,7 @@ Legend: `[x]` shipped and wired · `[ ]` still to ship.
 - [x] V-109 · Vendor inbox mirroring the kitchen alert history
 - [x] V-110 · One-tap share of the store link
 
-## P · Platform, web, deep links and delivery (45)
+## P · Platform, web, deep links and delivery (66)
 
 - [x] P-001 · Single-deploy Cloudflare Worker architecture (router, routes, crons in one bundle)
 - [x] P-002 · FCM HTTP v1 with service-account OAuth2 (RS256 JWT minted in Web Crypto, token cached in KV)
@@ -265,9 +265,36 @@ Legend: `[x]` shipped and wired · `[ ]` still to ship.
 - [x] P-044 · Accessibility pass: descriptions, 48 dp targets and TalkBack order
 - [x] P-045 · No-placeholder grep gate that fails CI on unfinished markers
 
+### The web storefront, the web account and search (P-046 … P-059)
+
+- [x] P-046 · Checkout map: an OpenStreetMap pin the customer drops and ticks before ordering
+- [x] P-047 · Live delivery fee and radius verdict measured from the ticked pin
+- [x] P-048 · Web sign-up against the same Firebase Authentication the app uses
+- [x] P-049 · Web password reset by email, sent by Firebase itself
+- [x] P-050 · Web session renewal past the ID token's hour
+- [x] P-051 · Web profile: name, number and pinned address written to `users/{uid}`
+- [x] P-052 · Web address book: up to twelve saved pins, added, edited and deleted
+- [x] P-053 · Web order history: the caller's own orders, newest first, needing no composite index
+- [x] P-054 · Web password change that returns a fresh session
+- [x] P-055 · Web account closure behind a typed confirmation word
+- [x] P-056 · About page with the kitchen's live schedule, delivery economics and FAQ
+- [x] P-057 · `robots.txt` and `sitemap.xml` built from the live catalogue
+- [x] P-058 · Structured data: Restaurant, WebSite, Menu, Product, FAQPage, BreadcrumbList
+- [x] P-059 · Canonical URL, Open Graph and locale metadata on every page
+
+### The cleanup 502 and the alert wire (P-060 … P-066)
+
+- [x] P-060 · Cleanup scan fallback when the composite index was never deployed
+- [x] P-061 · Cleanup mirror queue in KV when the Realtime Database URL is missing
+- [x] P-062 · `hint` and `detail` carried by every Worker refusal and shown by the app
+- [x] P-063 · Cleanup diagnosis (`dryRun`) reporting verdict, strategy and the index link
+- [x] P-064 · Firestore indexes deployed by the deploy-worker workflow
+- [x] P-065 · APNs delivery headers alongside the Android alert priority
+- [x] P-066 · `docs/ALERT-RELIABILITY.md`: the ladder, the manifest and the device acceptance matrix
+
 ---
 
 ## How to read this file between responses
 
 The task owner can say **`Status`** at any time and the count above is the
-answer: how many of the 235 features are actually shipped and wired.
+answer: how many of the 256 features are actually shipped and wired.
