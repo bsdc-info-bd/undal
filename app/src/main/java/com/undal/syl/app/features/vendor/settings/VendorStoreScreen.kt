@@ -80,8 +80,20 @@ fun VendorStoreScreen(
 ) {
     val state by viewModel.state.collectAsState()
     val context = LocalContext.current
+    var confirmCleanup by remember { mutableStateOf(false) }
     var confirmSignOut by remember { mutableStateOf(false) }
     var shareText by remember { mutableStateOf("") }
+
+    if (confirmCleanup) {
+        UndalConfirmDialog(
+            title = "Permanently clear finished history?",
+            message = "This deletes all delivered and cancelled orders, their chats and live mirrors, plus this kitchen account’s notifications created before cleanup starts. These orders disappear from customer history and sales reports too. Active orders, menu, accounts and device tokens are kept. Export records first. This cannot be undone.",
+            confirmLabel = "Delete finished history",
+            destructive = true,
+            onConfirm = { confirmCleanup = false; viewModel.cleanupHistory() },
+            onDismiss = { confirmCleanup = false }
+        )
+    }
 
     UndalScaffold(
         title = "Store settings",
@@ -100,6 +112,21 @@ fun VendorStoreScreen(
             contentPadding = PaddingValues(UndalDimens.screenPadding),
             verticalArrangement = Arrangement.spacedBy(UndalDimens.sm)
         ) {
+            item {
+                VendorSection(title = "Storage & history", subtitle = "Keep your kitchen database lean without touching live orders.") {
+                    Column(verticalArrangement = Arrangement.spacedBy(UndalDimens.md)) {
+                        Text("Permanently delete delivered and cancelled orders, their chats, live mirrors, and this kitchen account’s notification history. Customer order history and sales reports will also lose those orders. Export records you need first.",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        state.cleanupProgress?.let { Text(it, style = MaterialTheme.typography.labelLarge) }
+                        UndalSecondaryButton(
+                            text = if (state.cleaning) "Cleaning history…" else "Clear finished history",
+                            onClick = { confirmCleanup = true },
+                            enabled = !state.busy && state.vendorClaim
+                        )
+                    }
+                }
+            }
             if (!state.vendorClaim) {
                 item {
                     UndalAlertBanner(

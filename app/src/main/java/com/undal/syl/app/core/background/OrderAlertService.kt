@@ -34,6 +34,8 @@ import com.undal.syl.app.core.fcm.AlarmChannels
 import com.undal.syl.app.core.fcm.AlertVolume
 import com.undal.syl.app.core.util.OrderStatus
 import java.io.File
+import org.json.JSONArray
+import org.json.JSONObject
 
 /**
  * The order alert (PART I-2).
@@ -112,12 +114,14 @@ class OrderAlertService : Service() {
      * A `Ringtone` plays once and stops; an unanswered order must not. This
      * re-plays the phone's own alarm tone for as long as anything is waiting.
      */
-    private val replayRinger = Runnable {
-        if (waiting.isEmpty()) return@Runnable
-        val tone = ringtone ?: return@Runnable
+    private val replayRinger: Runnable = object : Runnable {
+        override fun run() {
+        if (waiting.isEmpty()) return
+        val tone = ringtone ?: return
         runCatching { tone.stop() }
         runCatching { tone.play() }
-        handler.postDelayed(replayRinger, RINGER_REPLAY_MILLIS)
+        handler.postDelayed(this, RINGER_REPLAY_MILLIS)
+        }
     }
 
     private data class Waiting(
@@ -128,23 +132,35 @@ class OrderAlertService : Service() {
         val isTest: Boolean
     )
 
-    private val liveListener = object : ValueEventListener {
-        override fun onDataChange(snapshot: DataSnapshot) {
-            val status = snapshot.child("status").getValue(String::class.java)
-            // Anything other than `placed` means somebody answered the order —
-            // possibly the other kitchen phone. Drop it from the queue and, if
-            // that was the order that was ringing, start the next one.
-            if (status != null && status != OrderStatus.PLACED.wire) {
-                val orderId = currentOrderId
-                if (orderId != null && waiting.remove(orderId) != null) {
-                    if (waiting.isEmpty()) stopAlert(orderId) else ringHead()
-                }
-            }
-        }
+    private var liveListener: ValueEventListener? = null
 
-        override fun onCancelled(error: DatabaseError) {
-            Log.w(TAG, "orderLive listener cancelled: ${error.message}")
+    // Persist only order identifiers and display data, scoped to the signed-in user.
+    // Tests are deliberately not restored after a process death.
+    private fun persistQueue() {
+        val records = JSONArray()
+        waiting.values.filterNot { it.isTest }.forEach { order ->
+            records.put(JSONObject().put("id", order.orderId).put("short", order.shortId)
+                .put("title", order.title).put("body", order.body))
         }
+        getSharedPreferences("order_alert_queue", MODE_PRIVATE).edit()
+            .putString("uid", com.google.firebase.auth.FirebaseAuth.getInstance().currentUser?.uid)
+            .putLong("savedAt", System.currentTimeMillis())
+            .putString("orders", records.toString()).commit()
+    }
+
+    private fun restoreQueue() {
+        val prefs = getSharedPreferences("order_alert_queue", MODE_PRIVATE)
+        val uid = com.google.firebase.auth.FirebaseAuth.getInstance().currentUser?.uid ?: return
+        if (prefs.getString("uid", null) != uid ||
+            System.currentTimeMillis() - prefs.getLong("savedAt", 0) > 15 * 60_000L) return
+        runCatching {
+            val records = JSONArray(prefs.getString("orders", "[]"))
+            for (index in 0 until records.length()) {
+                val row = records.getJSONObject(index)
+                beginAlert(row.getString("id"), row.getString("short"),
+                    row.getString("title"), row.getString("body"), false)
+            }
+        }.onFailure { Log.w(TAG, "Could not restore alert queue", it) }
     }
 
     override fun onBind(intent: Intent?): IBinder? = null
@@ -155,10 +171,15 @@ class OrderAlertService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        when (intent?.action) {
+        if (intent == null) {
+            restoreQueue()
+            if (waiting.isEmpty()) stopSelf()
+            return if (waiting.isEmpty()) START_NOT_STICKY else START_STICKY
+        }
+        when (intent.action) {
             ACTION_STOP -> {
                 stopAlert(intent.getStringExtra(EXTRA_ORDER_ID))
-                return START_NOT_STICKY
+                return if (waiting.isEmpty()) START_NOT_STICKY else START_STICKY
             }
             ACTION_RING, null -> {
                 val orderId = intent?.getStringExtra(EXTRA_ORDER_ID)
@@ -170,6 +191,7 @@ class OrderAlertService : Service() {
                     stopSelf()
                     return START_NOT_STICKY
                 }
+                if (waiting.isEmpty()) restoreQueue()
                 beginAlert(orderId, shortId, title, body, isTest)
             }
             else -> stopSelf()
@@ -187,8 +209,7 @@ class OrderAlertService : Service() {
         // service that plays audio before it calls startForeground, and a kill
         // here is a missed order. The very first ring has to establish it, which
         // is why this comes before the early return for a repeat.
-        val head = waiting.entries.firstOrNull()?.value
-        val ringing = if (alreadyWaiting && head != null) head else Waiting(orderId, shortId, title, body, isTest)
+        val ringing = Waiting(orderId, shortId, title, body, isTest)
         if (!alreadyWaiting) {
             // Newest last: `linkedMapOf` keeps arrival order, so the head stays
             // the oldest unanswered order even when a second order arrives while
@@ -205,6 +226,7 @@ class OrderAlertService : Service() {
             buildNotification(foregroundOrder),
             foregroundType()
         )
+        persistQueue()
 
         if (alreadyWaiting) {
             // Already ringing for this order (or for an older one): refresh the
@@ -240,6 +262,7 @@ class OrderAlertService : Service() {
 
     /** Moves the alert to the head of the queue, keeping the sound running. */
     private fun ringHead() {
+        persistQueue()
         val next = waiting.entries.firstOrNull()?.value
         if (next == null) {
             stopAlert(null)
@@ -256,7 +279,7 @@ class OrderAlertService : Service() {
                 startedAtMillis = System.currentTimeMillis()
             )
         )
-        notifyManager().notify(AlarmChannels.ORDER_ALERT_NOTIFICATION_ID, buildNotification(next))
+        publishNotification(next)
         watchOrderLive(next.orderId)
         if (player?.isPlaying != true && ringtone == null) startSound()
         if ((player?.isPlaying == true || ringtone != null) && vibrator == null) startVibration()
@@ -410,9 +433,24 @@ class OrderAlertService : Service() {
     }
 
     private fun watchOrderLive(orderId: String) {
-        liveReference?.removeEventListener(liveListener)
+        liveListener?.let { liveReference?.removeEventListener(it) }
         liveReference = FirebaseDatabase.getInstance().getReference("orderLive").child(orderId)
-        liveReference?.addValueEventListener(liveListener)
+        val listener = object : ValueEventListener {
+            override fun onDataChange(snapshot: DataSnapshot) {
+                val status = snapshot.child("status").getValue(String::class.java)
+                // Capture this subscription's id. A late callback from the previous
+                // head must never silence a different order.
+                if (status != null && status != OrderStatus.PLACED.wire &&
+                    waiting.remove(orderId) != null) {
+                    if (waiting.isEmpty()) stopAlert(orderId) else ringHead()
+                }
+            }
+            override fun onCancelled(error: DatabaseError) {
+                Log.w(TAG, "orderLive listener cancelled: ${error.message}")
+            }
+        }
+        liveListener = listener
+        liveReference?.addValueEventListener(listener)
     }
 
     private fun buildNotification(order: Waiting): Notification {
@@ -504,7 +542,8 @@ class OrderAlertService : Service() {
             }
         }
 
-        liveReference?.removeEventListener(liveListener)
+        persistQueue()
+        liveListener?.let { liveReference?.removeEventListener(it) }
         liveReference = null
 
         runCatching { player?.stop() }
@@ -532,7 +571,7 @@ class OrderAlertService : Service() {
     }
 
     override fun onDestroy() {
-        liveReference?.removeEventListener(liveListener)
+        liveListener?.let { liveReference?.removeEventListener(it) }
         runCatching { player?.release() }
         player = null
         handler.removeCallbacks(replayRinger)
@@ -595,7 +634,25 @@ class OrderAlertService : Service() {
                 putExtra(EXTRA_BODY, body)
                 putExtra(EXTRA_IS_TEST, isTest)
             }
-            ContextCompat.startForegroundService(context, intent)
+            try {
+                ContextCompat.startForegroundService(context, intent)
+            } catch (error: RuntimeException) {
+                // Android may downgrade a push or deny background FGS starts.
+                // Keep a visible, actionable alert rather than crashing the FCM callback.
+                Log.e(TAG, "Background alarm start denied; posting notification", error)
+                AlarmChannels.ensureChannels(context)
+                val open = PendingIntent.getActivity(context, orderId.hashCode(),
+                    MainActivity.intentFor(context, "vendor/order/$orderId"),
+                    PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
+                val notification = NotificationCompat.Builder(context, AlarmChannels.VENDOR_NEW_ORDER)
+                    .setSmallIcon(R.drawable.ic_undal_mark)
+                    .setContentTitle(title).setContentText(body)
+                    .setCategory(NotificationCompat.CATEGORY_ALARM)
+                    .setPriority(NotificationCompat.PRIORITY_MAX)
+                    .setContentIntent(open).setAutoCancel(true).build()
+                runCatching { NotificationManagerCompat.from(context)
+                    .notify(orderId.hashCode() and 0x7FFFFFFF, notification) }
+            }
         }
 
         /** Silences the loop. Called when an order is answered anywhere. */
@@ -604,7 +661,24 @@ class OrderAlertService : Service() {
                 action = ACTION_STOP
                 if (orderId != null) putExtra(EXTRA_ORDER_ID, orderId)
             }
-            runCatching { ContextCompat.startForegroundService(context, intent) }
+            // A stop is never a foreground start. If the service is not running,
+            // the saved queue is still corrected so a later restore cannot ring an
+            // order that somebody already answered.
+            val prefs = context.getSharedPreferences("order_alert_queue", Context.MODE_PRIVATE)
+            if (orderId == null) {
+                prefs.edit().remove("orders").commit()
+            } else {
+                runCatching {
+                    val remaining = JSONArray()
+                    val records = JSONArray(prefs.getString("orders", "[]"))
+                    for (index in 0 until records.length()) {
+                        val row = records.getJSONObject(index)
+                        if (row.getString("id") != orderId) remaining.put(row)
+                    }
+                    prefs.edit().putString("orders", remaining.toString()).commit()
+                }
+            }
+            runCatching { context.startService(intent) }
         }
     }
 }

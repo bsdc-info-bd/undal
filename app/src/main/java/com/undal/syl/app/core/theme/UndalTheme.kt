@@ -7,14 +7,13 @@ import androidx.compose.material3.dynamicLightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.staticCompositionLocalOf
-import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.ui.platform.LocalContext
 
 /**
  * The single theme entry point for the Undal app.
  *
- * - Dark and light follow the phone automatically.
- * - Android 12+ gets dynamic colour, so the app sits naturally in the phone's
+ * - A consistent branded light theme is the default; dark mode is opt-in.
+ * - Android 12+ can opt into dynamic colour, so the app sits naturally in the phone's
  *   palette while the Undal brand mark, status pills and order-alert screens
  *   keep their meaning-carrying colours from [UndalPalette].
  */
@@ -22,8 +21,8 @@ val LocalUndalSemantics = staticCompositionLocalOf { UndalLightSemantics }
 
 @Composable
 fun UndalTheme(
-    darkTheme: Boolean = isSystemInDarkTheme(),
-    dynamicColor: Boolean = true,
+    darkTheme: Boolean = false,
+    dynamicColor: Boolean = false,
     content: @Composable () -> Unit
 ) {
     val context = LocalContext.current

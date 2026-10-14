@@ -92,6 +92,23 @@ class WorkerApi @Inject constructor(
             }
     }
 
+    data class CleanupBatch(val before: String, val orders: Int, val notifications: Int, val more: Boolean)
+
+    suspend fun cleanupHistory(before: String?): CleanupBatch = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+        val token = auth.currentUser?.getIdToken(false)?.await()?.token ?: error("Not signed in")
+        val payload = JSONObject().put("confirmation", "DELETE_FINISHED_HISTORY")
+        if (before != null) payload.put("before", before)
+        val request = Request.Builder().url("$baseUrl/admin/cleanup")
+            .header("authorization", "Bearer $token")
+            .post(payload.toString().toRequestBody(JSON_MEDIA_TYPE)).build()
+        client.newBuilder().callTimeout(30, TimeUnit.SECONDS).build().newCall(request).execute().use { response ->
+            if (!response.isSuccessful) error("Cleanup paused (HTTP ${response.code}). You can safely try again.")
+            val result = JSONObject(response.body?.string().orEmpty())
+            CleanupBatch(result.getString("before"), result.getInt("orders"),
+                result.getInt("notifications"), result.getBoolean("more"))
+        }
+    }
+
     suspend fun health(): Result<String> = runCatching {
         val request = Request.Builder().url("$baseUrl/healthz").get().build()
         client.newCall(request).execute().use { response ->

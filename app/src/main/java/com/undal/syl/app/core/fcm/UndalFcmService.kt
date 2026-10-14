@@ -29,8 +29,8 @@ import javax.inject.Inject
  * Messages are **data-only**, which is deliberate: a `notification` payload would
  * let the system tray handle the message while the app is in the background, and
  * the vendor order alert would never start. Because everything arrives here,
- * `onMessageReceived` runs in the foreground, in the background and on a locked
- * screen — the three states that matter for a kitchen.
+ * `onMessageReceived` can run in the foreground, background and on a locked
+ * screen, subject to Android/FCM delivery limits (not after user force-stop).
  *
  * Message types and what they do:
  *   order_created → start the ringing alert service (vendor) + inbox entry
@@ -57,7 +57,9 @@ class UndalFcmService : FirebaseMessagingService() {
         AlarmChannels.ensureChannels(applicationContext)
         val data = message.data
         val uid = runCatching { FirebaseAuth.getInstance().currentUser?.uid }.getOrNull()
-        val isVendor = runCatching {
+        // The claim can be up to an hour stale; the locally remembered role for
+        // this exact account covers the window where a kitchen push arrives first.
+        val isVendor = PushDeviceRole.isKitchen(applicationContext, uid) || runCatching {
             FirebaseAuth.getInstance().currentUser?.getIdToken(false)?.result?.claims?.get("vendor") == true
         }.getOrDefault(false)
 
@@ -78,8 +80,8 @@ class UndalFcmService : FirebaseMessagingService() {
         val title = data["title"].orEmpty().ifBlank { "New order $shortId" }
         val body = data["body"].orEmpty().ifBlank { "Tap to review and accept" }
 
-        // The sound loop is the product promise: it starts even if the process
-        // was dead a second ago, and it keeps ringing until somebody answers.
+        // A delivered high-priority push can start the loop even after normal
+        // process death. OS start restrictions fall back to a visible notification.
         // A `test` marker keeps the diagnostics alert honest: it rings exactly
         // like a real order, labels itself and stops itself.
         val isTest = data["test"] == "true"
@@ -92,6 +94,10 @@ class UndalFcmService : FirebaseMessagingService() {
             isTest = isTest,
             source = OrderAlertService.SOURCE_PUSH
         )
+
+        // FCM's high-priority exemption is short: re-arm the live fallback now,
+        // not from an unbounded async callback after this service returns.
+        com.undal.syl.app.core.background.KitchenWatchService.start(applicationContext)
 
         // A repeated push (the Worker's re-alert sweep) has already done its job
         // by ringing; recording it again in the inbox would just be noise.
@@ -175,10 +181,11 @@ class UndalFcmService : FirebaseMessagingService() {
             body = body,
             deepLink = "customer/order/$orderId",
             highPriority = true,
-            ongoing = false
+            ongoing = false,
+            notificationTag = "order-$orderId"
         )
 
-        if (uid != null) {
+        if (uid != null && data["inboxRecorded"] != "true") {
             scope.launch {
                 inboxRepo.record(
                     uid = uid,
@@ -261,7 +268,8 @@ class UndalFcmService : FirebaseMessagingService() {
         deepLink: String,
         highPriority: Boolean,
         ongoing: Boolean,
-        imageUrl: String? = null
+        imageUrl: String? = null,
+        notificationTag: String? = null
     ) {
         val manager = NotificationManagerCompat.from(applicationContext)
         if (!manager.areNotificationsEnabled()) {
@@ -286,6 +294,7 @@ class UndalFcmService : FirebaseMessagingService() {
                 if (channelId == AlarmChannels.CUSTOMER_ORDERS) NotificationCompat.CATEGORY_STATUS
                 else NotificationCompat.CATEGORY_MESSAGE
             )
+            .setVisibility(NotificationCompat.VISIBILITY_PRIVATE)
             .setAutoCancel(true)
             .setOngoing(ongoing)
             .setContentIntent(contentIntent)
@@ -293,7 +302,10 @@ class UndalFcmService : FirebaseMessagingService() {
         // Offer images are shown inside the app (Coil + the inbox), not in the
         // tray: loading a remote bitmap here would run on the push thread and
         // could slow down the order-alert path that shares this service.
-        runCatching { manager.notify(notificationId, builder.build()) }
+        runCatching {
+            if (notificationTag != null) manager.notify(notificationTag, 0, builder.build())
+            else manager.notify(notificationId, builder.build())
+        }
     }
 
     override fun onDeletedMessages() {

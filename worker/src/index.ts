@@ -18,6 +18,7 @@
  *
  * Cron triggers: *​/5 presence watchdog · 0 12 * * * (18:00 Asia/Dhaka) promo blast.
  */
+import { handleCleanup } from "./routes/cleanup";
 import type { Env } from "./env";
 import { projectId } from "./env";
 import { HttpError, clientIp, errorJson, json, rateLimit } from "./util/http";
@@ -122,6 +123,8 @@ async function route(request: Request, env: Env): Promise<Response> {
   if (!allowed) {
     return errorJson(429, "rate-limited", "Too many requests. Please try again in a minute.");
   }
+
+  if (path === "/admin/cleanup" && request.method === "POST") return handleCleanup(env, request);
 
   if (path === "/" || path === "/store") return handleStoreFront(env, request);
   if (path === "/about") return handleAboutPage(env, request);

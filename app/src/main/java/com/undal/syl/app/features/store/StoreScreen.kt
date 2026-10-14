@@ -47,6 +47,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
@@ -128,7 +129,7 @@ fun StoreScreen(
             modifier = Modifier.fillMaxSize()
         ) {
             LazyVerticalGrid(
-                columns = GridCells.Fixed(2),
+                columns = GridCells.Adaptive(minSize = 160.dp * LocalDensity.current.fontScale),
                 modifier = Modifier.fillMaxSize(),
                 contentPadding = PaddingValues(
                     start = UndalDimens.screenPadding,

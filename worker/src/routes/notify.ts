@@ -12,7 +12,7 @@
  *   chat          → 3600 s  a late chat ping is still useful
  */
 import type { Env } from "../env";
-import { fsGet } from "../firestore";
+import { fsGet, fsCreateIfAbsent } from "../firestore";
 import { sendToTokens } from "../fcmv1";
 import { rtdbUpdate } from "../rtdb";
 import { raiseKitchenAlert } from "../alerting";
@@ -24,7 +24,7 @@ import { requireCaller, requireVendor } from "../authverify";
 const ORDER_ALERT_TTL = "300s";
 const ORDER_STATUS_TTL = "60s";
 const CHAT_TTL = "3600s";
-const CHAT_THROTTLE_SECONDS = 3;
+const CHAT_THROTTLE_SECONDS = 60;
 const TEXT_PREVIEW_LIMIT = 140;
 
 const STATUS_COPY: Record<string, { title: string; body: string }> = {
@@ -117,6 +117,14 @@ export async function handleOrderStatus(env: Env, request: Request): Promise<Res
   };
   const note = stringField(order, "cancelNote") || stringField(order, "vendorNote");
 
+  const notificationBody = note.length > 0 && status === "cancelled"
+    ? `${copy.body} Note: ${note}`.slice(0, 240) : copy.body;
+  // Write once on the server: a background display push does not run the app's
+  // callback, and a phone may be offline when the event happens.
+  await fsCreateIfAbsent(env, `notifInbox/${customerId}/items/${encodeURIComponent(`status-${orderId}-${status}`)}`, {
+    title: copy.title, body: notificationBody, type: `order_status:${status}`,
+    orderId, read: false, createdAt: new Date(),
+  });
   const tokens = await tokensForUser(env, customerId);
   const outcome = await sendToTokens(env, tokens, {
     data: {
@@ -125,10 +133,13 @@ export async function handleOrderStatus(env: Env, request: Request): Promise<Res
       shortId: stringField(order, "shortId"),
       status,
       title: copy.title,
-      body: note.length > 0 && status === "cancelled" ? `${copy.body} Note: ${note}`.slice(0, 240) : copy.body,
+      body: notificationBody,
+      deepLink: `customer/order/${orderId}`,
+      inboxRecorded: "true",
       channelId: "customer_orders",
       clickAction: "customer_order",
     },
+    display: { title: copy.title, body: notificationBody, channelId: "customer_orders", tag: `order-${orderId}` },
     ttl: ORDER_STATUS_TTL,
     collapseKey: `order-${orderId}`,
   });
@@ -165,8 +176,10 @@ export async function handleChat(env: Env, request: Request): Promise<Response> 
 
   const sender = callerIsVendor ? "vendor" : "customer";
   const throttleKey = `chat:throttle:${orderId}:${sender}`;
-  if (await env.UNDAL_KV.get(throttleKey)) return json({ ok: true, throttled: true });
-  await env.UNDAL_KV.put(throttleKey, "1", { expirationTtl: CHAT_THROTTLE_SECONDS });
+  const lastChat = Number(await env.UNDAL_KV.get(throttleKey));
+  if (lastChat > Date.now() - 3000) return json({ ok: true, throttled: true });
+  // KV requires a TTL of at least 60s; store the timestamp for the 3s window.
+  await env.UNDAL_KV.put(throttleKey, String(Date.now()), { expirationTtl: CHAT_THROTTLE_SECONDS });
 
   const recipientUid = callerIsVendor ? stringField(order, "customerId") : await vendorUid(env);
   const tokens = await tokensForUser(env, recipientUid);

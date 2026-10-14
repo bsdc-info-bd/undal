@@ -2,6 +2,7 @@
  * Shared HTML shell for every page the Worker serves.
  * Inline CSS only: no external asset can fail on a Bangladeshi mobile network.
  */
+import { DESIGN } from "./design";
 import { escapeHtml, securityHeaders } from "../util/http";
 
 export interface PageOptions {
@@ -11,6 +12,7 @@ export interface PageOptions {
   ogImage?: string;
   ogUrl?: string;
   cacheSeconds?: number;
+  status?: number;
   /** Extra navigational markup under the header (store pages). */
   nav?: string;
 }
@@ -112,18 +114,21 @@ ${ogUrl}
 <meta name="twitter:card" content="summary_large_image">
 <meta name="theme-color" content="#0B5A2B">
 <link rel="icon" href="/favicon.svg" type="image/svg+xml">
-<style>${STYLE}</style>
+<style>${STYLE}
+${DESIGN}</style>
 </head>
 <body>
+<a class="skip-link" href="#main-content">Skip to content</a>
 <header>
-${MARK}
+<a class="brand-link" href="/store">${MARK}
 <div>
 <h1>Undal HomeKitchen</h1>
 <p>Home-cooked food · Sylhet · cash on delivery</p>
-</div>
+</div></a>
+<a class="header-action" href="/download">Get the Android app ↗</a>
 </header>
 ${options.nav ?? ""}
-<main>
+<main id="main-content">
 ${options.body}
 </main>
 <footer>
@@ -136,10 +141,10 @@ Undal order sound are app-only. <a href="/download">Install the app</a> · <a hr
 </html>`;
 
   return new Response(document, {
-    status: 200,
+    status: options.status ?? 200,
     headers: {
       "content-type": "text/html; charset=utf-8",
-      "cache-control": `public, max-age=${options.cacheSeconds ?? 60}`,
+      "cache-control": options.cacheSeconds === 0 ? "no-store" : `public, max-age=${options.cacheSeconds ?? 60}`,
       ...securityHeaders(),
     },
   });

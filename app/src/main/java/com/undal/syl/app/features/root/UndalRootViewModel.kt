@@ -140,6 +140,7 @@ class UndalRootViewModel @Inject constructor(
             // The fact is also remembered, because a push can arrive in a fresh
             // process before the claim is refreshed.
             progress.setKitchenDevice(isVendor)
+            com.undal.syl.app.core.fcm.PushDeviceRole.remember(applicationContext(), uid, isVendor)
             KitchenWatchService.sync(applicationContext(), isVendor)
         }
     }
@@ -151,6 +152,7 @@ class UndalRootViewModel @Inject constructor(
             // session goes: a signed-out phone must not keep watching orders.
             KitchenWatchService.stop(applicationContext())
             OrderAlertController.stop()
+            com.undal.syl.app.core.fcm.PushDeviceRole.clear(applicationContext())
             session.signOut()
             resolveRole()
         }

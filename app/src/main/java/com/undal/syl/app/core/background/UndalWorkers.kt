@@ -98,6 +98,7 @@ class TokenRefreshWorker @AssistedInject constructor(
         }.getOrDefault(false)
 
         progress.setKitchenDevice(isVendor)
+        com.undal.syl.app.core.fcm.PushDeviceRole.remember(applicationContext, user.uid, isVendor)
 
         return registrar.register(uid = user.uid, isVendor = isVendor, subscribeToPromos = !isVendor)
             .fold(onSuccess = { Result.success() }, onFailure = { Result.retry() })

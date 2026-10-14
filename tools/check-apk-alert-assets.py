@@ -28,6 +28,7 @@ Exit:   0 when the alert can be heard from this artefact, 1 otherwise.
 
 from __future__ import annotations
 
+import hashlib
 import sys
 import zipfile
 from pathlib import Path
@@ -62,26 +63,43 @@ def main(argv: list[str]) -> int:
     with zipfile.ZipFile(apk) as archive:
         entries = {info.filename: info.file_size for info in archive.infolist()}
 
-        tones = sorted(name for name in entries if name.startswith(ORDER_TONE_PREFIX))
-        if not tones:
+        # Release builds shorten resource paths (res/0c.png, res/-5.xml), so a
+        # file name cannot prove a sound is present. The bytes can: the shipped
+        # sound must appear in the APK byte for byte, which is also the proof
+        # that it is the real tone and not a placeholder.
+        def find_bytes(reference: Path) -> str | None:
+            if not reference.is_file():
+                problems.append(f"{reference} is missing from the source tree, so nothing can be verified")
+                return None
+            wanted = hashlib.sha256(reference.read_bytes()).hexdigest()
+            with zipfile.ZipFile(apk) as scan:
+                for name in scan.namelist():
+                    if name.startswith("res/") and hashlib.sha256(scan.read(name)).hexdigest() == wanted:
+                        return name
+            return None
+
+        tone_source = Path("app/src/main/res/raw/undal_order_alert.mp3")
+        tone = find_bytes(tone_source)
+        if tone is None:
             problems.append(
-                f"{ORDER_TONE_PREFIX}.* is not in the APK — the ringing code plays "
-                "R.raw.undal_order_alert and there is nothing there to play"
+                f"the order tone ({tone_source.name}) is not in the APK byte for byte — the ringing code plays "
+                "R.raw.undal_order_alert and there is nothing identical there to play"
             )
         else:
-            tone = tones[0]
             size = entries[tone]
-            print(f"  · order tone: {tone} ({size:,} bytes)")
+            print(f"  · order tone: {tone} = {tone_source.name} ({size:,} bytes)")
             if size < MIN_ORDER_TONE_BYTES:
                 problems.append(
                     f"{tone} is only {size:,} bytes, below the {MIN_ORDER_TONE_BYTES:,}-byte floor — "
                     "this is a placeholder, not the order sound"
                 )
 
-        if PREP_TICK not in entries:
-            problems.append(f"{PREP_TICK} is missing: the prep countdown would be silent too")
+        tick_source = Path("app/src/main/res/raw/undal_prep_tick.wav")
+        tick = find_bytes(tick_source)
+        if tick is None:
+            problems.append(f"{tick_source.name} is missing from the APK: the prep countdown would be silent too")
         else:
-            print(f"  · prep tick: {PREP_TICK} ({entries[PREP_TICK]:,} bytes)")
+            print(f"  · prep tick: {tick} = {tick_source.name} ({entries[tick]:,} bytes)")
 
         # The channel id is a resource, so it lives in the resource table. Its
         # presence is what makes `default_notification_channel_id` resolvable for
@@ -96,6 +114,17 @@ def main(argv: list[str]) -> int:
             print(f"  · customer channel: {CUSTOMER_CHANNEL} is in resources.arsc")
 
     if problems:
+        # Diagnostic only: what the APK does contain, so the failure is actionable.
+        with zipfile.ZipFile(apk) as archive:
+            names = archive.namelist()
+        raw = sorted(n for n in names if n.startswith("res/raw") or "raw" in n.lower())
+        res_dirs = sorted({"/".join(n.split("/")[:2]) for n in names if n.startswith("res/")})
+        print(f"  · APK has {len(names)} entries; res/ directories: {res_dirs[:25] or 'none'}")
+        with zipfile.ZipFile(apk) as archive:
+            arsc = archive.read("resources.arsc") if "resources.arsc" in names else b""
+        print(f"  · resources.arsc names: undal_order_alert={b'undal_order_alert' in arsc} "
+              f"undal_prep_tick={b'undal_prep_tick' in arsc} ({len(arsc):,} bytes)")
+        print("  · sample entries: " + ", ".join(sorted(names)[:12]))
         return fail(problems)
 
     print(f"\nRESULT: {apk.name} carries the order sound, the tick and the channels.\n")

@@ -185,7 +185,6 @@ export async function fsQuery(env: Env, query: FsQuery): Promise<FsRecord[]> {
 
   const structuredQuery: Record<string, unknown> = {
     from: [{ collectionId: query.collectionId }],
-    parent: `projects/${projectId(env)}/databases/(default)/documents${query.parentPath ? `/${query.parentPath}` : ""}`,
   };
   if (filters.length === 1) structuredQuery.where = filters[0];
   if (filters.length > 1) structuredQuery.where = { compositeFilter: { op: "AND", filters } };
@@ -199,7 +198,7 @@ export async function fsQuery(env: Env, query: FsQuery): Promise<FsRecord[]> {
 
   const response = await authorizedFetch(
     env,
-    `https://firestore.googleapis.com/v1/projects/${projectId(env)}/databases/(default)/documents:runQuery`,
+    `https://firestore.googleapis.com/v1/projects/${projectId(env)}/databases/(default)/documents${query.parentPath ? `/${query.parentPath}` : ""}:runQuery`,
     { method: "POST", body: JSON.stringify({ structuredQuery }) },
   );
   if (!response.ok) {
@@ -209,4 +208,26 @@ export async function fsQuery(env: Env, query: FsQuery): Promise<FsRecord[]> {
   return payload
     .filter((entry) => entry.document !== undefined)
     .map((entry) => fromFsDocument(entry.document as FsRestDocument));
+}
+
+/** Idempotent server-authored inbox entry; retries never reset read state. */
+export async function fsCreateIfAbsent(env: Env, path: string, fields: Record<string, unknown>): Promise<void> {
+  const response = await authorizedFetch(env, `${documentsUrl(env, path)}?currentDocument.exists=false`, {
+    method: "PATCH",
+    body: JSON.stringify({ fields: Object.fromEntries(Object.entries(fields).map(([key, value]) => [key, toFsValue(value)])) }),
+  });
+  if (!response.ok && response.status !== 409) {
+    throw new HttpError(502, "firestore-create-failed", `${path} (${response.status})`);
+  }
+}
+
+/** Atomic bounded deletion; child collections must be explicitly supplied. */
+export async function fsDeleteBatch(env: Env, paths: string[]): Promise<void> {
+  if (!paths.length) return;
+  if (paths.length > 400) throw new HttpError(400, "delete-batch-too-large");
+  const prefix = `projects/${projectId(env)}/databases/(default)/documents/`;
+  const response = await authorizedFetch(env, `${documentsUrl(env, "").replace(/\/$/, "")}:commit`, {
+    method: "POST", body: JSON.stringify({ writes: paths.map(path => ({ delete: prefix + path })) }),
+  });
+  if (!response.ok) throw new HttpError(502, "firestore-delete-batch-failed");
 }
