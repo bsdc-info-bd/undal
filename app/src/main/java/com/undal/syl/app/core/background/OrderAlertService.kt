@@ -64,7 +64,14 @@ import org.json.JSONObject
  *   · **a resource that will not open** — the tone is then read again from a copy
  *     in the app's own cache, and if even that fails the phone's own alarm tone
  *     rings in its place. A fallback ring is worse than the Undal sound and far
- *     better than a missed order.
+ *     better than a missed order;
+ *   · **a player that stops on its own** — an audio server that restarts, a ROM
+ *     that reclaims the session, a decoder that gives up on the file. Nothing
+ *     tells the service; the notification stays and the room goes quiet. So the
+ *     ring is *watched*: every ten seconds while an order waits, [keepRinging]
+ *     asks whether anything is actually making noise and rebuilds it if not.
+ *     A phone that is visibly alerting and audibly silent is the one state this
+ *     service must never be in.
  *
  * Two orders are not one order
  * ----------------------------
@@ -92,6 +99,18 @@ class OrderAlertService : Service() {
     private var ringtone: Ringtone? = null
     private var vibrator: Vibrator? = null
     private var liveReference: com.google.firebase.database.DatabaseReference? = null
+
+    /**
+     * How many times the bundled tone has failed since this ring started, and
+     * when the fallback tone was last tried.
+     *
+     * Together they make a bad decoder quiet rather than busy: the bundled sound
+     * gets [MAX_BUNDLED_ATTEMPTS] goes, then the phone's own alarm tone takes
+     * over — and *that* is retried no faster than once per watchdog tick. A
+     * rebuild loop on the main thread would turn "no order sound" into "no app".
+     */
+    private var soundFailures = 0
+    private var lastFallbackAtMillis = 0L
     private var currentOrderId: String? = null
     private var currentShortId: String = ""
 
@@ -122,6 +141,64 @@ class OrderAlertService : Service() {
         runCatching { tone.play() }
         handler.postDelayed(this, RINGER_REPLAY_MILLIS)
         }
+    }
+
+    /**
+     * The ring's own watchdog.
+     *
+     * `MediaPlayer` can stop without telling anybody: an audio server restart, a
+     * decoder that errors out, a ROM that reclaims the session, a file whose
+     * descriptor is withdrawn. The order is still unanswered, the notification is
+     * still on the lock screen — and the kitchen is silent, which is worse than
+     * either failure on its own, because it *looks* handled.
+     *
+     * Ten seconds, because that is the point where a silent phone is still a
+     * phone somebody will pick up. The check costs nothing: it reads two fields.
+     */
+    private val soundWatchdog: Runnable = object : Runnable {
+        override fun run() {
+            if (waiting.isEmpty()) return
+            keepRinging()
+            handler.postDelayed(this, SOUND_CHECK_MILLIS)
+        }
+    }
+
+    /**
+     * Makes sure *something* is ringing, without restarting a healthy tone.
+     *
+     * Called when the head of the queue changes and every ten seconds by
+     * [soundWatchdog]. A player that is playing, or a fallback ringtone that the
+     * replay loop owns, is left completely alone: nothing here is allowed to
+     * stutter the sound or it would be audible.
+     */
+    private fun keepRinging() {
+        if (waiting.isEmpty()) return
+        val playing = player?.isPlaying == true
+        if (ringtone == null && !playing) {
+            // Whatever was making the noise is gone. Release what is left of it
+            // first — a dead player still holds an audio session and the partial
+            // wake lock it took — then build the ring again from scratch.
+            player?.let { dead -> runCatching { dead.release() } }
+            player = null
+            if (soundFailures < MAX_BUNDLED_ATTEMPTS) {
+                startSound()
+            } else {
+                // The bundled tone is not playing on this phone tonight. Fall
+                // back to the device's own alarm, and try at most once a tick.
+                val now = System.currentTimeMillis()
+                if (now - lastFallbackAtMillis >= SOUND_CHECK_MILLIS) {
+                    lastFallbackAtMillis = now
+                    playSystemRinger()
+                }
+            }
+        }
+        if ((player?.isPlaying == true || ringtone != null) && vibrator == null) startVibration()
+    }
+
+    /** Exactly one watchdog chain, however many times the ring is rebuilt. */
+    private fun watchSound() {
+        handler.removeCallbacks(soundWatchdog)
+        handler.postDelayed(soundWatchdog, SOUND_CHECK_MILLIS)
     }
 
     private data class Waiting(
@@ -246,6 +323,11 @@ class OrderAlertService : Service() {
             return
         }
 
+        // A ring that starts now is a new attempt: yesterday's dead decoder must
+        // not push tonight's order straight to the fallback tone.
+        soundFailures = 0
+        lastFallbackAtMillis = 0L
+
         currentOrderId = foregroundOrder.orderId
         currentShortId = foregroundOrder.shortId
         OrderAlertController.start(
@@ -261,6 +343,7 @@ class OrderAlertService : Service() {
 
         startSound()
         startVibration()
+        watchSound()
         watchOrderLive(foregroundOrder.orderId)
 
         if (isTest) {
@@ -292,8 +375,8 @@ class OrderAlertService : Service() {
         )
         publishNotification(next)
         watchOrderLive(next.orderId)
-        if (player?.isPlaying != true && ringtone == null) startSound()
-        if ((player?.isPlaying == true || ringtone != null) && vibrator == null) startVibration()
+        keepRinging()
+        watchSound()
     }
 
     /** "2 orders waiting" when the queue is longer than one. */
@@ -322,6 +405,8 @@ class OrderAlertService : Service() {
         player = createOrderPlayer()
         if (player == null) {
             Log.e(TAG, "the bundled order sound would not start; using the phone's own alarm tone")
+            soundFailures += 1
+            lastFallbackAtMillis = System.currentTimeMillis()
             playSystemRinger()
         }
     }
@@ -345,6 +430,7 @@ class OrderAlertService : Service() {
         return runCatching {
             MediaPlayer().apply {
                 opened = this
+                val self = this
                 setAudioAttributes(attributes)
                 // The player holds a partial wake lock for us, which is exactly
                 // what is needed for the sound to survive a locked screen.
@@ -353,6 +439,21 @@ class OrderAlertService : Service() {
                 isLooping = true
                 setOnErrorListener { _, what, extra ->
                     Log.e(TAG, "order sound failed (what=$what extra=$extra)")
+                    // A player that errored will not play again, so holding on to
+                    // it would silence the ring for good — and leaking it would
+                    // hold an audio session and a wake lock until the process
+                    // died. Swap it out on the main thread and let the ring
+                    // rebuild itself immediately rather than at the next tick.
+                    val dead = self
+                    handler.post {
+                        if (player === dead) {
+                            runCatching { dead.release() }
+                            player = null
+                        }
+                        soundFailures += 1
+                        keepRinging()
+                        watchSound()
+                    }
                     true
                 }
                 prepare()
@@ -561,9 +662,12 @@ class OrderAlertService : Service() {
         runCatching { player?.release() }
         player = null
 
+        handler.removeCallbacks(soundWatchdog)
         handler.removeCallbacks(replayRinger)
         runCatching { ringtone?.stop() }
         ringtone = null
+        soundFailures = 0
+        lastFallbackAtMillis = 0L
 
         // Whatever the ring had to change is put back now that nothing is ringing.
         AlertVolume.restore(this)
@@ -585,6 +689,7 @@ class OrderAlertService : Service() {
         liveListener?.let { liveReference?.removeEventListener(it) }
         runCatching { player?.release() }
         player = null
+        handler.removeCallbacks(soundWatchdog)
         handler.removeCallbacks(replayRinger)
         runCatching { ringtone?.stop() }
         ringtone = null
@@ -612,6 +717,21 @@ class OrderAlertService : Service() {
         /** Which route started the alert; written to the log so a support call is short. */
         const val SOURCE_PUSH = "push"
         const val SOURCE_WATCH = "watcher"
+
+        /**
+         * How often the ring checks that it is still audible. Short enough that a
+         * phone which went quiet is ringing again before anybody notices the
+         * silence; long enough that the check itself is nothing.
+         */
+        private const val SOUND_CHECK_MILLIS = 10_000L
+
+        /**
+         * How many times the bundled tone is rebuilt before the phone's own alarm
+         * tone is used instead. Two, because the first failure is usually
+         * transient (an audio server restarting) and the second is usually the
+         * device telling the truth.
+         */
+        private const val MAX_BUNDLED_ATTEMPTS = 2
 
         /** How long a "ring my phone" test rings before it stops itself. */
         private const val TEST_SECONDS = 45

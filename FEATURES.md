@@ -129,7 +129,7 @@ Legend: `[x]` shipped and wired · `[ ]` still to ship.
 - [x] V-021 · Stream of today's status events
 - [x] V-022 · Pull to refresh over realtime everywhere
 - [x] V-023 · Realtime new-order stream under one second
-- [x] V-024 · Full-screen ringing alert with the looping Undal order sound
+- [x] V-024 · Full-screen ringing alert with the looping Undal order sound, kept audible by a ten-second self-check that rebuilds the player (or falls back to the phone's own alarm tone) if the tone ever stops on its own
 - [x] V-025 · Order card with items, totals, fee, distance and address title, description, note
 - [x] V-026 · Customer card with name, profile photo, phone number, Call button and copy-address
 - [x] V-027 · Google embed map and pin on every order, with an osmdroid toggle
