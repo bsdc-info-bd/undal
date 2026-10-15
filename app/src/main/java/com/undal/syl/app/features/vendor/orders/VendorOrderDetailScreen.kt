@@ -63,8 +63,7 @@ import com.undal.syl.app.core.design.UndalScaffold
 import com.undal.syl.app.core.design.UndalSecondaryButton
 import com.undal.syl.app.core.design.UndalTextField
 import com.undal.syl.app.core.design.UndalTextButton
-import com.undal.syl.app.core.maps.UndalGoogleEmbedMap
-import com.undal.syl.app.core.maps.UndalOsmPicker
+import com.undal.syl.app.core.maps.UndalLocationMap
 import com.undal.syl.app.core.theme.UndalDimens
 import com.undal.syl.app.core.theme.undalSemantics
 import com.undal.syl.app.core.util.Money
@@ -395,11 +394,8 @@ fun VendorOrderDetailScreen(
             item {
                 VendorSection(
                     title = "Where it goes",
-                    subtitle = if (state.overlayMap) {
-                        "Street map — drag to look around. The order address does not change."
-                    } else {
-                        "Tap the map for the full view; switch to the street map if the embed is blocked."
-                    }
+                    subtitle = "The kitchen pin and the customer's pin on one street map, framed so " +
+                        "both are on screen. Drag or pinch to look around — the order address does not change."
                 ) {
                     Column {
                         Text(
@@ -419,27 +415,12 @@ fun VendorOrderDetailScreen(
                             )
                         }
                         Spacer(Modifier.height(UndalDimens.xs))
-                        if (state.overlayMap) {
-                            UndalOsmPicker(
-                                latitude = order.customerLat,
-                                longitude = order.customerLng,
-                                onPicked = { _, _ -> },
-                                recentreLabel = null,
-                                onRecentre = null
-                            )
-                        } else {
-                            UndalGoogleEmbedMap(
-                                latitude = order.customerLat,
-                                longitude = order.customerLng,
-                                title = order.addressTitle.ifBlank { "Delivery point" },
-                                onOpenOsmFallback = viewModel::toggleMapOverlay
-                            )
-                        }
-                        Spacer(Modifier.height(UndalDimens.xs))
-                        UndalTextButton(
-                            text = if (state.overlayMap) "Use the keyless embed" else "Use the street map",
-                            onClick = viewModel::toggleMapOverlay,
-                            icon = Icons.Filled.Place
+                        UndalLocationMap(
+                            latitude = order.customerLat,
+                            longitude = order.customerLng,
+                            title = order.addressTitle.ifBlank { "Delivery point" },
+                            caption = order.addressTitle.ifBlank { "Delivery point" },
+                            height = UndalDimens.mapHeightTall
                         )
                     }
                 }

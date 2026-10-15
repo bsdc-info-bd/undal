@@ -64,7 +64,7 @@ import com.undal.syl.app.core.design.UndalSecondaryButton
 import com.undal.syl.app.core.design.UndalStatusPill
 import com.undal.syl.app.core.design.UndalTextButton
 import com.undal.syl.app.core.design.UndalTextField
-import com.undal.syl.app.core.maps.UndalGoogleEmbedMap
+import com.undal.syl.app.core.maps.UndalLocationMap
 import com.undal.syl.app.core.theme.UndalDimens
 import com.undal.syl.app.core.theme.UndalMotion
 import com.undal.syl.app.core.util.Money
@@ -255,7 +255,8 @@ fun CartScreen(
                         UndalSecondaryButton(
                             text = if (state.couponChecking) "Checking…" else "Apply",
                             onClick = { viewModel.applyCoupon(couponInput) },
-                            enabled = !state.couponChecking && couponInput.isNotBlank()
+                            enabled = !state.couponChecking && couponInput.isNotBlank(),
+                            fillWidth = false
                         )
                     }
                 } else {
@@ -371,10 +372,11 @@ fun CartScreen(
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                     Spacer(Modifier.height(UndalDimens.sm))
-                    UndalGoogleEmbedMap(
+                    UndalLocationMap(
                         latitude = address.lat,
                         longitude = address.lng,
                         title = address.title.ifBlank { "Delivery point" },
+                        caption = address.title.ifBlank { "Delivery point" },
                         height = UndalDimens.mapHeight
                     )
                 }

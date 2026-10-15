@@ -2,9 +2,9 @@ package com.undal.syl.app.core.session
 
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.auth.FirebaseUser
-import kotlinx.coroutines.channels.awaitClose
-import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.callbackFlow
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.tasks.await
@@ -38,6 +38,20 @@ sealed interface SessionState {
  * write. The claim is refreshed on every token refresh, which Firebase does
  * every hour, so a revoked kitchen account loses access within the hour even if
  * the device is never restarted.
+ *
+ * **The email-verified flag is the other half of this file.** `FirebaseUser`
+ * caches the account record it last downloaded, and clicking the verification
+ * link in a mail app changes the record on *Google's* side, not in this process.
+ * Nothing in the Firebase client watches for that: no listener fires, because
+ * from the SDK's point of view nothing happened on this device. That is why a
+ * customer who had just confirmed their address still read "your email is not
+ * verified" — the app was faithfully showing a cached `false` from before.
+ *
+ * The answer is [refreshUser]: it reloads the record from the server, re-reads
+ * the ID token's claims, and **republishes** the session so every screen holding
+ * this state stops showing the old answer. [state] is a real [StateFlow] rather
+ * than a callback flow for exactly that reason — the readers of this state are
+ * ordinary screens, and a reload has to be able to reach them.
  */
 @Singleton
 class AuthSession @Inject constructor(
@@ -50,6 +64,11 @@ class AuthSession @Inject constructor(
     val uid: String? get() = auth.currentUser?.uid
 
     fun isSignedIn(): Boolean = auth.currentUser != null
+
+    private val _state = MutableStateFlow<SessionState>(SessionState.Loading)
+
+    /** Continuous auth state for the navigation graph and for every banner. */
+    val state: StateFlow<SessionState> = _state.asStateFlow()
 
     /**
      * The claims of the ID token Firebase last handed this phone, empty until it
@@ -75,33 +94,20 @@ class AuthSession @Inject constructor(
      */
     val vendorClaim: Boolean get() = cachedClaims[VENDOR_CLAIM_KEY] == true
 
-    /** Continuous auth state for the navigation graph. */
-    val state: Flow<SessionState> = callbackFlow {
-        fun publish() {
-            trySend(auth.currentUser.toSessionState())
-        }
-
-        fun readClaims(user: FirebaseUser) {
-            runCatching {
-                user.getIdToken(false).addOnSuccessListener { token ->
-                    cachedClaims = token.claims ?: emptyMap()
-                    // Published again with the claim now in hand: the first
-                    // emission of a cold start cannot know it, and the second one
-                    // is what the router acts on.
-                    publish()
-                }
-            }.onFailure { error ->
-                android.util.Log.w(TAG, "the ID token's claims could not be read", error)
-            }
-        }
-
+    init {
         publish()
-        auth.currentUser?.let { readClaims(it) }
+        auth.currentUser?.let { user ->
+            readClaims(user)
+            reconcileVerifiedOnce(user)
+        }
 
         val authListener = FirebaseAuth.AuthStateListener { updated ->
             cachedClaims = emptyMap()
             publish()
-            updated.currentUser?.let { readClaims(it) }
+            updated.currentUser?.let { user ->
+                readClaims(user)
+                reconcileVerifiedOnce(user)
+            }
         }
         // `IdTokenListener.onIdTokenChanged` is handed the *auth*, not the user
         // — the same shape as `AuthStateListener`, and the reason this fires on
@@ -112,13 +118,84 @@ class AuthSession @Inject constructor(
         }
         auth.addAuthStateListener(authListener)
         auth.addIdTokenListener(tokenListener)
-        awaitClose {
-            auth.removeAuthStateListener(authListener)
-            auth.removeIdTokenListener(tokenListener)
-        }
-    }.distinctUntilChanged()
+    }
 
-    val isVendor: Flow<Boolean> = state.map { it is SessionState.SignedIn && it.user.isVendorClaim }.distinctUntilChanged()
+    private fun publish() {
+        _state.value = auth.currentUser.toSessionState()
+    }
+
+    private fun readClaims(user: FirebaseUser) {
+        runCatching {
+            user.getIdToken(false).addOnSuccessListener { token ->
+                cachedClaims = token.claims ?: emptyMap()
+                // Published again with the claim now in hand: the first
+                // emission of a cold start cannot know it, and the second one
+                // is what the router acts on.
+                publish()
+            }
+        }.onFailure { error ->
+            android.util.Log.w(TAG, "the ID token's claims could not be read", error)
+        }
+    }
+
+    /**
+     * One server reload per signed-in account per process, and only when the
+     * cached answer says "not confirmed".
+     *
+     * This is the case the customer actually hits: they confirm their address in
+     * a mail app, close the app out of habit, and open it again. Nothing on this
+     * device knows what they did, so the cold start's first honest answer is the
+     * one on the server — and until it arrives, every screen is showing the
+     * cached `false` that the customer is complaining about.
+     *
+     * It costs one small request, once; a customer who has not confirmed gets the
+     * same answer and the same banner, but it is now an answer rather than an
+     * assumption. A confirmed account never reaches this code at all.
+     */
+    @Volatile
+    private var reconciledForUid: String? = null
+
+    private fun reconcileVerifiedOnce(user: FirebaseUser) {
+        if (user.isEmailVerified) return
+        if (reconciledForUid == user.uid) return
+        reconciledForUid = user.uid
+        runCatching {
+            user.reload().addOnSuccessListener { publish() }
+        }.onFailure { error ->
+            android.util.Log.w(TAG, "the account record could not be reloaded", error)
+        }
+    }
+
+    val isVendor: kotlinx.coroutines.flow.Flow<Boolean> =
+        state.map { it is SessionState.SignedIn && it.user.isVendorClaim }.distinctUntilChanged()
+
+    /**
+     * Re-reads this account from Firebase and republishes the session.
+     *
+     * This is the only way the app can learn that something happened *outside*
+     * it — the commonest case being an email address that was confirmed by
+     * tapping a link in a mail app. Both halves are refreshed, because they
+     * answer different questions:
+     *
+     *  · `reload()` fetches the account record, which is where `emailVerified`
+     *    lives, and
+     *  · a forced ID-token refresh re-reads the claims, which is where `vendor`
+     *    lives and where `email_verified` will be when the rules ever look.
+     *
+     * Returns true when the reload reached Firebase. A phone with no connection
+     * keeps the answer it had — which is honest, and is why the caller says when
+     * the last check happened rather than pretending a stale answer is fresh.
+     */
+    suspend fun refreshUser(): Boolean {
+        val user = auth.currentUser ?: return false
+        val reloaded = runCatching { user.reload().await() }.isSuccess
+        runCatching { user.getIdToken(true).await() }
+            .onSuccess { token ->
+                cachedClaims = token.claims ?: emptyMap()
+            }
+        publish()
+        return reloaded
+    }
 
     /**
      * Forces a fresh ID token so a claim change (vendor granted or revoked at

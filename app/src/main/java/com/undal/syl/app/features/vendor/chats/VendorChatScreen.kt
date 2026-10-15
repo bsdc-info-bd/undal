@@ -194,7 +194,8 @@ fun VendorChatScreen(
                     onClick = viewModel::send,
                     enabled = state.draft.isNotBlank() && !state.sending,
                     loading = state.sending,
-                    icon = Icons.Filled.Email
+                    icon = Icons.Filled.Email,
+                    fillWidth = false
                 )
             }
 

@@ -23,6 +23,7 @@ import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Email
 import androidx.compose.material.icons.filled.ExitToApp
 import androidx.compose.material.icons.filled.LocationOn
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.Warning
@@ -31,6 +32,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -42,6 +44,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.hilt.navigation.compose.hiltViewModel
 import coil3.compose.AsyncImage
 import com.undal.syl.app.core.design.UndalAlertBanner
@@ -53,9 +56,13 @@ import com.undal.syl.app.core.design.UndalPasswordField
 import com.undal.syl.app.core.design.UndalPrimaryButton
 import com.undal.syl.app.core.design.UndalScaffold
 import com.undal.syl.app.core.design.UndalSecondaryButton
+import com.undal.syl.app.core.design.UndalTextButton
 import com.undal.syl.app.core.design.UndalTextField
-import com.undal.syl.app.core.maps.UndalGoogleEmbedMap
+import com.undal.syl.app.core.maps.UndalLocationMap
 import com.undal.syl.app.core.theme.UndalDimens
+import com.undal.syl.app.core.util.TimeDhaka
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
 import com.undal.syl.app.core.theme.undalSemantics
 
 /**
@@ -84,6 +91,25 @@ fun ProfileScreen(
     var showDeleteConfirm by remember { mutableStateOf(false) }
 
     LaunchedEffect(Unit) { viewModel.refreshAddress() }
+
+    // Coming back from the mail app is the moment the answer has usually changed,
+    // so the flag is re-read on every resume — quietly, because a notice on every
+    // return would be its own kind of broken. The bounded watch covers the other
+    // half of the same problem: a customer who taps the link *while* this screen
+    // is open, in a split-screen or a second device, and waits for it to notice.
+    val lifecycleOwner = LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner, state.emailVerified) {
+        if (state.emailVerified) {
+            onDispose { }
+        } else {
+            val observer = LifecycleEventObserver { _, event ->
+                if (event == Lifecycle.Event.ON_RESUME) viewModel.checkEmailVerification(quiet = true)
+            }
+            lifecycleOwner.lifecycle.addObserver(observer)
+            viewModel.watchForVerification()
+            onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+        }
+    }
 
     val photoPicker = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.PickVisualMedia()
@@ -177,21 +203,56 @@ fun ProfileScreen(
                         )
                     }
                 }
-                if (!state.emailVerified) {
+                if (state.emailVerified) {
+                    Spacer(Modifier.height(UndalDimens.xs))
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(
+                            imageVector = Icons.Filled.Check,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.size(UndalDimens.iconSm)
+                        )
+                        Spacer(Modifier.width(UndalDimens.xs))
+                        Text(
+                            text = "Email confirmed",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                    }
+                } else {
                     Spacer(Modifier.height(UndalDimens.sm))
                     UndalAlertBanner(
-                        text = "Your email is not verified yet. Confirming it keeps password recovery reliable.",
+                        text = "Your email is not confirmed yet. Confirming it keeps password " +
+                            "recovery reliable — open the link we mailed you, then check again here.",
                         icon = Icons.Filled.Email,
                         containerColour = MaterialTheme.colorScheme.secondaryContainer,
                         contentColour = MaterialTheme.colorScheme.onSecondaryContainer
                     )
                     Spacer(Modifier.height(UndalDimens.xs))
                     UndalSecondaryButton(
-                        text = if (state.resendingVerification) "Sending…" else "Resend the link",
-                        onClick = viewModel::resendVerification,
-                        enabled = !state.resendingVerification,
-                        icon = Icons.Filled.Email
+                        text = if (state.checkingVerification) "Checking…" else "Check again",
+                        onClick = { viewModel.checkEmailVerification(quiet = false) },
+                        enabled = !state.checkingVerification,
+                        icon = Icons.Filled.Refresh
                     )
+                    Spacer(Modifier.height(UndalDimens.xs))
+                    UndalTextButton(
+                        text = if (state.resendingVerification) "Sending…" else "Send me a new link",
+                        onClick = viewModel::resendVerification,
+                        enabled = !state.resendingVerification
+                    )
+                    if (state.verificationCheckedAtMillis > 0L) {
+                        Spacer(Modifier.height(UndalDimens.xs))
+                        Text(
+                            text = if (state.verificationReachable) {
+                                "Last checked at " + TimeDhaka.wallClock(state.verificationCheckedAtMillis)
+                            } else {
+                                "We could not reach Firebase for the last check."
+                            },
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
                 }
             }
 
@@ -245,7 +306,8 @@ fun ProfileScreen(
                     UndalSecondaryButton(
                         text = if (state.hasAddress) "Re-pin" else "Pin it",
                         onClick = onEditAddress,
-                        icon = Icons.Filled.Edit
+                        icon = Icons.Filled.Edit,
+                        fillWidth = false
                     )
                 }
                 Spacer(Modifier.height(UndalDimens.xs))
@@ -260,7 +322,7 @@ fun ProfileScreen(
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                     Spacer(Modifier.height(UndalDimens.sm))
-                    UndalGoogleEmbedMap(
+                    UndalLocationMap(
                         latitude = state.address?.lat ?: 0.0,
                         longitude = state.address?.lng ?: 0.0,
                         title = state.address?.title.orEmpty(),
@@ -339,8 +401,16 @@ fun ProfileScreen(
                 Text("Your activity", style = MaterialTheme.typography.titleMedium)
                 Spacer(Modifier.height(UndalDimens.sm))
                 Row(horizontalArrangement = Arrangement.spacedBy(UndalDimens.sm)) {
-                    UndalSecondaryButton(text = "Your orders", onClick = onOpenOrders)
-                    UndalSecondaryButton(text = "Notifications", onClick = onOpenInbox)
+                    UndalSecondaryButton(
+                        text = "Your orders",
+                        onClick = onOpenOrders,
+                        modifier = Modifier.weight(1f)
+                    )
+                    UndalSecondaryButton(
+                        text = "Notifications",
+                        onClick = onOpenInbox,
+                        modifier = Modifier.weight(1f)
+                    )
                 }
             }
 
@@ -361,13 +431,15 @@ fun ProfileScreen(
                     UndalSecondaryButton(
                         text = "Sign out",
                         onClick = viewModel::signOut,
-                        icon = Icons.Filled.ExitToApp
+                        icon = Icons.Filled.ExitToApp,
+                        modifier = Modifier.weight(1f)
                     )
                     UndalDangerButton(
                         text = "Delete my account",
                         onClick = { showDeleteConfirm = true },
                         enabled = !state.deleting,
-                        loading = state.deleting
+                        loading = state.deleting,
+                        modifier = Modifier.weight(1f)
                     )
                 }
             }

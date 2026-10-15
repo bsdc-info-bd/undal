@@ -65,7 +65,6 @@ class VendorOrderDetailViewModel @Inject constructor(
         val infoMessage: String? = null,
         val celebrate: Boolean = false,
         val chatOpen: Boolean = false,
-        val overlayMap: Boolean = false,
         val shareText: String = "",
         val overdueNoticeSent: Boolean = false,
         val fromCache: Boolean = false,
@@ -334,10 +333,6 @@ class VendorOrderDetailViewModel @Inject constructor(
     }
 
     // -------------------------------------------------------------------- tools
-
-    fun toggleMapOverlay() {
-        _state.value = _state.value.copy(overlayMap = !_state.value.overlayMap)
-    }
 
     fun readyShareText() {
         val order = _state.value.order ?: return

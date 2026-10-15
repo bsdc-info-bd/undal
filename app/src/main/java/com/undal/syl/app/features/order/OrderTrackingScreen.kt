@@ -59,7 +59,7 @@ import com.undal.syl.app.core.design.UndalScaffold
 import com.undal.syl.app.core.design.UndalSecondaryButton
 import com.undal.syl.app.core.design.UndalStatusPill
 import com.undal.syl.app.core.design.UndalTextField
-import com.undal.syl.app.core.maps.UndalGoogleEmbedMap
+import com.undal.syl.app.core.maps.UndalLocationMap
 import com.undal.syl.app.core.theme.UndalDimens
 import com.undal.syl.app.core.theme.undalSemantics
 import com.undal.syl.app.core.util.Distance
@@ -266,13 +266,15 @@ fun OrderTrackingScreen(
                     UndalSecondaryButton(
                         text = if (state.unread > 0) "Open chat · ${state.unread} new" else "Open chat",
                         onClick = viewModel::openChat,
-                        icon = Icons.Filled.Send
+                        icon = Icons.Filled.Send,
+                        modifier = Modifier.weight(1f)
                     )
                     if (state.canCallKitchen) {
                         UndalSecondaryButton(
                             text = "Call",
                             onClick = { UndalPhone.dial(context, state.kitchenPhone) },
-                            icon = Icons.Filled.Call
+                            icon = Icons.Filled.Call,
+                            modifier = Modifier.weight(1f)
                         )
                     }
                 }
@@ -466,10 +468,16 @@ private fun CancelledBlock(
                 UndalPrimaryButton(
                     text = "Call the kitchen",
                     onClick = { UndalPhone.dial(context, state.kitchenPhone) },
-                    icon = Icons.Filled.Call
+                    icon = Icons.Filled.Call,
+                    modifier = Modifier.weight(1f)
                 )
             }
-            UndalSecondaryButton(text = "Chat instead", onClick = viewModel::openChat, icon = Icons.Filled.Send)
+            UndalSecondaryButton(
+                text = "Chat instead",
+                onClick = viewModel::openChat,
+                icon = Icons.Filled.Send,
+                modifier = Modifier.weight(1f)
+            )
         }
     }
 }
@@ -560,10 +568,11 @@ private fun DeliveryCard(detail: OrderRepo.OrderDetail) {
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
         Spacer(Modifier.height(UndalDimens.sm))
-        UndalGoogleEmbedMap(
+        UndalLocationMap(
             latitude = detail.addressLat,
             longitude = detail.addressLng,
             title = detail.addressTitle.ifBlank { "Delivery point" },
+            caption = detail.addressTitle.ifBlank { "Delivery point" },
             height = UndalDimens.mapHeight
         )
         Spacer(Modifier.height(UndalDimens.sm))
@@ -671,7 +680,8 @@ private fun ChatMode(
                     onClick = viewModel::send,
                     enabled = state.sendEnabled,
                     loading = state.sending,
-                    icon = Icons.Filled.Send
+                    icon = Icons.Filled.Send,
+                    fillWidth = false
                 )
             }
         }

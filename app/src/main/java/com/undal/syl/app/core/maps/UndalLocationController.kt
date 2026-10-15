@@ -21,7 +21,7 @@ import javax.inject.Singleton
  *   2. request a high-accuracy fix and tell the user what the accuracy is,
  *   3. drop that point into the osmdroid picker for fine adjustment,
  *   4. reverse geocode it for a readable label, falling back to coordinates,
- *   5. confirm the final point on the Google embed before saving.
+ *   5. confirm the final point on the same street map every other screen uses.
  *
  * Accuracy is returned rather than hidden: "accurate to 12 m" tells the customer
  * whether to drag the pin, which a silent map does not.

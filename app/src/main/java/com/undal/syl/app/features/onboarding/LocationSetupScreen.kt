@@ -17,7 +17,6 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.Info
-import androidx.compose.material.icons.filled.LocationOn
 import androidx.compose.material.icons.filled.Phone
 import androidx.compose.material.icons.filled.Place
 import androidx.compose.material.icons.filled.Done
@@ -41,10 +40,9 @@ import com.undal.syl.app.core.design.UndalConfirmDialog
 import com.undal.syl.app.core.design.UndalPrimaryButton
 import com.undal.syl.app.core.design.UndalRationaleDialog
 import com.undal.syl.app.core.design.UndalScaffold
-import com.undal.syl.app.core.design.UndalSecondaryButton
 import com.undal.syl.app.core.design.UndalTextButton
 import com.undal.syl.app.core.design.UndalTextField
-import com.undal.syl.app.core.maps.UndalGoogleEmbedMap
+import com.undal.syl.app.core.maps.UndalMapToolRow
 import com.undal.syl.app.core.maps.UndalOsmPicker
 import com.undal.syl.app.core.maps.UndalPickedPointLabel
 import com.undal.syl.app.core.theme.UndalDimens
@@ -56,12 +54,10 @@ import com.undal.syl.app.core.theme.UndalDimens
  * what should this pin look like, can the rider find the door, and only then the
  * save button.
  *
- * The osmdroid street map opens the screen and the keyless Google embed is one
- * tap away, rather than the other way round. This is the last mandatory step of
- * registration, so the engine that draws it has to be the one that always draws
- * it: the street map is tiles in this process, while the embed is a page Google
- * serves to a WebView and can refuse — a grey box here is a customer who cannot
- * finish signing up.
+ * One map, one engine, and it always draws: OpenStreetMap tiles rendered by
+ * osmdroid in this process. This is the last mandatory step of registration, so
+ * it can never be the step that depends on a third party answering — and it is
+ * the only map a finger can actually drag, which is what pinning a door means.
  */
 @Composable
 fun LocationSetupScreen(
@@ -87,8 +83,13 @@ fun LocationSetupScreen(
 
     // Ask for the fix once, as soon as the screen opens, using the rationale
     // first — a silent permission prompt is the fastest way to a refusal.
+    //
+    // The decision is made from the *permission*, not from the state a moment ago
+    // had: this used to read the collected state before the ViewModel had restored
+    // a saved address, so a returning customer re-pinning their address was asked
+    // why the app needs a location it already had.
     LaunchedEffect(Unit) {
-        if (state.title.isEmpty() && state.accuracyMeters == null) {
+        if (!viewModel.hasLocationPermission(context)) {
             showRationale = true
         }
     }
@@ -124,43 +125,26 @@ fun LocationSetupScreen(
                 )
                 Spacer(Modifier.height(UndalDimens.md))
 
-                // The draggable street map first: it is the engine that works in a
-                // WebView-free process, and it is the only one of the two a finger
-                // can move. The Google view is a labelled choice below it.
-                if (state.showGoogleEmbed) {
-                    UndalGoogleEmbedMap(
-                        latitude = state.lat,
-                        longitude = state.lng,
-                        title = "Your pin",
-                        onOpenOsmFallback = viewModel::toggleGoogleEmbed
-                    )
-                    Spacer(Modifier.height(UndalDimens.sm))
-                    UndalTextButton(
-                        text = "Back to the map I can drag",
-                        onClick = viewModel::toggleGoogleEmbed,
-                        modifier = Modifier.fillMaxWidth()
-                    )
-                } else {
-                    UndalOsmPicker(
-                        latitude = state.lat,
-                        longitude = state.lng,
-                        onPicked = viewModel::onPinMoved,
-                        recentreLabel = "Use my current location",
-                        onRecentre = {
-                            if (viewModel.state.value.permissionNeeded) {
-                                showRationale = true
-                            } else {
-                                permissionLauncher.launch(Manifest.permission.ACCESS_FINE_LOCATION)
-                            }
+                UndalOsmPicker(
+                    latitude = state.lat,
+                    longitude = state.lng,
+                    onPicked = viewModel::onPinMoved,
+                    accuracyMeters = state.accuracyMeters,
+                    recentreLabel = "Use my current location",
+                    onRecentre = {
+                        if (viewModel.state.value.permissionNeeded) {
+                            showRationale = true
+                        } else {
+                            permissionLauncher.launch(Manifest.permission.ACCESS_FINE_LOCATION)
                         }
-                    )
-                    Spacer(Modifier.height(UndalDimens.sm))
-                    UndalSecondaryButton(
-                        text = "Show the Google map view",
-                        onClick = viewModel::toggleGoogleEmbed,
-                        icon = Icons.Filled.LocationOn
-                    )
-                }
+                    }
+                )
+                Spacer(Modifier.height(UndalDimens.xs))
+                UndalMapToolRow(
+                    latitude = state.lat,
+                    longitude = state.lng,
+                    title = state.title.ifBlank { "My delivery point" }
+                )
 
                 Spacer(Modifier.height(UndalDimens.sm))
 

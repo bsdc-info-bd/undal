@@ -388,12 +388,14 @@ fun VendorScheduleScreen(
                                         specialNote = ""
                                         specialClosed = true
                                     },
-                                    icon = Icons.Filled.Check
+                                    icon = Icons.Filled.Check,
+                                    modifier = Modifier.weight(1f)
                                 )
                                 UndalSecondaryButton(
                                     text = "Cancel",
                                     onClick = { addingSpecial = false },
-                                    icon = Icons.Filled.Close
+                                    icon = Icons.Filled.Close,
+                                    modifier = Modifier.weight(1f)
                                 )
                             }
                         } else {
