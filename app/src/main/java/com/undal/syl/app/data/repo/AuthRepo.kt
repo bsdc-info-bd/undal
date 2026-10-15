@@ -402,10 +402,16 @@ class AuthRepo @Inject constructor(
      * the storefront. Without a continue URL Firebase shows its own generic page,
      * which is where a customer confirms their address and then has nowhere to go.
      */
-    private fun verificationSettings(): ActionCodeSettings = ActionCodeSettings.newBuilder()
-        .setUrl(UndalBuildInfo.workerBaseUrl.trimEnd('/') + "/app")
-        .setHandleCodeInApp(false)
-        .build()
+    private fun verificationSettings(): ActionCodeSettings {
+        val continueUrl = UndalBuildInfo.webStoreBaseUrl?.let { it.trimEnd('/') + "/app" }
+        return ActionCodeSettings.newBuilder()
+            // A build without the owner's host has no page to land on: Firebase's
+            // own confirmation page is a better destination than a sub-domain that
+            // does not resolve. The address is still verified either way.
+            .apply { if (continueUrl != null) setUrl(continueUrl) }
+            .setHandleCodeInApp(false)
+            .build()
+    }
 
     /**
      * When a confirmation link was last sent, so the button cannot be used as a

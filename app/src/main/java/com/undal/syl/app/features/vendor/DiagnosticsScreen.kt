@@ -137,7 +137,13 @@ fun DiagnosticsScreen(
                 context.startActivity(AlarmChannels.exactAlarmSettings())
             }
 
-            DiagnosticsViewModel.Fix.AUTOSTART -> Unit
+            // Some ROMs rename or move this screen between versions, so the
+            // answer decides what the vendor is told: opened, or not on this phone.
+            DiagnosticsViewModel.Fix.AUTOSTART -> {
+                if (!viewModel.openAutostartSettings(context)) {
+                    viewModel.noteAutostartUnavailable()
+                }
+            }
 
             DiagnosticsViewModel.Fix.TOKEN -> viewModel.reregister(context)
 

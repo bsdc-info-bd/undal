@@ -471,6 +471,21 @@ class VendorStoreViewModel @Inject constructor(
     private fun cleanupSummary(orders: Int, notifications: Int): String =
         "$orders finished orders · $notifications kitchen notifications deleted"
 
+    /**
+     * The share button in this build with no store address.
+     *
+     * A build compiled without the owner's `WORKER_HOST` secret has nothing to
+     * share, and opening the phone's share sheet with `https://undal.YOUR-
+     * SUBDOMAIN…` in it puts a dead link in front of a customer. The screen says
+     * what is missing instead.
+     */
+    fun reportMissingStoreAddress() {
+        _state.value = _state.value.copy(
+            message = "This build does not know the store's web address yet, so there is no link " +
+                "to share. Set the WORKER_HOST secret and build again."
+        )
+    }
+
     fun dismissMessage() {
         _state.value = _state.value.copy(message = null)
     }

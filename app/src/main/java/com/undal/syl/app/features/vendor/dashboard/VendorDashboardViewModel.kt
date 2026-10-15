@@ -312,10 +312,20 @@ class VendorDashboardViewModel @Inject constructor(
 
     fun shareStoreLink() {
         val storeName = _state.value.store.storeName.ifBlank { "Undal HomeKitchen" }
-        _state.value = _state.value.copy(shareText = storeShareText(storeName, host()))
+        val text = storeShareText(storeName, host())
+        // A build without the store's address says so, instead of sharing a link
+        // that opens "site cannot be reached" in front of a customer.
+        _state.value = if (text != null) {
+            _state.value.copy(shareText = text)
+        } else {
+            _state.value.copy(
+                infoMessage = "This build does not know the store's web address yet, so there is " +
+                    "no link to share. Set the WORKER_HOST secret and build again."
+            )
+        }
     }
 
-    private fun host(): String = com.undal.syl.app.core.config.UndalBuildInfo.workerHost
+    private fun host(): String? = com.undal.syl.app.core.config.UndalBuildInfo.webStoreHost
 
     fun dismissMessage() {
         _state.value = _state.value.copy(infoMessage = null, shareText = "")

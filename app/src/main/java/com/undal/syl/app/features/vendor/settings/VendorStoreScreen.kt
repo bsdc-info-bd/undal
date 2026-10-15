@@ -377,14 +377,25 @@ fun VendorStoreScreen(
                     Column {
                         UndalKeyValueRow("Version", UndalBuildInfo.versionName)
                         UndalKeyValueRow("Build", UndalBuildInfo.versionCode.toString())
-                        UndalKeyValueRow("Worker", UndalBuildInfo.workerHost)
+                        UndalKeyValueRow(
+                            "Worker",
+                            UndalBuildInfo.webStoreHost ?: "not set in this build"
+                        )
                         UndalKeyValueRow("Timezone", UndalBuildInfo.storeTimezoneId)
                         Spacer(Modifier.height(UndalDimens.xs))
                         UndalSecondaryButton(
                             text = "Share the store link",
                             onClick = {
                                 val name = state.nameText.ifBlank { "Undal HomeKitchen" }
-                                shareText = storeShareText(name, UndalBuildInfo.workerHost)
+                                val text = storeShareText(name, UndalBuildInfo.webStoreHost)
+                                // Null means this build has no store address; the
+                                // button says so rather than opening the share sheet
+                                // with a dead link in it.
+                                if (text != null) {
+                                    shareText = text
+                                } else {
+                                    viewModel.reportMissingStoreAddress()
+                                }
                             },
                             icon = Icons.Filled.Share
                         )

@@ -36,10 +36,16 @@ fun asBuildConfigString(value: String): String = "\"${value.replace("\\", "\\\\"
 val undalVersionCode = (buildInput("undalVersionCode", "1")).toIntOrNull() ?: 1
 val undalVersionName = buildInput("undalVersionName", "1.0.$undalVersionCode")
 
-val cloudinaryCloudName = buildInput("UNDAL_CLOUDINARY_CLOUD_NAME", "undal")
-val cloudinaryUploadPreset = buildInput("UNDAL_CLOUDINARY_UPLOAD_PRESET", "undal_unsigned")
-val workerBaseUrl = buildInput("UNDAL_WORKER_BASE_URL", "https://undal.YOUR-SUBDOMAIN.workers.dev")
-val workerHost = buildInput("UNDAL_WORKER_HOST", "undal.YOUR-SUBDOMAIN.workers.dev")
+// No invented defaults for anything that decides whether the app can reach the
+// outside world. An empty value is the honest answer — the screen that needs it
+// says "not set up in this build" instead of the app dialling a host that does
+// not exist or uploading a photo into somebody else's cloud — and
+// `verifyReleaseInputs` below refuses to produce a release APK while one of
+// them is still missing.
+val cloudinaryCloudName = buildInput("UNDAL_CLOUDINARY_CLOUD_NAME")
+val cloudinaryUploadPreset = buildInput("UNDAL_CLOUDINARY_UPLOAD_PRESET")
+val workerBaseUrl = buildInput("UNDAL_WORKER_BASE_URL")
+val workerHost = buildInput("UNDAL_WORKER_HOST")
 val firebaseWebApiKey = buildInput("UNDAL_FIREBASE_WEB_API_KEY")
 val supportPhone = buildInput("UNDAL_SUPPORT_PHONE")
 val undalMinify = buildInput("undalMinify", "false").toBoolean()
@@ -237,3 +243,54 @@ dependencies {
     androidTestImplementation("androidx.compose.ui:ui-test-junit4")
     debugImplementation("androidx.compose.ui:ui-test-manifest")
 }
+
+
+
+/**
+ * A release APK is only allowed to exist when it can reach its own services.
+ *
+ * Every value below is supplied by a repository secret at build time. When one is
+ * missing, Gradle would happily produce an APK that installs, opens, shows the
+ * menu, and then fails at the things the owner cannot debug from the phone: the
+ * storefront link shared into a WhatsApp group points at a host that does not
+ * exist, the verification e-mail sends the customer to `YOUR-SUBDOMAIN`, and the
+ * kitchen's photo upload posts into a stranger's Cloudinary account. A build that
+ * stops here, naming the secret to add, is the only honest outcome.
+ *
+ * Debug builds are exempt: a developer without the owner's secrets must still be
+ * able to run the app, and every one of these values has an honest "not set up in
+ * this build" path at runtime.
+ */
+val verifyReleaseInputs = tasks.register("verifyReleaseInputs") {
+    group = "verification"
+    description = "Refuses a release build that could not reach the Worker or Cloudinary."
+
+    doLast {
+        val missing = mutableListOf<String>()
+        if (workerBaseUrl.isBlank() || workerBaseUrl.contains("YOUR-SUBDOMAIN")) {
+            missing.add("WORKER_BASE_URL → UNDAL_WORKER_BASE_URL")
+        }
+        if (workerHost.isBlank() || workerHost.contains("YOUR-SUBDOMAIN")) {
+            missing.add("WORKER_HOST → UNDAL_WORKER_HOST")
+        }
+        if (cloudinaryCloudName.isBlank()) missing.add("CLOUDINARY_CLOUD_NAME → UNDAL_CLOUDINARY_CLOUD_NAME")
+        if (cloudinaryUploadPreset.isBlank()) missing.add("CLOUDINARY_UPLOAD_PRESET → UNDAL_CLOUDINARY_UPLOAD_PRESET")
+
+        if (missing.isNotEmpty()) {
+            throw GradleException(
+                "This release build cannot reach its own services. Add the repository secret(s) " +
+                    "listed in tools/preflight.sh, then build again:\n  · " +
+                    missing.joinToString("\n  · ") +
+                    "\nNothing was produced, because an APK that shares a link to a host that " +
+                    "does not exist is worse than no APK."
+            )
+        }
+        logger.lifecycle("verifyReleaseInputs: the Worker host and the Cloudinary preset are set.")
+    }
+}
+
+// Checked before anything is compiled, and before anything is packaged, so the
+// failure arrives in seconds instead of after a two-minute build.
+tasks.matching {
+    it.name == "compileReleaseKotlin" || it.name == "assembleRelease" || it.name == "bundleRelease"
+}.configureEach { dependsOn(verifyReleaseInputs) }

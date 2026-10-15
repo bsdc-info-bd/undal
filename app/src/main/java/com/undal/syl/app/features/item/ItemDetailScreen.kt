@@ -91,10 +91,20 @@ fun ItemDetailScreen(
                         val share = Intent(Intent.ACTION_SEND).apply {
                             type = "text/plain"
                             putExtra(Intent.EXTRA_SUBJECT, card.name)
+                            // The link is added when this build knows its own store
+                            // address. Without one, the dish still travels — with a
+                            // sentence that says the app is where it is ordered from,
+                            // rather than a link nobody can open.
+                            val link = UndalBuildInfo.shareUrlOrNull(
+                                (if (card is MenuCard.Bundle) "combo/" else "dish/") + card.id
+                            )
                             putExtra(
                                 Intent.EXTRA_TEXT,
-                                viewModel.shareText() + "\n" + UndalBuildInfo.workerBaseUrl +
-                                    (if (card is MenuCard.Bundle) "/combo/" else "/dish/") + card.id
+                                if (link != null) {
+                                    viewModel.shareText() + "\n" + link
+                                } else {
+                                    viewModel.shareText() + "\nOrder it in the Undal app."
+                                }
                             )
                         }
                         runCatching {
