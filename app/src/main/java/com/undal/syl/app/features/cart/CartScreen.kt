@@ -1,5 +1,7 @@
 package com.undal.syl.app.features.cart
 
+import androidx.compose.runtime.saveable.rememberSaveable
+import java.util.Locale
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
@@ -37,7 +39,10 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberSwipeToDismissBoxState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.collectAsState
+import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.liveRegion
+import androidx.compose.ui.semantics.semantics
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -64,7 +69,7 @@ import com.undal.syl.app.core.design.UndalSecondaryButton
 import com.undal.syl.app.core.design.UndalStatusPill
 import com.undal.syl.app.core.design.UndalTextButton
 import com.undal.syl.app.core.design.UndalTextField
-import com.undal.syl.app.core.maps.UndalGoogleEmbedMap
+import com.undal.syl.app.core.maps.UndalLocationMap
 import com.undal.syl.app.core.theme.UndalDimens
 import com.undal.syl.app.core.theme.UndalMotion
 import com.undal.syl.app.core.util.Money
@@ -87,9 +92,9 @@ fun CartScreen(
     onOpenOrder: (String) -> Unit,
     viewModel: CartViewModel = hiltViewModel()
 ) {
-    val state by viewModel.state.collectAsState()
-    var couponInput by remember { mutableStateOf("") }
-    var showClearConfirm by remember { mutableStateOf(false) }
+    val state by viewModel.state.collectAsStateWithLifecycle()
+    var couponInput by rememberSaveable { mutableStateOf("") }
+    var showClearConfirm by rememberSaveable { mutableStateOf(false) }
 
     LaunchedEffect(Unit) { viewModel.refreshAddress() }
 
@@ -112,6 +117,20 @@ fun CartScreen(
                             Text("Total", style = MaterialTheme.typography.titleMedium)
                             Spacer(Modifier.weight(1f))
                             Text(state.totalLabel, style = MaterialTheme.typography.titleLarge)
+                        }
+                        // The first blocker is repeated here, beside the button it is
+                        // blocking. The full list is further down the page inside the
+                        // bill, and a customer looking at a greyed-out button should
+                        // not have to scroll to find out why it is greyed out.
+                        val firstBlocker = state.blockers.firstOrNull()
+                        if (firstBlocker != null) {
+                            Spacer(Modifier.height(UndalDimens.xs))
+                            Text(
+                                text = firstBlocker,
+                                style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.colorScheme.error,
+                                modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite }
+                            )
                         }
                         Spacer(Modifier.height(UndalDimens.sm))
                         UndalPrimaryButton(
@@ -245,17 +264,29 @@ fun CartScreen(
                         Box(modifier = Modifier.weight(1f)) {
                             UndalTextField(
                                 value = couponInput,
-                                onValueChange = { couponInput = it.uppercase().take(24) },
+                                onValueChange = {
+                                    // Codes are upper-case A–Z, 0–9, - and _: a
+                                    // space pasted from a WhatsApp message is not
+                                    // part of the code, and neither is the ৳ sign.
+                                    couponInput = it.uppercase(Locale.ENGLISH)
+                                        .filter { ch -> ch.isLetterOrDigit() || ch == '-' || ch == '_' }
+                                        .take(24)
+                                },
                                 label = "Code",
                                 hint = "UNDAL50",
-                                enabled = !state.couponChecking
+                                enabled = !state.couponChecking,
+                                imeAction = ImeAction.Done,
+                                onImeAction = {
+                                    if (couponInput.isNotBlank()) viewModel.applyCoupon(couponInput)
+                                }
                             )
                         }
                         Spacer(Modifier.width(UndalDimens.sm))
                         UndalSecondaryButton(
                             text = if (state.couponChecking) "Checking…" else "Apply",
                             onClick = { viewModel.applyCoupon(couponInput) },
-                            enabled = !state.couponChecking && couponInput.isNotBlank()
+                            enabled = !state.couponChecking && couponInput.isNotBlank(),
+                            fillWidth = false
                         )
                     }
                 } else {
@@ -291,13 +322,17 @@ fun CartScreen(
                 if (state.couponMessage != null) {
                     Spacer(Modifier.height(UndalDimens.xs))
                     Text(
-                        text = state.couponMessage.orEmpty(),
+                        // The message says which it is, rather than leaving colour
+                        // alone to carry the difference between "applied" and
+                        // "refused" — colour is not information for every eye.
+                        text = (if (state.couponIsError) "✕ " else "✓ ") + state.couponMessage.orEmpty(),
                         style = MaterialTheme.typography.bodySmall,
                         color = if (state.couponIsError) {
                             MaterialTheme.colorScheme.error
                         } else {
                             MaterialTheme.colorScheme.primary
-                        }
+                        },
+                        modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite }
                     )
                 }
             }
@@ -364,17 +399,20 @@ fun CartScreen(
                 if (address != null) {
                     Spacer(Modifier.height(UndalDimens.xs))
                     Text(address.desc, style = MaterialTheme.typography.bodyMedium)
-                    Spacer(Modifier.height(UndalDimens.xs))
-                    Text(
-                        text = "Rider note: ${address.note}",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
+                    if (address.note.isNotBlank()) {
+                        Spacer(Modifier.height(UndalDimens.xs))
+                        Text(
+                            text = "Rider note: ${address.note}",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
                     Spacer(Modifier.height(UndalDimens.sm))
-                    UndalGoogleEmbedMap(
+                    UndalLocationMap(
                         latitude = address.lat,
                         longitude = address.lng,
                         title = address.title.ifBlank { "Delivery point" },
+                        caption = address.title.ifBlank { "Delivery point" },
                         height = UndalDimens.mapHeight
                     )
                 }

@@ -36,6 +36,14 @@ import com.undal.syl.app.core.theme.UndalDimens
  * Every button keeps a 52 dp height and a 48 dp minimum touch target so the
  * kitchen can hit Accept with a wet thumb, and every button draws its own
  * progress indicator so a slow network can never be mistaken for a dead tap.
+ *
+ * By default a button takes the whole width of its parent, which is what a form
+ * and a dialog want. `fillWidth = false` is for the one place that is *not* a
+ * form: two buttons side by side in a `Row` (Call and Chat, Sign out and Delete,
+ * a text field and its Send). Two children that each ask for the full width
+ * cannot both have it — the second one is measured off the edge of the screen,
+ * which is how a "Delete my account" button came to be invisible and how the
+ * chat's message box came to be zero pixels wide.
  */
 @Composable
 fun UndalPrimaryButton(
@@ -44,12 +52,13 @@ fun UndalPrimaryButton(
     modifier: Modifier = Modifier,
     enabled: Boolean = true,
     loading: Boolean = false,
-    icon: ImageVector? = null
+    icon: ImageVector? = null,
+    fillWidth: Boolean = true
 ) {
     Button(
         onClick = onClick,
         modifier = modifier
-            .fillMaxWidth()
+            .then(if (fillWidth) Modifier.fillMaxWidth() else Modifier)
             .heightIn(min = UndalDimens.touchTarget)
             .semantics { role = Role.Button },
         enabled = enabled && !loading,
@@ -96,12 +105,13 @@ fun UndalSecondaryButton(
     modifier: Modifier = Modifier,
     enabled: Boolean = true,
     loading: Boolean = false,
-    icon: ImageVector? = null
+    icon: ImageVector? = null,
+    fillWidth: Boolean = true
 ) {
     OutlinedButton(
         onClick = onClick,
         modifier = modifier
-            .fillMaxWidth()
+            .then(if (fillWidth) Modifier.fillMaxWidth() else Modifier)
             .heightIn(min = UndalDimens.touchTarget),
         enabled = enabled && !loading,
         shape = RoundedCornerShape(UndalDimens.radiusMd)
@@ -148,12 +158,13 @@ fun UndalDangerButton(
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
     enabled: Boolean = true,
-    loading: Boolean = false
+    loading: Boolean = false,
+    fillWidth: Boolean = true
 ) {
     Button(
         onClick = onClick,
         modifier = modifier
-            .fillMaxWidth()
+            .then(if (fillWidth) Modifier.fillMaxWidth() else Modifier)
             .heightIn(min = UndalDimens.touchTarget),
         enabled = enabled && !loading,
         shape = RoundedCornerShape(UndalDimens.radiusMd),

@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Info
@@ -16,7 +17,6 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -24,6 +24,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.hilt.navigation.compose.hiltViewModel
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.undal.syl.app.core.design.UndalAlertBanner
 import com.undal.syl.app.core.design.UndalScaffold
 import com.undal.syl.app.core.model.VendorQueueFilter
@@ -32,6 +33,7 @@ import com.undal.syl.app.features.vendor.VendorChip
 import com.undal.syl.app.features.vendor.VendorEmptyState
 import com.undal.syl.app.features.vendor.VendorOrderCard
 import com.undal.syl.app.features.vendor.tick
+import java.util.Locale
 
 /**
  * The order queue with its six tabs (V-041 … V-047).
@@ -47,14 +49,18 @@ fun VendorOrdersScreen(
     onOpenOrder: (String) -> Unit,
     viewModel: VendorOrdersViewModel = hiltViewModel()
 ) {
-    val state by viewModel.state.collectAsState()
+    val state by viewModel.state.collectAsStateWithLifecycle()
     val haptics = LocalHapticFeedback.current
     var refreshing by remember { mutableStateOf(false) }
 
     LaunchedEffect(refreshing) {
-        if (refreshing) {
+        if (!refreshing) return@LaunchedEffect
+        // The indicator stops when the work stops, cancelled or not: a queued
+        // order must never be hidden behind a spinner that cannot turn off.
+        try {
             viewModel.refresh()
-            kotlinx.coroutines.delay(600L)
+            kotlinx.coroutines.delay(350L)
+        } finally {
             refreshing = false
         }
     }
@@ -102,7 +108,7 @@ fun VendorOrdersScreen(
                 if (state.visible.isEmpty() && !state.loading) {
                     VendorEmptyState(
                         icon = Icons.Filled.ShoppingCart,
-                        title = "Nothing in ${state.filter.label.lowercase()}",
+                        title = "Nothing in ${state.filter.label.lowercase(Locale.ENGLISH)}",
                         message = when (state.filter) {
                             VendorQueueFilter.NEW -> "No order is waiting for an answer. The alert loop is armed."
                             VendorQueueFilter.PREPARING -> "Nothing is cooking right now."
@@ -125,8 +131,10 @@ fun VendorOrdersScreen(
                             ),
                             verticalArrangement = Arrangement.spacedBy(UndalDimens.xs)
                         ) {
-                            items(state.visible.size) { index ->
-                                val order = state.visible[index]
+                            // Keyed by the order, not by the row: a new order
+                            // arriving at the top must not hand this row's
+                            // composition (and its age badge) to a different order.
+                            items(state.visible, key = { it.id }) { order ->
                                 VendorOrderCard(
                                     order = order,
                                     onClick = {

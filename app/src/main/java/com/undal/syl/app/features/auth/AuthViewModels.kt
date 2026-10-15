@@ -2,6 +2,7 @@ package com.undal.syl.app.features.auth
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.undal.syl.app.core.util.UndalDigits
 import com.undal.syl.app.core.util.UndalResult
 import com.undal.syl.app.core.util.Validators
 import com.undal.syl.app.data.repo.AuthRepo
@@ -133,8 +134,18 @@ class RegisterViewModel @Inject constructor(
         _state.value = _state.value.copy(email = value, emailError = null, banner = null)
     }
 
+    /**
+     * Eleven digits, in ASCII.
+     *
+     * `isDigit()` is true for ০১২৩৪৫৬৭৮৯, so a customer typing their own number
+     * with a Bangla keyboard used to end up with a Bengali-digit string in state;
+     * validation could be taught to read it, but the security rules store
+     * `^01[3-9][0-9]{8}$` and would refuse the write with "Missing or insufficient
+     * permissions". Convert once, here, and the number is the same number
+     * everywhere afterwards.
+     */
     fun onPhoneChange(value: String) {
-        val digits = value.filter { it.isDigit() }.take(11)
+        val digits = UndalDigits.toAscii(value).filter { it in '0'..'9' }.take(11)
         _state.value = _state.value.copy(phone = digits, phoneError = null, banner = null)
     }
 

@@ -1,5 +1,6 @@
 package com.undal.syl.app.features.vendor
 
+import java.util.Locale
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -114,7 +115,7 @@ fun VendorStatCard(
     ) {
         Column(modifier = Modifier.padding(UndalDimens.sm)) {
             Text(
-                text = label.uppercase(),
+                text = label.uppercase(Locale.ENGLISH),
                 style = MaterialTheme.typography.labelSmall,
                 color = if (highlight) {
                     MaterialTheme.colorScheme.onPrimaryContainer
@@ -354,8 +355,10 @@ fun VendorChip(
 }
 
 /** Shared by the dashboard and the settings screen: the store link (V-110). */
-fun storeShareText(storeName: String, workerHost: String): String =
-    "$storeName takes orders at https://$workerHost/store — cash on delivery, delivered by the kitchen."
+fun storeShareText(storeName: String, workerHost: String?): String? =
+    workerHost?.takeIf { it.isNotBlank() }?.let {
+        "$storeName takes orders at https://$it/store — cash on delivery, delivered by the kitchen."
+    }
 
 /** The short tick every status action plays under the finger (V-108). */
 fun HapticFeedback.tick() {

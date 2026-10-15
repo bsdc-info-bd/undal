@@ -1,7 +1,7 @@
 package com.undal.syl.app.features.vendor.orders
 
+import java.util.Locale
 import android.content.Intent
-import android.net.Uri
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -36,12 +36,13 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.collectAsState
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.draw.clip
 import androidx.compose.foundation.shape.CircleShape
@@ -63,14 +64,15 @@ import com.undal.syl.app.core.design.UndalScaffold
 import com.undal.syl.app.core.design.UndalSecondaryButton
 import com.undal.syl.app.core.design.UndalTextField
 import com.undal.syl.app.core.design.UndalTextButton
-import com.undal.syl.app.core.maps.UndalGoogleEmbedMap
-import com.undal.syl.app.core.maps.UndalOsmPicker
+import com.undal.syl.app.core.maps.UndalLocationMap
 import com.undal.syl.app.core.theme.UndalDimens
 import com.undal.syl.app.core.theme.undalSemantics
 import com.undal.syl.app.core.util.Money
 import com.undal.syl.app.core.util.OrderStateMachine
 import com.undal.syl.app.core.util.OrderStatus
 import com.undal.syl.app.core.util.TimeDhaka
+import com.undal.syl.app.core.util.UndalDigits
+import com.undal.syl.app.core.util.UndalPhone
 import com.undal.syl.app.features.vendor.VendorAgePill
 import com.undal.syl.app.features.vendor.VendorChip
 import com.undal.syl.app.features.vendor.VendorSection
@@ -95,21 +97,21 @@ fun VendorOrderDetailScreen(
     onOpenChats: () -> Unit,
     viewModel: VendorOrderDetailViewModel = hiltViewModel()
 ) {
-    val state by viewModel.state.collectAsState()
+    val state by viewModel.state.collectAsStateWithLifecycle()
     val context = LocalContext.current
     val haptics = LocalHapticFeedback.current
     val clipboard = LocalClipboardManager.current
     val listState = rememberLazyListState()
     val scope = rememberCoroutineScope()
-    var readyChecked by remember { mutableStateOf(false) }
-    var collectedChecked by remember { mutableStateOf(false) }
+    var readyChecked by rememberSaveable { mutableStateOf(false) }
+    var collectedChecked by rememberSaveable { mutableStateOf(false) }
 
     LaunchedEffect(orderId, openChatInitially) { viewModel.bind(orderId, openChatInitially) }
 
     // A push can carry `?sheet=accept|reject|ready|delivered` straight into the
     // right confirmation (V-030, V-031, V-033).
     LaunchedEffect(orderId, sheet) {
-        when (sheet?.lowercase()) {
+        when (sheet?.lowercase(Locale.ENGLISH)) {
             "accept" -> viewModel.openSheet(VendorOrderDetailViewModel.Sheet.Accept)
             "reject" -> viewModel.openSheet(VendorOrderDetailViewModel.Sheet.Reject)
             "ready" -> viewModel.openSheet(VendorOrderDetailViewModel.Sheet.Ready)
@@ -296,7 +298,7 @@ fun VendorOrderDetailScreen(
                         UndalKeyValueRow("Subtotal", Money.format(order.subtotalPaisa))
                         UndalKeyValueRow(
                             "Delivery",
-                            "${Money.format(order.deliveryPaisa)} · ${order.distanceKm.let { "%.1f".format(it) }} km"
+                            "${Money.format(order.deliveryPaisa)} · ${UndalDigits.format(order.distanceKm, 1)} km"
                         )
                         if (order.discountPaisa > 0L) {
                             UndalKeyValueRow("Discount", "− ${Money.format(order.discountPaisa)}")
@@ -344,11 +346,15 @@ fun VendorOrderDetailScreen(
                                 style = MaterialTheme.typography.bodyMedium,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 modifier = Modifier.combinedClickable(
+                                    // UndalPhone, not a hand-built tel: intent: the
+                                    // number may have been typed on a Bangla keypad
+                                    // (০১৭…) and a phone with no dialer must not take
+                                    // the kitchen's screen down with it.
                                     onClick = {
-                                        if (order.phone.isNotBlank()) {
-                                            context.startActivity(
-                                                Intent(Intent.ACTION_DIAL, Uri.parse("tel:${order.phone}"))
-                                            )
+                                        if (order.phone.isNotBlank() &&
+                                            !UndalPhone.dial(context, order.phone)
+                                        ) {
+                                            clipboard.setText(AnnotatedString(order.phone))
                                         }
                                     },
                                     onLongClick = {
@@ -365,10 +371,13 @@ fun VendorOrderDetailScreen(
                         UndalSecondaryButton(
                             text = "Call",
                             onClick = {
-                                if (order.phone.isNotBlank()) {
-                                    context.startActivity(
-                                        Intent(Intent.ACTION_DIAL, Uri.parse("tel:${order.phone}"))
-                                    )
+                                if (order.phone.isNotBlank() &&
+                                    !UndalPhone.dial(context, order.phone)
+                                ) {
+                                    // No dialer here: the number still leaves with
+                                    // the vendor, on the clipboard, so the call can
+                                    // be made from a phone that has one.
+                                    clipboard.setText(AnnotatedString(order.phone))
                                 }
                             },
                             icon = Icons.Filled.Call,
@@ -395,11 +404,8 @@ fun VendorOrderDetailScreen(
             item {
                 VendorSection(
                     title = "Where it goes",
-                    subtitle = if (state.overlayMap) {
-                        "Street map — drag to look around. The order address does not change."
-                    } else {
-                        "Tap the map for the full view; switch to the street map if the embed is blocked."
-                    }
+                    subtitle = "The kitchen pin and the customer's pin on one street map, framed so " +
+                        "both are on screen. Drag or pinch to look around — the order address does not change."
                 ) {
                     Column {
                         Text(
@@ -419,27 +425,12 @@ fun VendorOrderDetailScreen(
                             )
                         }
                         Spacer(Modifier.height(UndalDimens.xs))
-                        if (state.overlayMap) {
-                            UndalOsmPicker(
-                                latitude = order.customerLat,
-                                longitude = order.customerLng,
-                                onPicked = { _, _ -> },
-                                recentreLabel = null,
-                                onRecentre = null
-                            )
-                        } else {
-                            UndalGoogleEmbedMap(
-                                latitude = order.customerLat,
-                                longitude = order.customerLng,
-                                title = order.addressTitle.ifBlank { "Delivery point" },
-                                onOpenOsmFallback = viewModel::toggleMapOverlay
-                            )
-                        }
-                        Spacer(Modifier.height(UndalDimens.xs))
-                        UndalTextButton(
-                            text = if (state.overlayMap) "Use the keyless embed" else "Use the street map",
-                            onClick = viewModel::toggleMapOverlay,
-                            icon = Icons.Filled.Place
+                        UndalLocationMap(
+                            latitude = order.customerLat,
+                            longitude = order.customerLng,
+                            title = order.addressTitle.ifBlank { "Delivery point" },
+                            caption = order.addressTitle.ifBlank { "Delivery point" },
+                            height = UndalDimens.mapHeightTall
                         )
                     }
                 }
@@ -588,7 +579,7 @@ fun VendorOrderDetailScreen(
                         Spacer(Modifier.height(UndalDimens.xs))
                         UndalTextField(
                             value = state.customPrepText,
-                            onValueChange = viewModel::onCustomPrepChange,
+                            onValueChange = { viewModel.onCustomPrepChange(UndalDigits.digitsOnly(it, 3)) },
                             label = "Or type your own minutes",
                             hint = "35",
                             keyboardType = androidx.compose.ui.text.input.KeyboardType.Number
@@ -681,10 +672,12 @@ fun VendorOrderDetailScreen(
                         Spacer(Modifier.height(UndalDimens.sm))
                         UndalTextField(
                             value = state.collectedText,
-                            onValueChange = viewModel::onCollectedChange,
+                            onValueChange = { viewModel.onCollectedChange(UndalDigits.cleanDecimal(it)) },
                             label = "Cash collected (taka)",
                             hint = Money.formatPlain(order.totalAmountPaisa),
-                            keyboardType = androidx.compose.ui.text.input.KeyboardType.Number
+                            // The customer may hand over ৳305.50; a keypad without a
+                            // dot would make that collectable amount unrecordable.
+                            keyboardType = androidx.compose.ui.text.input.KeyboardType.Decimal
                         )
                         Spacer(Modifier.height(UndalDimens.xs))
                         Row(

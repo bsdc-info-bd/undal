@@ -31,7 +31,8 @@ import androidx.compose.material3.Slider
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -58,6 +59,7 @@ import com.undal.syl.app.core.maps.UndalRadiusPreview
 import com.undal.syl.app.core.theme.UndalDimens
 import com.undal.syl.app.core.theme.undalSemantics
 import com.undal.syl.app.core.util.Money
+import com.undal.syl.app.core.util.UndalDigits
 import com.undal.syl.app.features.vendor.VendorSection
 import com.undal.syl.app.features.vendor.menu.VendorPhotoRow
 import com.undal.syl.app.features.vendor.storeShareText
@@ -78,10 +80,10 @@ fun VendorStoreScreen(
     onSignOut: () -> Unit,
     viewModel: VendorStoreViewModel = hiltViewModel()
 ) {
-    val state by viewModel.state.collectAsState()
+    val state by viewModel.state.collectAsStateWithLifecycle()
     val context = LocalContext.current
-    var confirmCleanup by remember { mutableStateOf(false) }
-    var confirmSignOut by remember { mutableStateOf(false) }
+    var confirmCleanup by rememberSaveable { mutableStateOf(false) }
+    var confirmSignOut by rememberSaveable { mutableStateOf(false) }
     var shareText by remember { mutableStateOf("") }
 
     if (confirmCleanup) {
@@ -203,26 +205,26 @@ fun VendorStoreScreen(
                         Row(horizontalArrangement = Arrangement.spacedBy(UndalDimens.xs)) {
                             UndalTextField(
                                 value = state.perKmText,
-                                onValueChange = viewModel::onPerKm,
+                                onValueChange = { viewModel.onPerKm(UndalDigits.cleanDecimal(it)) },
                                 label = "Per km (taka)",
                                 hint = "20",
-                                keyboardType = KeyboardType.Number,
+                                keyboardType = KeyboardType.Decimal,
                                 singleLine = true,
                                 modifier = Modifier.weight(1f)
                             )
                             UndalTextField(
                                 value = state.minOrderText,
-                                onValueChange = viewModel::onMinOrder,
+                                onValueChange = { viewModel.onMinOrder(UndalDigits.cleanDecimal(it)) },
                                 label = "Minimum basket (taka)",
                                 hint = "150",
-                                keyboardType = KeyboardType.Number,
+                                keyboardType = KeyboardType.Decimal,
                                 singleLine = true,
                                 modifier = Modifier.weight(1f)
                             )
                         }
                         Spacer(Modifier.height(UndalDimens.sm))
                         Text(
-                            text = "Delivery radius: ${"%.0f".format(state.radiusKm)} km",
+                            text = "Delivery radius: ${UndalDigits.formatWhole(state.radiusKm)} km",
                             style = MaterialTheme.typography.titleSmall
                         )
                         Slider(
@@ -255,10 +257,12 @@ fun VendorStoreScreen(
                         Spacer(Modifier.height(UndalDimens.sm))
                         UndalTextField(
                             value = state.feeDistanceText,
-                            onValueChange = viewModel::onFeeDistance,
+                            onValueChange = { viewModel.onFeeDistance(UndalDigits.cleanDecimal(it, maxDecimals = 1)) },
                             label = "Fee calculator — type a distance in km",
                             hint = "4.5",
-                            keyboardType = KeyboardType.Number,
+                            // A distance is a decimal: the kilometres the fee is
+                            // rounded up from, never a whole number by assumption.
+                            keyboardType = KeyboardType.Decimal,
                             singleLine = true
                         )
                         Spacer(Modifier.height(UndalDimens.xs))
@@ -320,7 +324,7 @@ fun VendorStoreScreen(
                         )
                         Spacer(Modifier.height(UndalDimens.xs))
                         Text(
-                            text = "Pin: ${"%.5f".format(state.pinLat)}, ${"%.5f".format(state.pinLng)}" +
+                            text = "Pin: ${UndalDigits.format(state.pinLat, 5)}, ${UndalDigits.format(state.pinLng, 5)}" +
                                 if (state.store.hasPublishedPin) {
                                     " · published"
                                 } else {
@@ -373,14 +377,25 @@ fun VendorStoreScreen(
                     Column {
                         UndalKeyValueRow("Version", UndalBuildInfo.versionName)
                         UndalKeyValueRow("Build", UndalBuildInfo.versionCode.toString())
-                        UndalKeyValueRow("Worker", UndalBuildInfo.workerHost)
+                        UndalKeyValueRow(
+                            "Worker",
+                            UndalBuildInfo.webStoreHost ?: "not set in this build"
+                        )
                         UndalKeyValueRow("Timezone", UndalBuildInfo.storeTimezoneId)
                         Spacer(Modifier.height(UndalDimens.xs))
                         UndalSecondaryButton(
                             text = "Share the store link",
                             onClick = {
                                 val name = state.nameText.ifBlank { "Undal HomeKitchen" }
-                                shareText = storeShareText(name, UndalBuildInfo.workerHost)
+                                val text = storeShareText(name, UndalBuildInfo.webStoreHost)
+                                // Null means this build has no store address; the
+                                // button says so rather than opening the share sheet
+                                // with a dead link in it.
+                                if (text != null) {
+                                    shareText = text
+                                } else {
+                                    viewModel.reportMissingStoreAddress()
+                                }
                             },
                             icon = Icons.Filled.Share
                         )

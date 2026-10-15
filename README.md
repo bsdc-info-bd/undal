@@ -214,6 +214,12 @@ from `UndalGuards`, so a failed read becomes one sentence on the screen.
 **`docs/ALERT-RELIABILITY.md`**, together with the device acceptance matrix that
 has to be run on the real kitchen phone.
 
+**`docs/AUDIT-100.md`** is the ledger that this work is written down in: one
+hundred real defects — crashes, inputs, layout, performance, money, the web
+storefront — each with the file it was fixed in and the gate that keeps it
+fixed, plus the leads that are still open and the five things only a real phone
+and a real cash hand can close.
+
 ---
 
 ## 7 · What costs nothing
@@ -225,7 +231,7 @@ has to be run on the real kitchen phone.
 | Cloudflare Workers free | 100k requests/day, KV 1 GB, cron triggers included | one Worker, two crons |
 | GitHub Actions free | 2 000 minutes/month for private repos, unlimited for public | a full Android build is ~4–6 minutes |
 | OpenStreetMap tiles | free, attribution kept | osmdroid with a unique user agent |
-| Google Maps | free embed view | no API key, display only |
+| Maps | osmdroid + OpenStreetMap tiles | in-process, no API key, works offline from the tile cache |
 
 ---
 
@@ -258,6 +264,7 @@ undal/
 ├── FEATURES.md                     the counted 263-feature checklist
 ├── docs/ALERT-RELIABILITY.md       the alert ladder: payload, channels, manifest, acceptance
 ├── docs/CRASH-DISCIPLINE.md        why no ViewModel coroutine may end the process
+├── docs/AUDIT-100.md               the audit ledger: every defect, its fix and its proof
 ├── assets/sound/                   the official Undal order sound
 ├── app/                            the Android app (customer + kitchen)
 ├── firebase/                       rules, indexes, firebase.json
@@ -296,10 +303,10 @@ step only you can do, because it needs your own Firebase project.
 | # | What is checked | How | Result |
 | --- | --- | --- | --- |
 | 1 | The Worker compiles | `cd worker && npx tsc --noEmit` | **0 errors** |
-| 2 | The Android sources hang together without a compiler | `python3 tools/check_kotlin_shape.py` and `check_import_contracts.py` | **142 files**: balanced, no split strings, every `com.undal.syl.app` import and member call resolves, 310 cross-package names indexed |
-| 3 | No unfinished markers anywhere | `bash tools/check_no_placeholders.sh` | **clean across 207 files** |
+| 2 | The Android sources hang together without a compiler | `python3 tools/check_kotlin_shape.py` and `check_import_contracts.py` | **145 files**: balanced, no split strings, every `com.undal.syl.app` import and member call resolves, 334 cross-package names indexed |
+| 3 | No unfinished markers anywhere | `bash tools/check_no_placeholders.sh` | **clean across 210 files** |
 | 4 | The web prices food exactly like the app | `node tools/check-web-rules.mjs` | **20 rule families · 220 comparisons**, all from the app's own test vectors (140 assertions shared, app-only rules declared out loud) |
-| 5 | Every page renders and every route has a handler | `cd worker && npm test` | **134 tests across 10 files**; `/ /store /item/{id} /about /basket /checkout /login /account /track /order/{id} /download /robots.txt /sitemap.xml /manifest.webmanifest /sw.js /icons/* /healthz /api/store/* /api/account/*` are asserted by name, and the rendered pages are asserted as HTML |
+| 5 | Every page renders and every route has a handler | `cd worker && npm test` | **144 tests across 11 files**; `/ /store /item/{id} /about /basket /checkout /login /account /track /order/{id} /download /robots.txt /sitemap.xml /manifest.webmanifest /sw.js /icons/* /healthz /api/store/* /api/account/*` are asserted by name, and the rendered pages are asserted as HTML |
 | 6 | The API refuses politely | `curl` probes | no web key → a sentence, not a stack trace; order without a token → `missing-id-token`; rate buckets 90/120/300 per minute per IP |
 | 7 | Icons and QR codes are real images | decoded with `pngjs`; QR matrix compared with `qrcode@1.5.4` | icons **1744 / 5868 / 4054 bytes**, QR **exact match on 43 URLs** |
 | 8 | The web store installs as an app | manifest + service worker + `/download` with two QR codes and the unknown-sources guide | shipped (P-014, P-016) |
@@ -313,7 +320,7 @@ step only you can do, because it needs your own Firebase project.
 | 16 | Nothing here costs money | Spark plan, Cloudinary free, Workers free, OpenStreetMap tiles, Actions free — see §7 | no billing account anywhere |
 | 17 | The order alert leaves the Worker in the only shape that can ring a phone | `worker/test/fcm-alert.test.ts` | **14 tests**: data-only with no `notification` block anywhere, `android.priority HIGH`, `ttl 300s`, APNs headers at a priority Apple permits, topic fallback when the device list is empty, dead tokens purged |
 | 18 | The web account is the app's account, and only its owner can touch it | `worker/test/account.test.ts` against a fake Firebase that signs real RS256 tokens | **27 tests**: a uid only ever comes from a verified ID token, a forged one is refused by the real signature check, a profile is written only in the shape the Firestore rules accept, the history needs no composite index |
-| 19 | Nothing in the app breaks a promise to Android, and the crash guard cannot loop | `python3 tools/check_foreground_contract.py` and `CrashRecoveryPolicyTest` | **142 files**: every foreground-service call goes through `UndalForeground`, every `onStartCommand` takes the foreground before it decides anything, and no `Task` is read as though `getResult()` waited; **12 tests** pin one startup reopen then the honest screen, three ordinary reopens then the honest screen, two honest screens then the platform |
+| 19 | Nothing in the app breaks a promise to Android, and the crash guard cannot loop | `python3 tools/check_foreground_contract.py` and `CrashRecoveryPolicyTest` | **145 files**: every foreground-service call goes through `UndalForeground`, every `onStartCommand` takes the foreground before it decides anything, and no `Task` is read as though `getResult()` waited; **12 tests** pin one startup reopen then the honest screen, three ordinary reopens then the honest screen, two honest screens then the platform |
 
 **What only your project can prove.** Four checks need your real Firebase project,
 your Cloudinary account and a signed keystore, so run them once after §3e:

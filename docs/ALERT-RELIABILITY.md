@@ -1091,6 +1091,11 @@ rendered pages; `wrangler deploy --dry-run` packaging; 31 alert-ladder wiring
 checks; 130 web/app rule comparisons; Kotlin source-shape and import-contract
 checks over 128 files.
 
+*(The counts above are the ones recorded when this change landed, and they are
+left as they were written. The numbers for the tree as it stands — Kotlin files,
+placeholder-gate files, Node tests, rule comparisons — are in the README's
+acceptance table, §11.)*
+
 These do not replace an APK build or the device matrix in §15. The Java/Android
 SDK and a production Firebase project were not available in the editing
 environment, and no production deployment was performed by it.

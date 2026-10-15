@@ -16,8 +16,11 @@ import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import javax.inject.Inject
 
@@ -65,7 +68,6 @@ class VendorOrderDetailViewModel @Inject constructor(
         val infoMessage: String? = null,
         val celebrate: Boolean = false,
         val chatOpen: Boolean = false,
-        val overlayMap: Boolean = false,
         val shareText: String = "",
         val overdueNoticeSent: Boolean = false,
         val fromCache: Boolean = false,
@@ -88,20 +90,25 @@ class VendorOrderDetailViewModel @Inject constructor(
         _state.value = _state.value.copy(infoMessage = message, busy = false)
     }
 
-    private val _now = MutableStateFlow(System.currentTimeMillis())
-    val now: StateFlow<Long> = _now.asStateFlow()
+    /**
+     * The age badges, ticking once a second — but only while a screen is looking.
+     *
+     * This was a `while (true)` loop inside `viewModelScope`, and a view model
+     * lives for as long as its screen is on the back stack: on a kitchen phone
+     * left in a pocket with the queue open, that was one wake-up per second, for
+     * hours, for a number nobody was reading. `WhileSubscribed` ties the clock to
+     * the screen instead, with five seconds of grace so a rotation does not
+     * restart it.
+     */
+    val now: StateFlow<Long> = flow {
+        while (true) {
+            emit(System.currentTimeMillis())
+            delay(1_000L)
+        }
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000L), System.currentTimeMillis())
 
     private var orderId: String = ""
     private var typingPublished = false
-
-    init {
-        viewModelScope.launch(guard) {
-            while (true) {
-                _now.value = System.currentTimeMillis()
-                delay(1_000L)
-            }
-        }
-    }
 
     fun bind(orderId: String, openChatInitially: Boolean = false) {
         if (this.orderId == orderId) return
@@ -334,10 +341,6 @@ class VendorOrderDetailViewModel @Inject constructor(
     }
 
     // -------------------------------------------------------------------- tools
-
-    fun toggleMapOverlay() {
-        _state.value = _state.value.copy(overlayMap = !_state.value.overlayMap)
-    }
 
     fun readyShareText() {
         val order = _state.value.order ?: return

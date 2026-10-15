@@ -1,5 +1,7 @@
 package com.undal.syl.app.features.vendor.menu
 
+import androidx.compose.runtime.saveable.rememberSaveable
+import java.util.Locale
 import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
@@ -62,6 +64,7 @@ import com.undal.syl.app.core.theme.UndalDimens
 import com.undal.syl.app.core.theme.undalSemantics
 import com.undal.syl.app.core.util.Money
 import com.undal.syl.app.core.util.TimeDhaka
+import com.undal.syl.app.core.util.UndalDigits
 import com.undal.syl.app.features.vendor.VendorChip
 import java.time.Instant
 import java.time.LocalDate
@@ -120,7 +123,8 @@ internal fun VendorPhotoRow(
     currentUrl: String,
     progress: Float?,
     label: String,
-    onPicked: (Uri) -> Unit
+    onPicked: (Uri) -> Unit,
+    onCancel: (() -> Unit)? = null
 ) {
     val launcher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.PickVisualMedia()
@@ -144,7 +148,12 @@ internal fun VendorPhotoRow(
                     launcher.launch(
                         PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
                     )
-                }
+                },
+                // Hidden rather than left live: a second photo picked while the
+                // first is still travelling would write its percentages over the
+                // first one's and race it to the draft. One at a time is the only
+                // promise the progress bar can keep.
+                enabled = progress == null
             )
             if (progress != null) {
                 Spacer(Modifier.height(UndalDimens.xs))
@@ -152,11 +161,26 @@ internal fun VendorPhotoRow(
                     progress = { progress.coerceIn(0f, 1f) },
                     modifier = Modifier.fillMaxWidth()
                 )
-                Text(
-                    text = "$label uploading… ${(progress * 100).toInt()}%",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text(
+                        text = "$label uploading… ${(progress * 100).toInt()}%",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.weight(1f)
+                    )
+                    // Only while there is something to stop, and it stops the
+                    // transfer itself — on a slow connection the kitchen can
+                    // change its mind without waiting out the photo or spending
+                    // the data on it.
+                    if (onCancel != null) {
+                        // The design system's text button, not Material's: it keeps
+                        // the 48 dp touch target every other control in the app has.
+                        UndalTextButton(text = "Stop", onClick = onCancel)
+                    }
+                }
             } else if (currentUrl.isNotBlank()) {
                 Text(
                     text = "$label is set.",
@@ -191,7 +215,7 @@ internal fun VendorDateField(
     millis: Long?,
     onPicked: (Long) -> Unit
 ) {
-    var open by remember { mutableStateOf(false) }
+    var open by rememberSaveable { mutableStateOf(false) }
     val shown = millis?.let { TimeDhaka.formatDate(TimeDhaka.fromInstant(Instant.ofEpochMilli(it)).toLocalDate()) }
         .orEmpty()
     Row(verticalAlignment = Alignment.CenterVertically) {
@@ -275,21 +299,23 @@ fun DishEditorSheet(
         Row(horizontalArrangement = Arrangement.spacedBy(UndalDimens.xs)) {
             UndalTextField(
                 value = draft.priceText,
-                onValueChange = { viewModel.onItemDraftChange(draft.copy(priceText = it)) },
+                onValueChange = { viewModel.onItemDraftChange(draft.copy(priceText = UndalDigits.cleanDecimal(it))) },
                 label = "Price (taka)",
                 hint = "180",
                 error = draft.priceError,
-                keyboardType = KeyboardType.Number,
+                // Decimal, not Number: a number keypad on many phones has no dot,
+                // and ৳180.50 is a price the kitchen is allowed to charge.
+                keyboardType = KeyboardType.Decimal,
                 singleLine = true,
                 modifier = Modifier.weight(1f)
             )
             UndalTextField(
                 value = draft.compareText,
-                onValueChange = { viewModel.onItemDraftChange(draft.copy(compareText = it)) },
+                onValueChange = { viewModel.onItemDraftChange(draft.copy(compareText = UndalDigits.cleanDecimal(it))) },
                 label = "Was (optional)",
                 hint = "220",
                 error = draft.compareError,
-                keyboardType = KeyboardType.Number,
+                keyboardType = KeyboardType.Decimal,
                 singleLine = true,
                 modifier = Modifier.weight(1f)
             )
@@ -307,7 +333,8 @@ fun DishEditorSheet(
             currentUrl = draft.imageUrl,
             progress = state.uploadProgress,
             label = "Dish photo",
-            onPicked = viewModel::uploadDishImage
+            onPicked = viewModel::uploadDishImage,
+            onCancel = viewModel::cancelUpload
         )
         Spacer(Modifier.height(UndalDimens.xs))
         Text(text = "Section", style = MaterialTheme.typography.labelLarge)
@@ -439,7 +466,9 @@ fun SectionEditorSheet(
         Spacer(Modifier.height(UndalDimens.xs))
         UndalTextField(
             value = draft.orderText,
-            onValueChange = { viewModel.onSectionDraftChange(draft.copy(orderText = it.filter { ch -> ch.isDigit() }.take(3))) },
+            onValueChange = {
+                viewModel.onSectionDraftChange(draft.copy(orderText = UndalDigits.digitsOnly(it, 3)))
+            },
             label = "Position",
             hint = "0 comes first",
             keyboardType = KeyboardType.Number,
@@ -451,7 +480,8 @@ fun SectionEditorSheet(
                 currentUrl = draft.iconUrl,
                 progress = state.uploadProgress,
                 label = "Section image",
-                onPicked = viewModel::uploadSectionIcon
+                onPicked = viewModel::uploadSectionIcon,
+                onCancel = viewModel::cancelUpload
             )
         } else {
             Spacer(Modifier.height(UndalDimens.xs))
@@ -518,10 +548,10 @@ fun ComboEditorSheet(
         Spacer(Modifier.height(UndalDimens.xs))
         UndalTextField(
             value = draft.priceText,
-            onValueChange = { viewModel.onComboDraftChange(draft.copy(priceText = it)) },
+            onValueChange = { viewModel.onComboDraftChange(draft.copy(priceText = UndalDigits.cleanDecimal(it))) },
             label = "Combo price (taka)",
             hint = Money.formatPlain(draft.regularPaisa),
-            keyboardType = KeyboardType.Number,
+            keyboardType = KeyboardType.Decimal,
             singleLine = true
         )
         Spacer(Modifier.height(UndalDimens.xs))
@@ -529,7 +559,8 @@ fun ComboEditorSheet(
             currentUrl = draft.imageUrl,
             progress = state.uploadProgress,
             label = "Combo photo",
-            onPicked = viewModel::uploadComboImage
+            onPicked = viewModel::uploadComboImage,
+            onCancel = viewModel::cancelUpload
         )
         Spacer(Modifier.height(UndalDimens.xs))
         Text(
@@ -662,10 +693,17 @@ fun CampaignEditorSheet(
         Spacer(Modifier.height(UndalDimens.xs))
         UndalTextField(
             value = draft.valueText,
-            onValueChange = { viewModel.onCampaignDraftChange(draft.copy(valueText = it)) },
+            onValueChange = {
+                val cleaned = if (draft.type == "percent") {
+                    UndalDigits.digitsOnly(it, 2)
+                } else {
+                    UndalDigits.cleanDecimal(it)
+                }
+                viewModel.onCampaignDraftChange(draft.copy(valueText = cleaned))
+            },
             label = if (draft.type == "percent") "Percent off (1–90)" else "Taka off",
             hint = if (draft.type == "percent") "10" else "50",
-            keyboardType = KeyboardType.Number,
+            keyboardType = if (draft.type == "percent") KeyboardType.Number else KeyboardType.Decimal,
             singleLine = true
         )
         Spacer(Modifier.height(UndalDimens.xs))
@@ -692,12 +730,13 @@ fun CampaignEditorSheet(
             currentUrl = draft.bannerUrl,
             progress = state.uploadProgress,
             label = "Banner",
-            onPicked = viewModel::uploadCampaignBanner
+            onPicked = viewModel::uploadCampaignBanner,
+            onCancel = viewModel::cancelUpload
         )
         Spacer(Modifier.height(UndalDimens.xs))
         UndalTextField(
             value = draft.code,
-            onValueChange = { viewModel.onCampaignDraftChange(draft.copy(code = it.uppercase())) },
+            onValueChange = { viewModel.onCampaignDraftChange(draft.copy(code = it.uppercase(Locale.ENGLISH))) },
             label = "Coupon code shown on the banner (optional)",
             hint = "FRIYAY10",
             singleLine = true
@@ -745,7 +784,7 @@ fun CouponEditorSheet(
     ) {
         UndalTextField(
             value = draft.code,
-            onValueChange = { viewModel.onCouponDraftChange(draft.copy(code = it.uppercase())) },
+            onValueChange = { viewModel.onCouponDraftChange(draft.copy(code = it.uppercase(Locale.ENGLISH))) },
             label = "Code",
             hint = "WELCOME10",
             error = draft.codeError,
@@ -774,11 +813,18 @@ fun CouponEditorSheet(
             Spacer(Modifier.height(UndalDimens.xs))
             UndalTextField(
                 value = draft.valueText,
-                onValueChange = { viewModel.onCouponDraftChange(draft.copy(valueText = it)) },
+                onValueChange = {
+                    val cleaned = if (draft.type == "percent") {
+                        UndalDigits.digitsOnly(it, 2)
+                    } else {
+                        UndalDigits.cleanDecimal(it)
+                    }
+                    viewModel.onCouponDraftChange(draft.copy(valueText = cleaned))
+                },
                 label = if (draft.type == "percent") "Percent off (1–90)" else "Taka off",
                 hint = if (draft.type == "percent") "10" else "50",
                 error = draft.valueError,
-                keyboardType = KeyboardType.Number,
+                keyboardType = if (draft.type == "percent") KeyboardType.Number else KeyboardType.Decimal,
                 singleLine = true
             )
         } else {
@@ -794,11 +840,11 @@ fun CouponEditorSheet(
         Spacer(Modifier.height(UndalDimens.xs))
         UndalTextField(
             value = draft.maxDiscountText,
-            onValueChange = { viewModel.onCouponDraftChange(draft.copy(maxDiscountText = it)) },
+            onValueChange = { viewModel.onCouponDraftChange(draft.copy(maxDiscountText = UndalDigits.cleanDecimal(it))) },
             label = "Maximum discount (optional)",
             hint = "100",
             error = draft.maxDiscountError,
-            keyboardType = KeyboardType.Number,
+            keyboardType = KeyboardType.Decimal,
             singleLine = true
         )
         Spacer(Modifier.height(UndalDimens.xs))
@@ -811,16 +857,16 @@ fun CouponEditorSheet(
         Spacer(Modifier.height(UndalDimens.xs))
         UndalTextField(
             value = draft.minOrderText,
-            onValueChange = { viewModel.onCouponDraftChange(draft.copy(minOrderText = it)) },
+            onValueChange = { viewModel.onCouponDraftChange(draft.copy(minOrderText = UndalDigits.cleanDecimal(it))) },
             label = "Minimum basket (optional)",
             hint = "500",
-            keyboardType = KeyboardType.Number,
+            keyboardType = KeyboardType.Decimal,
             singleLine = true
         )
         Spacer(Modifier.height(UndalDimens.xs))
         UndalTextField(
             value = draft.usageLimitText,
-            onValueChange = { viewModel.onCouponDraftChange(draft.copy(usageLimitText = it.filter { ch -> ch.isDigit() }.take(5))) },
+            onValueChange = { viewModel.onCouponDraftChange(draft.copy(usageLimitText = UndalDigits.digitsOnly(it, 5))) },
             label = "Usage limit (0 means unlimited)",
             hint = "50",
             keyboardType = KeyboardType.Number,
@@ -831,7 +877,7 @@ fun CouponEditorSheet(
             Box(modifier = Modifier.weight(1f)) {
                 UndalTextField(
                     value = draft.startsAt,
-                    onValueChange = { viewModel.onCouponDraftChange(draft.copy(startsAt = it)) },
+                    onValueChange = { viewModel.onCouponDraftChange(draft.copy(startsAt = UndalDigits.cleanClock(it))) },
                     label = "From (HH:MM)",
                     hint = "18:00",
                     error = if (draft.windowError != null && draft.startsAt.isNotBlank()) draft.windowError else null,
@@ -841,7 +887,7 @@ fun CouponEditorSheet(
             Box(modifier = Modifier.weight(1f)) {
                 UndalTextField(
                     value = draft.endsAt,
-                    onValueChange = { viewModel.onCouponDraftChange(draft.copy(endsAt = it)) },
+                    onValueChange = { viewModel.onCouponDraftChange(draft.copy(endsAt = UndalDigits.cleanClock(it))) },
                     label = "To (HH:MM)",
                     hint = "22:00",
                     error = if (draft.windowError != null && draft.endsAt.isNotBlank()) draft.windowError else null,
@@ -861,7 +907,7 @@ fun CouponEditorSheet(
         Row(horizontalArrangement = Arrangement.spacedBy(UndalDimens.xs)) {
             listOf("fri", "sat", "sun").forEach { day ->
                 VendorChip(
-                    label = day.uppercase(),
+                    label = day.uppercase(Locale.ENGLISH),
                     selected = day in draft.days,
                     onClick = {
                         val next = if (day in draft.days) draft.days - day else draft.days + day
@@ -874,7 +920,7 @@ fun CouponEditorSheet(
         Row(horizontalArrangement = Arrangement.spacedBy(UndalDimens.xs)) {
             listOf("mon", "tue", "wed", "thu").forEach { day ->
                 VendorChip(
-                    label = day.uppercase(),
+                    label = day.uppercase(Locale.ENGLISH),
                     selected = day in draft.days,
                     onClick = {
                         val next = if (day in draft.days) draft.days - day else draft.days + day

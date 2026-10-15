@@ -1,5 +1,6 @@
 package com.undal.syl.app.data.repo
 
+import java.util.Locale
 import android.net.Uri
 import com.google.firebase.Timestamp
 import com.google.firebase.firestore.FieldValue
@@ -344,7 +345,7 @@ class VendorMenuRepo @Inject constructor(
             "startAt" to start,
             "endAt" to end,
             "bannerUrl" to draft.bannerUrl,
-            "code" to draft.code.trim().uppercase(),
+            "code" to draft.code.trim().uppercase(Locale.ENGLISH),
             "active" to draft.active,
             "updatedAt" to FieldValue.serverTimestamp()
         )
@@ -422,11 +423,22 @@ class VendorMenuRepo @Inject constructor(
     // ----------------------------------------------------------------- uploads
 
     /** Photo pick → Cloudinary, with a progress fraction for the button (V-053). */
-    suspend fun uploadImage(uri: Uri, onProgress: (Float) -> Unit): UndalResult<String> =
-        when (val result = uploader.uploadImage(uri, onProgress)) {
+    suspend fun uploadImage(
+        uri: Uri,
+        onProgress: (Float) -> Unit,
+        onRequestId: (String) -> Unit = {}
+    ): UndalResult<String> =
+        when (val result = uploader.uploadImage(uri, onProgress, onRequestId)) {
             is UndalResult.Success -> UndalResult.Success(result.value.secureUrl)
             is UndalResult.Failure -> result
         }
+
+    /**
+     * Stops a photo upload that is still running — the kitchen on a slow
+     * connection should not have to wait for a photo it has changed its mind
+     * about, and the phone should not spend its data on it either.
+     */
+    fun cancelUpload(requestId: String): Boolean = uploader.cancel(requestId)
 
     private companion object {
         const val CATEGORIES = "categories"

@@ -18,6 +18,7 @@ import androidx.lifecycle.viewModelScope
 import com.google.firebase.firestore.FirebaseFirestore
 import com.google.firebase.messaging.FirebaseMessaging
 import com.undal.syl.app.R
+import com.undal.syl.app.core.background.AlertWatchdog
 import com.undal.syl.app.core.background.KitchenWatchService
 import com.undal.syl.app.core.background.KitchenWatchState
 import com.undal.syl.app.core.background.PresenceHeartbeat
@@ -223,6 +224,31 @@ class DiagnosticsViewModel @Inject constructor(
             )
         )
 
+        // Some Android phones (Xiaomi, Oppo, Realme, Vivo, Huawei) refuse to
+        // restart a killed background app until the owner allows autostart on a
+        // screen that only their own ROM has. Undal cannot read that setting — no
+        // public API exposes it — so the check reports exactly what it can see:
+        // this phone has an autostart manager, and here is where it lives. The
+        // alarm is what rings for an order, so a phone that never restarts Undal
+        // after a reboot is a phone that misses orders.
+        val autostart = AlarmChannels.autostartCandidates().filter { (_, intent) ->
+            context.packageManager
+                .resolveActivity(intent, PackageManager.MATCH_DEFAULT_ONLY) != null
+        }
+        if (autostart.isNotEmpty()) {
+            add(
+                Check(
+                    id = "autostart",
+                    title = "Autostart allowed (${autostart.first().first})",
+                    detail = "This phone can block Undal from restarting in the background, and the " +
+                        "alarm that rings for an order is the first thing lost. Open the screen below " +
+                        "and set Undal HomeKitchen to allowed.",
+                    status = Status.ATTENTION,
+                    fix = Fix.AUTOSTART
+                )
+            )
+        }
+
         val exact = exactAlarmsAllowed(context)
         add(
             Check(
@@ -336,6 +362,40 @@ class DiagnosticsViewModel @Inject constructor(
                 blocking = !volumeHealthy
             )
         )
+
+        // The watchdog, the rung nothing else on this screen shows. The watcher
+        // row above is a fact about *now*; this is a fact about what happens
+        // after Android ends the process — a swipe off the recents list, a
+        // battery cleaner, a low-memory kill. `docs/ALERT-RELIABILITY.md` makes
+        // the promise, `AlertWatchdog` keeps it, and the owner could not see it
+        // anywhere. A customer phone never keeps this alarm, so the row only
+        // exists on a kitchen phone.
+        if (AlertWatchdog.isKitchenDevice(context)) {
+            val watchdogArmed = AlertWatchdog.isArmed(context)
+            val watchdogLate = AlertWatchdog.exactAlarmBlocked(context)
+            add(
+                Check(
+                    id = "watchdog",
+                    title = "Rebuilds itself if Android kills it",
+                    detail = if (watchdogArmed && watchdogLate) {
+                        AlertWatchdog.describe(context) +
+                            " Android has not allowed exact alarms, so that self-check runs late."
+                    } else {
+                        AlertWatchdog.describe(context)
+                    },
+                    status = if (watchdogArmed && !watchdogLate) Status.OK else Status.ATTENTION,
+                    // Arming the watchdog is the same act as starting the
+                    // watcher — the service arms it — so this button is the
+                    // watcher button, and a phone that is armed but late is sent
+                    // to the exact-alarms setting instead.
+                    fix = when {
+                        watchdogArmed && watchdogLate -> Fix.EXACT_ALARMS
+                        watchdogArmed -> null
+                        else -> Fix.WATCHDOG
+                    }
+                )
+            )
+        }
     }
 
     /**
@@ -553,6 +613,30 @@ class DiagnosticsViewModel @Inject constructor(
     }
 
     /** The autostart screens that actually exist on this phone model. */
+    /**
+     * Opens the autostart manager this phone actually has.
+     *
+     * The candidate list is a list of *other* apps' settings screens, and asking
+     * for one is a guess: `resolveActivity` says which guesses are right on this
+     * phone, and only a resolved one is opened. Answers false when this phone has
+     * none, so the screen can say so rather than leaving a dead button.
+     */
+    fun openAutostartSettings(context: Context): Boolean {
+        val candidate = AlarmChannels.autostartCandidates().firstOrNull { (_, intent) ->
+            context.packageManager
+                .resolveActivity(intent, PackageManager.MATCH_DEFAULT_ONLY) != null
+        } ?: return false
+        return runCatching { context.startActivity(candidate.second) }.isSuccess
+    }
+
+    /** The phone has no autostart manager at all — nothing to open, and nothing to fix. */
+    fun noteAutostartUnavailable() {
+        _state.value = _state.value.copy(
+            notice = "This phone has no separate autostart screen, so there is nothing to change: " +
+                "Android itself starts Undal when an order arrives."
+        )
+    }
+
     fun detectAutostartTargets(context: Context) {
         val available = AlarmChannels.autostartCandidates()
             .filter { (_, intent) ->

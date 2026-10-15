@@ -1,4 +1,5 @@
 package com.undal.syl.app.core.cart
+import java.util.Locale
 
 import com.undal.syl.app.core.util.Money
 
@@ -81,7 +82,7 @@ data class Cart(
     fun quantityOf(lineId: String): Int = lines.filter { it.id == lineId }.sumOf { it.quantity }
 
     fun withCoupon(code: String): Cart = copy(
-        couponCode = code.trim().uppercase(),
+        couponCode = code.trim().uppercase(Locale.ENGLISH),
         updatedAtMillis = System.currentTimeMillis()
     )
 

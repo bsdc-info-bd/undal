@@ -38,17 +38,21 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.undal.syl.app.core.design.UndalAlertBanner
 import com.undal.syl.app.core.design.UndalCard
 import com.undal.syl.app.core.design.UndalEmptyState
@@ -59,7 +63,7 @@ import com.undal.syl.app.core.design.UndalScaffold
 import com.undal.syl.app.core.design.UndalSecondaryButton
 import com.undal.syl.app.core.design.UndalStatusPill
 import com.undal.syl.app.core.design.UndalTextField
-import com.undal.syl.app.core.maps.UndalGoogleEmbedMap
+import com.undal.syl.app.core.maps.UndalLocationMap
 import com.undal.syl.app.core.theme.UndalDimens
 import com.undal.syl.app.core.theme.undalSemantics
 import com.undal.syl.app.core.util.Distance
@@ -86,8 +90,33 @@ fun OrderTrackingScreen(
     openChatInitially: Boolean = false,
     viewModel: OrderTrackingViewModel = hiltViewModel()
 ) {
-    val state by viewModel.state.collectAsState()
+    val state by viewModel.state.collectAsStateWithLifecycle()
     val context = LocalContext.current
+
+    // The ticker behind this screen is told when there is somebody to tick for.
+    // `ON_START`/`ON_STOP` are the pair Navigation dispatches when this screen
+    // comes forward and when another one covers it — including the moment the
+    // customer presses home, which is the one that matters most: a countdown
+    // nobody can see does not need a clock, and a phone in a pocket should not
+    // be woken once a second for one.
+    val lifecycleOwner = LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            when (event) {
+                Lifecycle.Event.ON_START -> viewModel.onScreenVisible()
+                Lifecycle.Event.ON_STOP -> viewModel.onScreenHidden()
+                else -> Unit
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose {
+            lifecycleOwner.lifecycle.removeObserver(observer)
+            // The observer is gone before the last ON_STOP can arrive, so the
+            // screen says so itself rather than leaving the ticker running for a
+            // screen that no longer exists.
+            viewModel.onScreenHidden()
+        }
+    }
 
     LaunchedEffect(orderId) { viewModel.bind(orderId) }
     LaunchedEffect(openChatInitially) { if (openChatInitially) viewModel.openChat() }
@@ -149,12 +178,23 @@ fun OrderTrackingScreen(
             return@UndalScaffold
         }
 
+        // The order has been sent but the kitchen has not picked it up yet: this
+        // is the moment the customer is checking what they just ordered, so the
+        // confirmation and its bill lead the screen. Once the kitchen accepts,
+        // the live status card is the important thing again and this steps aside.
+        val showPlacementCard = state.displayStatus == OrderStatus.PLACED && !state.isCancelled
+
         Column(
             modifier = Modifier
                 .fillMaxSize()
                 .verticalScroll(rememberScrollState())
                 .padding(horizontal = UndalDimens.screenPadding)
         ) {
+            if (showPlacementCard) {
+                Spacer(Modifier.height(UndalDimens.sm))
+                UndalOrderConfirmationCard(detail = detail)
+            }
+
             if (state.notice != null) {
                 Spacer(Modifier.height(UndalDimens.sm))
                 UndalAlertBanner(
@@ -214,9 +254,14 @@ fun OrderTrackingScreen(
                 }
             }
 
-            Spacer(Modifier.height(UndalDimens.sm))
+            // The placement card above prints the same bill row by row, so it is
+            // not printed twice on one screen — the page repeats the *status*,
+            // never the receipt.
+            if (!showPlacementCard) {
+                Spacer(Modifier.height(UndalDimens.sm))
 
-            ReceiptCard(detail)
+                ReceiptCard(detail)
+            }
 
             Spacer(Modifier.height(UndalDimens.sm))
 
@@ -266,13 +311,15 @@ fun OrderTrackingScreen(
                     UndalSecondaryButton(
                         text = if (state.unread > 0) "Open chat · ${state.unread} new" else "Open chat",
                         onClick = viewModel::openChat,
-                        icon = Icons.Filled.Send
+                        icon = Icons.Filled.Send,
+                        modifier = Modifier.weight(1f)
                     )
                     if (state.canCallKitchen) {
                         UndalSecondaryButton(
                             text = "Call",
                             onClick = { UndalPhone.dial(context, state.kitchenPhone) },
-                            icon = Icons.Filled.Call
+                            icon = Icons.Filled.Call,
+                            modifier = Modifier.weight(1f)
                         )
                     }
                 }
@@ -466,10 +513,16 @@ private fun CancelledBlock(
                 UndalPrimaryButton(
                     text = "Call the kitchen",
                     onClick = { UndalPhone.dial(context, state.kitchenPhone) },
-                    icon = Icons.Filled.Call
+                    icon = Icons.Filled.Call,
+                    modifier = Modifier.weight(1f)
                 )
             }
-            UndalSecondaryButton(text = "Chat instead", onClick = viewModel::openChat, icon = Icons.Filled.Send)
+            UndalSecondaryButton(
+                text = "Chat instead",
+                onClick = viewModel::openChat,
+                icon = Icons.Filled.Send,
+                modifier = Modifier.weight(1f)
+            )
         }
     }
 }
@@ -554,16 +607,25 @@ private fun DeliveryCard(detail: OrderRepo.OrderDetail) {
         )
         Spacer(Modifier.height(UndalDimens.xs))
         Text(detail.addressDesc, style = MaterialTheme.typography.bodyMedium)
-        Text(
-            text = "Rider note: ${detail.addressNote}",
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant
-        )
+        if (detail.addressNote.isNotBlank()) {
+            Text(
+                text = "Rider note: ${detail.addressNote}",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        } else {
+            Text(
+                text = "No rider note — add one if your gate is hard to find.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
         Spacer(Modifier.height(UndalDimens.sm))
-        UndalGoogleEmbedMap(
+        UndalLocationMap(
             latitude = detail.addressLat,
             longitude = detail.addressLng,
             title = detail.addressTitle.ifBlank { "Delivery point" },
+            caption = detail.addressTitle.ifBlank { "Delivery point" },
             height = UndalDimens.mapHeight
         )
         Spacer(Modifier.height(UndalDimens.sm))
@@ -671,7 +733,8 @@ private fun ChatMode(
                     onClick = viewModel::send,
                     enabled = state.sendEnabled,
                     loading = state.sending,
-                    icon = Icons.Filled.Send
+                    icon = Icons.Filled.Send,
+                    fillWidth = false
                 )
             }
         }

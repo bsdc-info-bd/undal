@@ -36,7 +36,7 @@ Legend: `[x]` shipped and wired · `[ ]` still to ship.
 - [x] C-011 · Runtime permission flow with deny → app settings deep link
 - [x] C-012 · GPS auto-capture with accuracy indicator
 - [x] C-013 · Drag-pin fine adjustment on the osmdroid picker
-- [x] C-014 · Google embed view of the pinned point, one tap away — the draggable street map opens the screen, because the embed is served by Google to a WebView and can arrive blank
+- [x] C-014 · The pin is placed on an OpenStreetMap street map drawn by osmdroid in this process — drag the pin, long-press the map, nudge it five metres at a time, or take the GPS fix. There is no embed and no third party between the app and the picture of the street
 - [x] C-015 · Address title as a required field
 - [x] C-016 · Address description as a required field
 - [x] C-017 · Delivery note as a required field
@@ -80,7 +80,7 @@ Legend: `[x]` shipped and wired · `[ ]` still to ship.
 - [x] C-055 · Discount line item
 - [x] C-056 · Grand total, exact to the paisa
 - [x] C-057 · Cash-on-delivery-only ribbon and method card
-- [x] C-058 · Address card with Google embed, pin, title, description and note
+- [x] C-058 · Address card with the OpenStreetMap pin, the coordinates in writing, "open in a map app", "copy coordinates", title, description and note
 - [x] C-059 · Change-address shortcut that re-runs the pin flow
 - [x] C-060 · Checkout guards: store closed, outside radius, below minimum, offline — each with its own reason
 - [x] C-061 · Place order: atomic write of order, shortId counter and coupon usage, RTDB live mirror, Worker notification with WorkManager retry
@@ -133,7 +133,7 @@ Legend: `[x]` shipped and wired · `[ ]` still to ship.
 - [x] V-024 · Full-screen ringing alert with the looping Undal order sound, kept audible by a ten-second self-check that rebuilds the player (or falls back to the phone's own alarm tone) if the tone ever stops on its own
 - [x] V-025 · Order card with items, totals, fee, distance and address title, description, note
 - [x] V-026 · Customer card with name, profile photo, phone number, Call button and copy-address
-- [x] V-027 · Google embed map and pin on every order, with an osmdroid toggle
+- [x] V-027 · Every order carries its pin on the street map — the kitchen's copy shows the kitchen and the customer framed together, with the coordinates, and hands the point to the rider's own navigation app
 - [x] V-028 · Accept with a prep-time picker (10/15/20/25/30/45 minute chips plus custom)
 - [x] V-029 · Reject with reason templates and a mandatory note that pushes instantly
 - [x] V-030 · Confirmation sheet before accepting, showing the total

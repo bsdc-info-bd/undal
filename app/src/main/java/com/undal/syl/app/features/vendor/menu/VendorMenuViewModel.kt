@@ -17,10 +17,12 @@ import com.undal.syl.app.core.model.MenuSort
 import com.undal.syl.app.core.model.Subcategory
 import com.undal.syl.app.core.model.VendorCoupon
 import com.undal.syl.app.core.util.Money
+import com.undal.syl.app.core.util.UndalDigits
 import com.undal.syl.app.core.util.UndalResult
 import com.undal.syl.app.data.repo.MenuRepo
 import com.undal.syl.app.data.repo.VendorMenuRepo
 import dagger.hilt.android.lifecycle.HiltViewModel
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -58,7 +60,12 @@ class VendorMenuViewModel @Inject constructor(
         val active: Boolean = true,
         val iconUrl: String = ""
     ) {
-        val order: Int get() = orderText.trim().toIntOrNull() ?: 0
+        /**
+         * The position in the menu. ০ (Bangla zero) and 0 are the same position,
+         * and an unreadable value falls back to the top rather than putting the
+         * section somewhere nobody asked for.
+         */
+        val order: Int get() = UndalDigits.toIntOrNull(orderText)?.coerceIn(0, 999) ?: 0
         /**
          * The name is judged by the floor the rules enforce (three characters), so
          * a short one is refused here with a sentence instead of by the database
@@ -108,6 +115,50 @@ class VendorMenuViewModel @Inject constructor(
         val confirmDelete: DeleteRequest? = null,
         val message: String? = null
     )
+
+    /**
+     * The photo upload that is running, if one is.
+     *
+     * One at a time, deliberately. The four editors share the single
+     * `uploadProgress` field, so a second photo picked while the first was still
+     * travelling wrote its own percentages over the first one's and then raced
+     * it to the draft's `imageUrl`: whichever finished last won, which is not a
+     * promise anybody can make to a kitchen that is watching a progress bar.
+     */
+    private var uploadJob: Job? = null
+
+    /**
+     * The SDK's id for that upload — the only handle with which it can be
+     * stopped, because Cloudinary's own cancellation is what stops the bytes.
+     */
+    private var uploadRequestId: String? = null
+
+    private fun uploadRunning(): Boolean = uploadJob?.isActive == true
+
+    /**
+     * Stops the upload that is running, through the SDK, so the transfer stops
+     * rather than the screen merely stopping the wait.
+     *
+     * The draft keeps the photo it already had: a stopped upload is not a
+     * change. No message is written here either — the SDK answers the pending
+     * upload with `REQUEST_CANCELLED`, and the uploader already knows how to
+     * word that, so the sentence arrives from the same place as every other
+     * upload failure, once, instead of twice from two directions.
+     */
+    fun cancelUpload() {
+        val id = uploadRequestId
+        uploadRequestId = null
+        if (id == null || !uploadRunning()) {
+            _state.value = _state.value.copy(uploadProgress = null)
+            return
+        }
+        if (!vendorMenuRepo.cancelUpload(id)) {
+            // The SDK had already finished with this request, so its answer is
+            // already travelling: keep the id and let the screen read the real
+            // outcome rather than claiming a cancellation that did not happen.
+            uploadRequestId = id
+        }
+    }
 
     private val _state = MutableStateFlow(State())
     val state: StateFlow<State> = _state.asStateFlow()
@@ -278,11 +329,16 @@ class VendorMenuViewModel @Inject constructor(
     }
 
     fun uploadDishImage(uri: Uri) {
+        if (uploadRunning()) return
         _state.value = _state.value.copy(uploadProgress = 0f)
-        viewModelScope.launch(guard) {
-            when (val result = vendorMenuRepo.uploadImage(uri) { fraction ->
-                _state.value = _state.value.copy(uploadProgress = fraction)
-            }) {
+        uploadJob = viewModelScope.launch(guard) {
+            when (
+                val result = vendorMenuRepo.uploadImage(
+                    uri,
+                    onProgress = { fraction -> _state.value = _state.value.copy(uploadProgress = fraction) },
+                    onRequestId = { id -> uploadRequestId = id }
+                )
+            ) {
                 is UndalResult.Success -> _state.value = _state.value.copy(
                     uploadProgress = null,
                     itemDraft = _state.value.itemDraft?.copy(imageUrl = result.value),
@@ -400,12 +456,17 @@ class VendorMenuViewModel @Inject constructor(
     }
 
     fun uploadSectionIcon(uri: Uri) {
+        if (uploadRunning()) return
         val draft = _state.value.sectionDraft ?: return
         _state.value = _state.value.copy(uploadProgress = 0f)
-        viewModelScope.launch(guard) {
-            when (val result = vendorMenuRepo.uploadImage(uri) { fraction ->
-                _state.value = _state.value.copy(uploadProgress = fraction)
-            }) {
+        uploadJob = viewModelScope.launch(guard) {
+            when (
+                val result = vendorMenuRepo.uploadImage(
+                    uri,
+                    onProgress = { fraction -> _state.value = _state.value.copy(uploadProgress = fraction) },
+                    onRequestId = { id -> uploadRequestId = id }
+                )
+            ) {
                 is UndalResult.Success -> _state.value = _state.value.copy(
                     uploadProgress = null,
                     sectionDraft = draft.copy(iconUrl = result.value),
@@ -539,12 +600,17 @@ class VendorMenuViewModel @Inject constructor(
     }
 
     fun uploadComboImage(uri: Uri) {
+        if (uploadRunning()) return
         val draft = _state.value.comboDraft ?: return
         _state.value = _state.value.copy(uploadProgress = 0f)
-        viewModelScope.launch(guard) {
-            when (val result = vendorMenuRepo.uploadImage(uri) { fraction ->
-                _state.value = _state.value.copy(uploadProgress = fraction)
-            }) {
+        uploadJob = viewModelScope.launch(guard) {
+            when (
+                val result = vendorMenuRepo.uploadImage(
+                    uri,
+                    onProgress = { fraction -> _state.value = _state.value.copy(uploadProgress = fraction) },
+                    onRequestId = { id -> uploadRequestId = id }
+                )
+            ) {
                 is UndalResult.Success -> _state.value = _state.value.copy(
                     uploadProgress = null,
                     comboDraft = draft.copy(imageUrl = result.value),
@@ -605,12 +671,17 @@ class VendorMenuViewModel @Inject constructor(
     }
 
     fun uploadCampaignBanner(uri: Uri) {
+        if (uploadRunning()) return
         val draft = _state.value.campaignDraft ?: return
         _state.value = _state.value.copy(uploadProgress = 0f)
-        viewModelScope.launch(guard) {
-            when (val result = vendorMenuRepo.uploadImage(uri) { fraction ->
-                _state.value = _state.value.copy(uploadProgress = fraction)
-            }) {
+        uploadJob = viewModelScope.launch(guard) {
+            when (
+                val result = vendorMenuRepo.uploadImage(
+                    uri,
+                    onProgress = { fraction -> _state.value = _state.value.copy(uploadProgress = fraction) },
+                    onRequestId = { id -> uploadRequestId = id }
+                )
+            ) {
                 is UndalResult.Success -> _state.value = _state.value.copy(
                     uploadProgress = null,
                     campaignDraft = draft.copy(bannerUrl = result.value),

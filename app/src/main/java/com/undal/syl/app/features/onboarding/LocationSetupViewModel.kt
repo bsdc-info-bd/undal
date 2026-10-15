@@ -7,6 +7,7 @@ import com.google.firebase.auth.FirebaseAuth
 import com.undal.syl.app.core.maps.UndalLocation
 import com.undal.syl.app.core.maps.UndalLocationController
 import com.undal.syl.app.core.session.OnboardingProgress
+import com.undal.syl.app.core.util.UndalDigits
 import com.undal.syl.app.core.util.UndalResult
 import com.undal.syl.app.core.util.Validators
 import com.undal.syl.app.data.repo.AuthRepo
@@ -53,22 +54,7 @@ class LocationSetupViewModel @Inject constructor(
         val locating: Boolean = false,
         val permissionNeeded: Boolean = false,
         val saved: Boolean = false,
-        val banner: String? = null,
-        /**
-         * Which map engine is on screen.
-         *
-         * The street map is the default because it is the one that works: it is
-         * drawn from OpenStreetMap tiles by osmdroid, in the app's own process,
-         * and it is the only one of the two the customer can actually *drag* —
-         * which is what pinning a door means. The keyless Google embed is offered
-         * as a labelled choice for anyone who wants the familiar look, and it
-         * degrades to a sentence rather than a grey box, because Google serves it
-         * to a WebView only when it feels like it.
-         *
-         * This step is mandatory: no pin, no address, no order. The map that opens
-         * it must not be the one that can arrive blank.
-         */
-        val showGoogleEmbed: Boolean = false
+        val banner: String? = null
     ) {
         val location: UndalLocation
             get() = UndalLocation(lat, lng, title, desc, note, label, accuracyMeters)
@@ -211,16 +197,27 @@ class LocationSetupViewModel @Inject constructor(
         _state.value = _state.value.copy(note = value, noteError = null, banner = null)
     }
 
-    /** Digits only, eleven of them: what the rules store as 01XXXXXXXXX. */
+    /**
+     * Digits only, eleven of them, in ASCII: what the rules store as 01XXXXXXXXX.
+     *
+     * A number typed on a Bangla keyboard arrives as ০১৭…, which `isDigit()` also
+     * calls digits — and which Firestore's `^01[3-9][0-9]{8}$` does not. The
+     * conversion is here rather than at the save, so what the customer sees in the
+     * field is exactly what is stored.
+     */
     fun onPhoneChange(value: String) {
-        val digits = value.filter { it.isDigit() }.take(11)
+        val digits = UndalDigits.toAscii(value).filter { it in '0'..'9' }.take(11)
         _state.value = _state.value.copy(phone = digits, phoneError = null, banner = null)
     }
 
-    /** Street map ⇄ Google embed. Both draw the same pin; only one of them drags. */
-    fun toggleGoogleEmbed() {
-        _state.value = _state.value.copy(showGoogleEmbed = !_state.value.showGoogleEmbed)
-    }
+    /**
+     * Whether this phone already lets Undal read its location.
+     *
+     * Asked before the rationale sheet so a customer who has already granted the
+     * permission is never asked to justify it again — and asked of the permission
+     * itself rather than of a collected state that has not finished loading.
+     */
+    fun hasLocationPermission(context: Context): Boolean = controller.hasLocationPermission(context)
 
     fun save(onSaved: () -> Unit) {
         val current = _state.value

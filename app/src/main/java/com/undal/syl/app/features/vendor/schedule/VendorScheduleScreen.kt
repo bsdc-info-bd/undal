@@ -25,7 +25,8 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -47,6 +48,8 @@ import com.undal.syl.app.core.design.UndalTextButton
 import com.undal.syl.app.core.theme.UndalDimens
 import com.undal.syl.app.core.theme.undalSemantics
 import com.undal.syl.app.core.util.TimeDhaka
+import com.undal.syl.app.core.util.UndalDigits
+import com.undal.syl.app.core.util.Validators
 import com.undal.syl.app.features.vendor.VendorChip
 import com.undal.syl.app.features.vendor.VendorSection
 import com.undal.syl.app.features.vendor.menu.VendorDateField
@@ -64,12 +67,12 @@ fun VendorScheduleScreen(
     onBack: () -> Unit,
     viewModel: VendorScheduleViewModel = hiltViewModel()
 ) {
-    val state by viewModel.state.collectAsState()
+    val state by viewModel.state.collectAsStateWithLifecycle()
     val haptics = LocalHapticFeedback.current
-    var addingSpecial by remember { mutableStateOf(false) }
-    var specialClosed by remember { mutableStateOf(true) }
-    var specialNote by remember { mutableStateOf("") }
-    var specialMillis by remember { mutableStateOf(System.currentTimeMillis()) }
+    var addingSpecial by rememberSaveable { mutableStateOf(false) }
+    var specialClosed by rememberSaveable { mutableStateOf(true) }
+    var specialNote by rememberSaveable { mutableStateOf("") }
+    var specialMillis by rememberSaveable { mutableStateOf(System.currentTimeMillis()) }
 
     UndalScaffold(
         title = "Opening hours",
@@ -225,19 +228,30 @@ fun VendorScheduleScreen(
                                     ) {
                                         UndalTextField(
                                             value = slot.open,
-                                            onValueChange = { viewModel.onWeekdaySlot(day.key, index, it, null) },
+                                            onValueChange = {
+                                                viewModel.onWeekdaySlot(day.key, index, UndalDigits.cleanClock(it), null)
+                                            },
                                             label = "Opens",
                                             hint = "09:00",
-                                            keyboardType = KeyboardType.Number,
+                                            error = Validators.clockTimeError("opening", slot.open)
+                                                .takeIf { slot.open.isNotBlank() },
+                                            // Text, not Number: this field is "09:00" and a
+                                            // numeric keypad has no colon key. The value is
+                                            // normalised to HH:MM as it is typed.
+                                            keyboardType = KeyboardType.Text,
                                             singleLine = true,
                                             modifier = Modifier.weight(1f)
                                         )
                                         UndalTextField(
                                             value = slot.close,
-                                            onValueChange = { viewModel.onWeekdaySlot(day.key, index, null, it) },
+                                            onValueChange = {
+                                                viewModel.onWeekdaySlot(day.key, index, null, UndalDigits.cleanClock(it))
+                                            },
                                             label = "Closes",
                                             hint = "22:00",
-                                            keyboardType = KeyboardType.Number,
+                                            error = Validators.clockTimeError("closing", slot.close)
+                                                .takeIf { slot.close.isNotBlank() },
+                                            keyboardType = KeyboardType.Text,
                                             singleLine = true,
                                             modifier = Modifier.weight(1f)
                                         )
@@ -323,19 +337,33 @@ fun VendorScheduleScreen(
                                         ) {
                                             UndalTextField(
                                                 value = slot.open,
-                                                onValueChange = { viewModel.onSpecialSlot(special.date, index, it, null) },
+                                                onValueChange = {
+                                                    viewModel.onSpecialSlot(
+                                                        special.date, index,
+                                                        UndalDigits.cleanClock(it), null
+                                                    )
+                                                },
                                                 label = "Opens",
                                                 hint = "09:00",
-                                                keyboardType = KeyboardType.Number,
+                                                error = Validators.clockTimeError("opening", slot.open)
+                                                    .takeIf { slot.open.isNotBlank() },
+                                                keyboardType = KeyboardType.Text,
                                                 singleLine = true,
                                                 modifier = Modifier.weight(1f)
                                             )
                                             UndalTextField(
                                                 value = slot.close,
-                                                onValueChange = { viewModel.onSpecialSlot(special.date, index, null, it) },
+                                                onValueChange = {
+                                                    viewModel.onSpecialSlot(
+                                                        special.date, index, null,
+                                                        UndalDigits.cleanClock(it)
+                                                    )
+                                                },
                                                 label = "Closes",
                                                 hint = "22:00",
-                                                keyboardType = KeyboardType.Number,
+                                                error = Validators.clockTimeError("closing", slot.close)
+                                                    .takeIf { slot.close.isNotBlank() },
+                                                keyboardType = KeyboardType.Text,
                                                 singleLine = true,
                                                 modifier = Modifier.weight(1f)
                                             )
@@ -388,12 +416,14 @@ fun VendorScheduleScreen(
                                         specialNote = ""
                                         specialClosed = true
                                     },
-                                    icon = Icons.Filled.Check
+                                    icon = Icons.Filled.Check,
+                                    modifier = Modifier.weight(1f)
                                 )
                                 UndalSecondaryButton(
                                     text = "Cancel",
                                     onClick = { addingSpecial = false },
-                                    icon = Icons.Filled.Close
+                                    icon = Icons.Filled.Close,
+                                    modifier = Modifier.weight(1f)
                                 )
                             }
                         } else {

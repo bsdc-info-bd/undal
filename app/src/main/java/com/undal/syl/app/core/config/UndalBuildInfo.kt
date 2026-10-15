@@ -53,7 +53,7 @@ object UndalBuildInfo {
     /** Resource name of the official order sound: `R.raw.undal_order_alert`. */
     val orderSoundName: String get() = BuildConfig.ORDER_SOUND_NAME
 
-    /** True once the worker host has been replaced with the owner's real sub-domain. */
+    /** True once the worker host has been filled in with the owner's real sub-domain. */
     val isWorkerConfigured: Boolean
         get() = workerBaseUrl.startsWith("https://") && !workerBaseUrl.contains(NOT_CONFIGURED_MARKER)
 
@@ -66,8 +66,23 @@ object UndalBuildInfo {
     val isCloudinaryConfigured: Boolean
         get() = cloudinaryCloudName.isNotBlank() && cloudinaryUploadPreset.isNotBlank()
 
-    /** Deep link for a dish / combo / order, used by the share sheet and the QR code. */
-    fun shareUrl(path: String): String = workerBaseUrl.trimEnd('/') + "/" + path.trimStart('/')
+    /**
+     * The Web storefront's address, or null when this build does not know it.
+     *
+     * A build compiled without the owner's `WORKER_HOST` secret has no address to
+     * point at, and the honest answer is `null`: every caller either says so on
+     * the screen or leaves the link out. Sharing `https://undal.YOUR-SUBDOMAIN…`
+     * into a WhatsApp group is worse than sharing nothing — the customer taps it,
+     * the browser says the site cannot be reached, and the kitchen looks broken.
+     */
+    val webStoreHost: String? get() = workerHost.takeIf { isWorkerConfigured && it.isNotBlank() }
+    val webStoreBaseUrl: String? get() = workerBaseUrl.takeIf { isWorkerConfigured }
+
+    /** Deep link for a dish / combo / order, or null when there is no host to link to. */
+    fun shareUrlOrNull(path: String): String? {
+        val base = webStoreBaseUrl ?: return null
+        return base.trimEnd('/') + "/" + path.trimStart('/')
+    }
 
     private const val NOT_CONFIGURED_MARKER = "YOUR-SUBDOMAIN"
 }

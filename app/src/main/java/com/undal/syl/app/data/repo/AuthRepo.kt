@@ -1,11 +1,13 @@
 package com.undal.syl.app.data.repo
 
+import com.google.firebase.auth.ActionCodeSettings
 import com.google.firebase.auth.EmailAuthProvider
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.auth.FirebaseAuthInvalidCredentialsException
 import com.google.firebase.auth.UserProfileChangeRequest
 import com.google.firebase.firestore.FieldValue
 import com.google.firebase.firestore.FirebaseFirestore
+import com.undal.syl.app.core.config.UndalBuildInfo
 import com.undal.syl.app.core.maps.UndalLocation
 import com.undal.syl.app.core.session.OnboardingProgress
 import com.undal.syl.app.core.util.UndalErrors
@@ -47,7 +49,15 @@ class AuthRepo @Inject constructor(
                     UserProfileChangeRequest.Builder().setDisplayName(name.trim()).build()
                 ).await()
             }
-            runCatching { user.sendEmailVerification().await() }
+            // The link the app sends is the one the customer has to be able to
+            // come back from. Firebase's default handler confirms the address in
+            // the browser and then shows the continue URL, so the customer lands
+            // on the storefront rather than on a blank page — and our Worker's
+            // `/app` route is what turns that landing into "open Undal".
+            runCatching {
+                user.sendEmailVerification(verificationSettings()).await()
+                lastVerificationSentAt = System.currentTimeMillis()
+            }
 
             progress.saveDraftProfile(
                 OnboardingProgress.DraftProfile(name = name.trim(), email = email.trim(), phone = phone.filter { it.isDigit() })
@@ -75,14 +85,34 @@ class AuthRepo @Inject constructor(
         onFailure = { UndalResult.Failure(UndalErrors.auth(it), it) }
     )
 
-    suspend fun resendVerificationEmail(): UndalResult<Unit> = runCatching {
-        val user = auth.currentUser ?: error("Not signed in")
-        user.sendEmailVerification().await()
-        Unit
-    }.fold(
-        onSuccess = { UndalResult.Success(Unit) },
-        onFailure = { UndalResult.Failure(UndalErrors.auth(it), it) }
-    )
+    /**
+     * Sends the confirmation link again (C-009).
+     *
+     * The same three-step guard every "resend" needs: signed in, not already
+     * verified, and not asking Firebase twice inside a minute — a customer who
+     * taps Resend three times because the first mail was slow gets one link, not
+     * three, and never the `TOO_MANY_REQUESTS` that a fourth would produce.
+     */
+    suspend fun resendVerificationEmail(): UndalResult<Unit> {
+        val user = auth.currentUser
+            ?: return UndalResult.Failure("Please sign in again — your session expired.")
+        if (user.isEmailVerified) {
+            return UndalResult.Success(Unit)
+        }
+        val now = System.currentTimeMillis()
+        if (now - lastVerificationSentAt < RESEND_COOLDOWN_MILLIS) {
+            val seconds = ((RESEND_COOLDOWN_MILLIS - (now - lastVerificationSentAt)) / 1000).toInt() + 1
+            return UndalResult.Failure("A link was just sent. Give it $seconds seconds before asking again.")
+        }
+        return runCatching {
+            user.sendEmailVerification(verificationSettings()).await()
+            lastVerificationSentAt = now
+            Unit
+        }.fold(
+            onSuccess = { UndalResult.Success(Unit) },
+            onFailure = { UndalResult.Failure(UndalErrors.auth(it), it) }
+        )
+    }
 
     /**
      * Writes `users/{uid}` in a transaction once the address is complete
@@ -227,8 +257,40 @@ class AuthRepo @Inject constructor(
         )
     }
 
-    /** Whether the verification link sent at registration has been confirmed. */
-    fun isEmailVerified(): Boolean = auth.currentUser?.isEmailVerified ?: false
+    /**
+     * Whether the confirmation link sent at registration has been confirmed.
+     *
+     * **This is a server question, not a local one.** `FirebaseUser` caches the
+     * account record it last downloaded, and tapping the link in a mail app
+     * changes that record on Google's side while no listener on this device fires
+     * — the SDK has no idea anything happened. Reading the cached flag alone is
+     * why a customer who had just verified their address still saw "your email is
+     * not verified yet".
+     *
+     * So: a cached `true` is trusted (it can only be replaced by another reload),
+     * and a cached `false` triggers [`FirebaseUser.reload`] — one small call that
+     * fetches the real record — before the answer is given. A reload that cannot
+     * reach the network leaves the previous answer in place rather than inventing
+     * a new one, and [verified] returning false is what the caller turns into
+     * "we could not check just now".
+     */
+    suspend fun isEmailVerified(): Boolean {
+        val user = auth.currentUser ?: return false
+        if (user.isEmailVerified) return true
+        runCatching { user.reload().await() }
+        return user.isEmailVerified
+    }
+
+    /** True when the last check actually reached Firebase. */
+    suspend fun checkEmailVerifiedWithNetwork(): Pair<Boolean, Boolean> {
+        val user = auth.currentUser ?: return false to false
+        if (user.isEmailVerified) return true to true
+        val reached = runCatching { user.reload().await() }.isSuccess
+        return user.isEmailVerified to reached
+    }
+
+    /** The address the confirmation link was sent to, for the sentence on screen. */
+    fun currentEmailAddress(): String? = auth.currentUser?.email
 
     /** The signed-in email; shown read-only on the profile screen (C-079). */
     fun currentEmail(): String? = auth.currentUser?.email
@@ -327,5 +389,34 @@ class AuthRepo @Inject constructor(
 
         /** The security rules cap the stored name at 80 characters. */
         const val MAX_NAME_CHARS = 80
+
+        /** Firebase itself refuses a burst; one a minute is the polite version. */
+        const val RESEND_COOLDOWN_MILLIS = 60_000L
     }
+
+    /**
+     * Where the confirmation mail sends the customer when the link is opened.
+     *
+     * The Worker's `/app` route is the app's own deep-link landing page: it
+     * answers on a phone with the intent that opens Undal, and on a desktop with
+     * the storefront. Without a continue URL Firebase shows its own generic page,
+     * which is where a customer confirms their address and then has nowhere to go.
+     */
+    private fun verificationSettings(): ActionCodeSettings {
+        val continueUrl = UndalBuildInfo.webStoreBaseUrl?.let { it.trimEnd('/') + "/app" }
+        return ActionCodeSettings.newBuilder()
+            // A build without the owner's host has no page to land on: Firebase's
+            // own confirmation page is a better destination than a sub-domain that
+            // does not resolve. The address is still verified either way.
+            .apply { if (continueUrl != null) setUrl(continueUrl) }
+            .setHandleCodeInApp(false)
+            .build()
+    }
+
+    /**
+     * When a confirmation link was last sent, so the button cannot be used as a
+     * mail bomb against the account holder's own inbox.
+     */
+    @Volatile
+    private var lastVerificationSentAt: Long = 0L
 }

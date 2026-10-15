@@ -26,7 +26,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.collectAsState
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -64,7 +64,7 @@ fun VendorChatScreen(
     onOpenOrder: (String) -> Unit,
     viewModel: VendorChatViewModel = hiltViewModel()
 ) {
-    val state by viewModel.state.collectAsState()
+    val state by viewModel.state.collectAsStateWithLifecycle()
     val listState = rememberLazyListState()
     val haptics = LocalHapticFeedback.current
     var scrolled by remember { mutableStateOf(false) }
@@ -194,7 +194,8 @@ fun VendorChatScreen(
                     onClick = viewModel::send,
                     enabled = state.draft.isNotBlank() && !state.sending,
                     loading = state.sending,
-                    icon = Icons.Filled.Email
+                    icon = Icons.Filled.Email,
+                    fillWidth = false
                 )
             }
 

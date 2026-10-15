@@ -12,6 +12,7 @@ import com.undal.syl.app.core.maps.UndalLocation
 import com.undal.syl.app.core.net.CloudinaryUploader
 import com.undal.syl.app.core.session.AuthSession
 import com.undal.syl.app.core.util.UndalResult
+import com.undal.syl.app.core.util.UndalPhone
 import com.undal.syl.app.core.util.Validators
 import com.undal.syl.app.data.repo.AuthRepo
 import com.undal.syl.app.core.fcm.TokenRegistrar
@@ -19,6 +20,7 @@ import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import javax.inject.Inject
@@ -58,6 +60,11 @@ class ProfileViewModel @Inject constructor(
         val changingPassword: Boolean = false,
         val deleting: Boolean = false,
         val resendingVerification: Boolean = false,
+        val checkingVerification: Boolean = false,
+        /** When the last answer about the email came from the server. */
+        val verificationCheckedAtMillis: Long = 0L,
+        /** False when the last check could not reach Firebase at all. */
+        val verificationReachable: Boolean = true,
         val notice: String? = null,
         val noticeIsError: Boolean = false
     ) {
@@ -101,15 +108,85 @@ class ProfileViewModel @Inject constructor(
                 loading = false,
                 name = authRepo.loadProfileName().orEmpty(),
                 email = authRepo.currentEmail().orEmpty(),
-                phone = authRepo.loadProfilePhone().orEmpty(),
+                // Printed the way a number is read out — 01712 345678 — and in
+                // ASCII, because a profile written by an older build can hold the
+                // Bangla row. The field below edits this string, and every save
+                // normalises it back to 01XXXXXXXXX before it is stored.
+                phone = UndalPhone.pretty(authRepo.loadProfilePhone().orEmpty()),
                 photoUrl = authRepo.loadProfilePhoto().orEmpty(),
                 address = location,
+                // A server question, not a cached one: see AuthRepo.isEmailVerified.
                 emailVerified = authRepo.isEmailVerified(),
+                verificationCheckedAtMillis = System.currentTimeMillis(),
                 notice = _state.value.notice,
                 noticeIsError = _state.value.noticeIsError
             )
         }
     }
+
+    /**
+     * Asks Firebase whether this address is confirmed yet (C-009).
+     *
+     * The customer leaves the app to open their mail, so the app cannot be told
+     * the answer — it has to ask. This is the ask, and it is safe to call often:
+     * a confirmed account answers from memory, and an unconfirmed one costs one
+     * small request.
+     *
+     * @param quiet true for the automatic checks (returning from the mail app and
+     *   the polling window), which must not put a notice on the screen every time
+     *   the app resumes; false for the explicit "Check again" tap, which must
+     *   always say something.
+     */
+    fun checkEmailVerification(quiet: Boolean = true) {
+        if (_state.value.checkingVerification) return
+        if (_state.value.emailVerified) return
+        _state.value = _state.value.copy(checkingVerification = true)
+        viewModelScope.launch(guard) {
+            // `refreshUser` republishes the session, so the app-wide flag — the
+            // one the router and every other screen read — moves with this one.
+            session.refreshUser()
+            val (verified, reached) = authRepo.checkEmailVerifiedWithNetwork()
+            val current = _state.value
+            _state.value = current.copy(
+                checkingVerification = false,
+                emailVerified = verified,
+                verificationReachable = reached,
+                verificationCheckedAtMillis = System.currentTimeMillis(),
+                notice = when {
+                    verified -> "Thank you — ${current.email.ifBlank { "your address" }} is confirmed."
+                    !quiet && !reached -> "We could not reach Firebase just now. Check your connection and tap again."
+                    !quiet -> "Not confirmed yet. Open the link in the email we sent to " +
+                        "${current.email.ifBlank { "your address" }}, then tap Check again."
+                    else -> current.notice
+                },
+                noticeIsError = !quiet && !reached
+            )
+            if (verified) verificationWatch?.cancel()
+        }
+    }
+
+    /**
+     * Watches for the confirmation for a bounded two minutes.
+     *
+     * The window exists because the honest answer to "I tapped the link" is
+     * usually a few seconds away, and a customer who has to guess when to press a
+     * button assumes the button is broken. It is deliberately bounded: this is a
+     * screen that may be left open on a table, and an app that polls Firebase
+     * forever is a battery complaint.
+     */
+    fun watchForVerification() {
+        if (_state.value.emailVerified) return
+        if (verificationWatch?.isActive == true) return
+        verificationWatch = viewModelScope.launch(guard) {
+            repeat(VERIFICATION_POLL_ATTEMPTS) {
+                delay(VERIFICATION_POLL_MILLIS)
+                if (_state.value.emailVerified) return@repeat
+                checkEmailVerification(quiet = true)
+            }
+        }
+    }
+
+    private var verificationWatch: kotlinx.coroutines.Job? = null
 
     fun refreshAddress() {
         viewModelScope.launch(guard) {
@@ -127,7 +204,7 @@ class ProfileViewModel @Inject constructor(
                     _state.value = _state.value.copy(
                         savingBasics = false,
                         name = name.trim(),
-                        phone = cleanPhone.ifBlank { phone.trim() },
+                        phone = UndalPhone.pretty(cleanPhone.ifBlank { phone.trim() }),
                         notice = "Saved. The kitchen and the rider will use this name and number.",
                         noticeIsError = false
                     )
@@ -221,9 +298,13 @@ class ProfileViewModel @Inject constructor(
                 is UndalResult.Success -> {
                     _state.value = _state.value.copy(
                         resendingVerification = false,
-                        notice = "Verification email sent to ${_state.value.email}.",
+                        notice = "A new link is on its way to ${_state.value.email.ifBlank { "your inbox" }}. " +
+                            "Open it, then tap Check again — this screen will notice on its own too.",
                         noticeIsError = false
                     )
+                    // The link is out; watch for it being opened rather than
+                    // making the customer guess when to come back and look.
+                    watchForVerification()
                 }
 
                 is UndalResult.Failure -> {
@@ -287,5 +368,16 @@ class ProfileViewModel @Inject constructor(
 
     fun clearNotice() {
         _state.value = _state.value.copy(notice = null)
+    }
+
+    override fun onCleared() {
+        verificationWatch?.cancel()
+        super.onCleared()
+    }
+
+    private companion object {
+        /** Long enough not to hammer Firebase, short enough to feel instant. */
+        const val VERIFICATION_POLL_MILLIS = 5_000L
+        const val VERIFICATION_POLL_ATTEMPTS = 24
     }
 }

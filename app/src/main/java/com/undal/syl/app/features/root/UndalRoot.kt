@@ -13,7 +13,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.collectAsState
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -125,9 +125,9 @@ fun UndalRoot(
     navController: NavHostController = rememberNavController(),
     viewModel: UndalRootViewModel = hiltViewModel()
 ) {
-    val destination by viewModel.destination.collectAsState()
-    val ringing by OrderAlertController.ringing.collectAsState()
-    val routerError by viewModel.errorMessage.collectAsState()
+    val destination by viewModel.destination.collectAsStateWithLifecycle()
+    val ringing by OrderAlertController.ringing.collectAsStateWithLifecycle()
+    val routerError by viewModel.errorMessage.collectAsStateWithLifecycle()
     val context = LocalContext.current
 
     // A crash the guard caught: the app reopened itself, and this is the one

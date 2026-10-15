@@ -1,5 +1,6 @@
 package com.undal.syl.app.data.repo
 
+import java.util.Locale
 import android.content.Context
 import com.google.firebase.firestore.FieldValue
 import com.google.firebase.firestore.FirebaseFirestore
@@ -206,8 +207,8 @@ class OrderStatusRepo @Inject constructor(
 
                 if (!OrderStateMachine.canTransition(current, target)) {
                     error(
-                        "An order that is ${OrderStateMachine.label(current).lowercase()} cannot become " +
-                            "${OrderStateMachine.label(target).lowercase()}."
+                        "An order that is ${OrderStateMachine.label(current).lowercase(Locale.ENGLISH)} cannot become " +
+                            "${OrderStateMachine.label(target).lowercase(Locale.ENGLISH)}."
                     )
                 }
 

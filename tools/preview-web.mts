@@ -216,9 +216,9 @@ backend.kv.set("release:latest", JSON.stringify({
 }));
 backend.setDocument("config/store", store);
 backend.setDocument("vendor/kitchen-1", { role: "vendor", name: "Undal HomeKitchen", email: "kitchen@example.com" });
-backend.setDocument("orders/preview-1", {
+backend.setDocument("orders/previewOrder1", {
   shortId: "UND-1042",
-  status: "accepted",
+  status: "placed",
   customerId: "preview-customer",
   customerName: "Ayesha Rahman",
   phone: "01712345678",
@@ -227,11 +227,13 @@ backend.setDocument("orders/preview-1", {
   discountAmountPaisa: 4000,
   totalAmountPaisa: 35500,
   prepMinutes: 45,
-  items: [{ id: "kacchi", name: "Kacchi biryani", qty: 1, payablePaisa: 28000 }],
+  // The same shape the app and the Worker write: a unit price and a line total,
+  // so the preview shows the receipt a customer actually gets.
+  items: [{ id: "kacchi", name: "Kacchi biryani", qty: 1, unitAmountPaisa: 28000, lineTotalAmountPaisa: 28000, kind: "dish" }],
   distanceKm: 3,
-  createdAt: new Date(now - 6 * 60_000).toISOString(),
-  updatedAt: new Date(now - 60_000).toISOString(),
-  timeline: [{ status: "placed" }, { status: "accepted" }],
+  createdAt: new Date(now - 40_000).toISOString(),
+  updatedAt: new Date(now - 5_000).toISOString(),
+  timeline: [{ status: "placed" }],
 });
 // A kitchen device, so an alert sent from this preview has somewhere to go.
 backend.setDocument("fcmTokens/kitchen-1/tokens/preview-token-0123456789abcdef", {
@@ -239,7 +241,7 @@ backend.setDocument("fcmTokens/kitchen-1/tokens/preview-token-0123456789abcdef",
   appVersion: "1.4.0",
   updatedAt: new Date(now).toISOString(),
 });
-backend.setRtdb("orderLive/preview-1", { status: "accepted", updatedAt: now });
+backend.setRtdb("orderLive/previewOrder1", { status: "placed", updatedAt: now });
 
 const restoreFetch = backend.install();
 const env = backend.env;
@@ -290,7 +292,7 @@ const server = createServer(async (nodeRequest, nodeResponse) => {
 
 server.listen(PORT, "0.0.0.0", () => {
   console.log(`Undal web preview on http://0.0.0.0:${PORT}`);
-  console.log("Pages: / /store /item/kacchi /basket /checkout /login /account /about /track?id=preview-1 /order/preview-1 /download /robots.txt /sitemap.xml /healthz");
+  console.log("Pages: / /store /item/kacchi /basket /checkout /login /account /about /track?id=previewOrder1 /order/previewOrder1 /download /robots.txt /sitemap.xml /healthz");
   console.log("Every request is served by worker/src/index.ts against an in-memory Firebase.");
 });
 

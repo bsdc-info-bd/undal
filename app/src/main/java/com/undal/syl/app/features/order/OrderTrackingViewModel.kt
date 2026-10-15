@@ -40,6 +40,8 @@ import javax.inject.Inject
  * The screen shows the newest of the two, which means a status change is visible
  * even in the moment between the kitchen's RTDB write and its Firestore commit.
  */
+private const val IDLE_TICK_MILLIS = 2_000L
+
 @HiltViewModel
 class OrderTrackingViewModel @Inject constructor(
     private val orderRepo: OrderRepo,
@@ -109,6 +111,24 @@ class OrderTrackingViewModel @Inject constructor(
         _state.value = _state.value.copy(notice = message)
     }
 
+    /**
+     * The screen telling the ViewModel what it can know: whether it is on top.
+     *
+     * Called from the screen's own lifecycle, because a screen that is behind
+     * another one is a screen nobody is reading.
+     */
+    fun onScreenVisible() {
+        onScreenFlow.value = true
+        // The customer has just arrived, so the labels they are about to read are
+        // built from the time on the clock in this instant, not from the last
+        // moment the ticker ran.
+        tickFlow.value = System.currentTimeMillis()
+    }
+
+    fun onScreenHidden() {
+        onScreenFlow.value = false
+    }
+
     private var boundOrderId: String = ""
     private val detailFlow = MutableStateFlow<OrderRepo.OrderDetail?>(null)
     private val messagesFlow = MutableStateFlow<List<ChatRepo.Message>>(emptyList())
@@ -117,6 +137,15 @@ class OrderTrackingViewModel @Inject constructor(
     private val chatOpenFlow = MutableStateFlow(false)
     private val draftFlow = MutableStateFlow("")
     private val tickFlow = MutableStateFlow(System.currentTimeMillis())
+    /**
+     * Whether this screen is in front of the customer.
+     *
+     * The countdown labels it wakes for are only read on screen, so a phone with
+     * this screen on the back stack — or in the customer's pocket — has no reason
+     * to run a one-second clock. The screen reports its own lifecycle; the ticker
+     * below is the only thing that listens.
+     */
+    private val onScreenFlow = MutableStateFlow(false)
     private val sendingFlow = MutableStateFlow(false)
     private val reorderingFlow = MutableStateFlow(false)
     private val noticeFlow = MutableStateFlow<String?>(null)
@@ -124,7 +153,32 @@ class OrderTrackingViewModel @Inject constructor(
     init {
         viewModelScope.launch(guard) {
             while (isActive) {
-                delay(1_000)
+                // Three speeds, on purpose — and the slowest of them is "nobody is
+                // looking".
+                //
+                // While the customer has this screen open and the kitchen or the
+                // rider still has the order, the prep countdown and the "waiting
+                // 4 min" badges are the reason the screen exists, and a one-second
+                // tick is what makes them true. Once the order is delivered or
+                // cancelled the only thing left moving is a chat that is usually
+                // closed, so the clock slows to a quarter of a minute. And while
+                // the screen is not on top — the customer is on the menu, in the
+                // cart, or the phone is in a pocket — nothing on it is being read,
+                // so the ticker stops touching the clock altogether and waits for
+                // the screen to come back: a phone that polled once a second
+                // behind a closed screen woke the CPU 86,400 times a day to
+                // repaint a countdown no one could see.
+                //
+                // The order itself is not missed while it waits: the status
+                // arrives on its own listeners (Firestore and `orderLive`), and
+                // `onScreenVisible()` reads the clock the moment the customer
+                // comes back, so the first frame they see is current.
+                if (!onScreenFlow.value) {
+                    delay(IDLE_TICK_MILLIS)
+                    continue
+                }
+                val finished = _state.value.isDelivered || _state.value.isCancelled
+                delay(if (finished) 15_000L else 1_000L)
                 tickFlow.value = System.currentTimeMillis()
             }
         }

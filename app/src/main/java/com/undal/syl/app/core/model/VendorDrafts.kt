@@ -1,8 +1,10 @@
 package com.undal.syl.app.core.model
+import java.util.Locale
 
 import com.google.firebase.Timestamp
 import com.undal.syl.app.core.util.CouponMath
 import com.undal.syl.app.core.util.Money
+import com.undal.syl.app.core.util.UndalDigits
 import com.undal.syl.app.core.util.Validators
 
 /**
@@ -55,7 +57,7 @@ data class MenuDraft(
 
     val tags: List<String>
         get() = tagsText.split(',')
-            .map { it.trim().lowercase() }
+            .map { it.trim().lowercase(Locale.ENGLISH) }
             .filter { it.isNotEmpty() }
             .distinct()
             .take(8)
@@ -237,7 +239,7 @@ data class CampaignDraft(
 
     /** Percent campaigns store the number; fixed campaigns store paisa. */
     val value: Long?
-        get() = if (type == "percent") valueText.trim().toLongOrNull() else Money.parseTakaToPaisa(valueText)
+        get() = if (type == "percent") UndalDigits.toLongOrNull(valueText) else Money.parseTakaToPaisa(valueText)
 
     val valueLabel: String
         get() = when {
@@ -300,7 +302,7 @@ data class CouponDraft(
     val showOnWeb: Boolean = true
 ) {
 
-    val normalisedCode: String get() = code.trim().uppercase().replace(' ', '-')
+    val normalisedCode: String get() = code.trim().uppercase(Locale.ENGLISH).replace(' ', '-')
 
     val codeError: String?
         get() = if (CODE_PATTERN.matches(normalisedCode)) {
@@ -310,7 +312,7 @@ data class CouponDraft(
         }
 
     val value: Long?
-        get() = if (type == "percent") valueText.trim().toLongOrNull() else Money.parseTakaToPaisa(valueText)
+        get() = if (type == "percent") UndalDigits.toLongOrNull(valueText) else Money.parseTakaToPaisa(valueText)
 
     val valueLabel: String
         get() = when {
@@ -411,7 +413,13 @@ data class CouponDraft(
 
     val minOrderPaisa: Long get() = Money.parseTakaToPaisa(minOrderText) ?: 0L
 
-    val usageLimit: Long get() = usageLimitText.trim().toLongOrNull()?.coerceIn(0L, 100_000L) ?: 0L
+    /**
+     * 0 means unlimited, so a value the app cannot read must not quietly mean
+     * "no limit at all": ৫০ typed on a Bangla keyboard is 50 uses, and before
+     * this it became 0 — a coupon with no ceiling, which is the precise mistake
+     * the field exists to prevent.
+     */
+    val usageLimit: Long get() = UndalDigits.toLongOrNull(usageLimitText)?.coerceIn(0L, 100_000L) ?: 0L
 
     val isValid: Boolean
         get() = firstError == null

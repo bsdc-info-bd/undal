@@ -30,9 +30,12 @@ import com.undal.syl.app.features.vendor.storeShareText
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import javax.inject.Inject
 
@@ -108,18 +111,24 @@ class VendorDashboardViewModel @Inject constructor(
     /** Bumped by pull-to-refresh: restarting the listener forces a server read (V-022). */
     private val refreshKey = MutableStateFlow(0)
 
-    private val _now = MutableStateFlow(System.currentTimeMillis())
-
-    /** One-second clock so the queue's age badges tick (V-015). */
-    val now: StateFlow<Long> = _now.asStateFlow()
+    /**
+     * The age badges, ticking once a second — but only while a screen is looking.
+     *
+     * This was a `while (true)` loop inside `viewModelScope`, and a view model
+     * lives for as long as its screen is on the back stack: on a kitchen phone
+     * left in a pocket with the queue open, that was one wake-up per second, for
+     * hours, for a number nobody was reading. `WhileSubscribed` ties the clock to
+     * the screen instead, with five seconds of grace so a rotation does not
+     * restart it.
+     */
+    val now: StateFlow<Long> = flow {
+        while (true) {
+            emit(System.currentTimeMillis())
+            delay(1_000L)
+        }
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000L), System.currentTimeMillis())
 
     init {
-        viewModelScope.launch(guard) {
-            while (true) {
-                _now.value = System.currentTimeMillis()
-                delay(1_000L)
-            }
-        }
         observeStore()
         observeToday()
         observeWeek()
@@ -303,10 +312,20 @@ class VendorDashboardViewModel @Inject constructor(
 
     fun shareStoreLink() {
         val storeName = _state.value.store.storeName.ifBlank { "Undal HomeKitchen" }
-        _state.value = _state.value.copy(shareText = storeShareText(storeName, host()))
+        val text = storeShareText(storeName, host())
+        // A build without the store's address says so, instead of sharing a link
+        // that opens "site cannot be reached" in front of a customer.
+        _state.value = if (text != null) {
+            _state.value.copy(shareText = text)
+        } else {
+            _state.value.copy(
+                infoMessage = "This build does not know the store's web address yet, so there is " +
+                    "no link to share. Set the WORKER_HOST secret and build again."
+            )
+        }
     }
 
-    private fun host(): String = com.undal.syl.app.core.config.UndalBuildInfo.workerHost
+    private fun host(): String? = com.undal.syl.app.core.config.UndalBuildInfo.webStoreHost
 
     fun dismissMessage() {
         _state.value = _state.value.copy(infoMessage = null, shareText = "")

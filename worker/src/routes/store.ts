@@ -858,6 +858,7 @@ export async function handleStoreOrderStatus(env: Env, orderId: string): Promise
   const order = await fsGet(env, `orders/${orderId}`).catch(() => null);
   if (!order) throw new HttpError(404, "order-not-found");
   const raw = str(order.status, "placed");
+  const receipt = receiptLines(order.items);
   return json(
     {
       ok: true,
@@ -868,6 +869,22 @@ export async function handleStoreOrderStatus(env: Env, orderId: string): Promise
         note: str(order.note),
         cancelNote: str(order.cancelNote),
         prepEndsAt: str(order.prepEndsAt),
+        // The bill, row by row. A customer who ordered in this browser has no
+        // app to open, so the tracking page prints the same receipt the app
+        // prints: what was ordered, the ride, the coupon, the total. Nothing
+        // identifying is added — no name, no phone, no address — so the page's
+        // own promise ("the link shows the order, never your number or your
+        // street") still holds, word for word.
+        items: receipt.lines,
+        // An order with more lines than a receipt shows says so, instead of
+        // quietly dropping rows the customer is paying for.
+        itemsOmitted: receipt.omitted,
+        subtotalPaisa: num(order.subtotalAmountPaisa),
+        deliveryPaisa: num(order.deliveryAmountPaisa),
+        discountPaisa: num(order.discountAmountPaisa),
+        couponCode: str(order.couponCode),
+        distanceKm: num(order.distanceKm),
+        createdAt: str(order.createdAt),
         totalPaisa: num(order.totalAmountPaisa),
         updatedAt: str(order.updatedAt),
       },
@@ -876,6 +893,45 @@ export async function handleStoreOrderStatus(env: Env, orderId: string): Promise
     { "cache-control": "no-store" },
   );
 }
+
+/**
+ * The item lines of an order document, reduced to what a receipt shows.
+ *
+ * The document is written by two callers — this Worker and the Android app — so
+ * nothing here is trusted to be the right shape. A missing name or a negative
+ * quantity produces a line that is simply left out, because a bill that is one
+ * row short is a smaller problem than a page that throws.
+ *
+ * The cap is a page limit, not a truth limit: `omitted` carries how many real
+ * rows were past it, and the receipt prints that count. A bill that stops at row
+ * 40 without saying so is a bill the customer cannot check against what they are
+ * being asked to pay.
+ */
+function receiptLines(value: unknown): {
+  lines: Array<{ name: string; qty: number; unitPaisa: number; lineTotalPaisa: number }>;
+  omitted: number;
+} {
+  if (!Array.isArray(value)) return { lines: [], omitted: 0 };
+  const rows = value
+    .map((entry) => {
+      const line = (entry ?? {}) as Record<string, unknown>;
+      const qty = Math.max(1, Math.trunc(num(line.qty, 1)));
+      return {
+        name: str(line.name).trim().slice(0, 120),
+        qty,
+        unitPaisa: Math.max(0, Math.trunc(num(line.unitAmountPaisa))),
+        lineTotalPaisa: Math.max(0, Math.trunc(num(line.lineTotalAmountPaisa))),
+      };
+    })
+    .filter((line) => line.name.length > 0);
+  return {
+    lines: rows.slice(0, MAX_RECEIPT_LINES),
+    omitted: Math.max(0, rows.length - MAX_RECEIPT_LINES),
+  };
+}
+
+/** A basket bigger than this is not a receipt any more. */
+const MAX_RECEIPT_LINES = 40;
 
 /** Helper for the pages: is this order id plausible before we spend a read? */
 export function looksLikeOrderId(value: string): boolean {

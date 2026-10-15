@@ -14,6 +14,7 @@ import com.undal.syl.app.core.model.StoreSpecialDate
 import com.undal.syl.app.core.net.CloudinaryUploader
 import com.undal.syl.app.core.util.Money
 import com.undal.syl.app.core.util.TimeDhaka
+import com.undal.syl.app.core.util.UndalDigits
 import com.undal.syl.app.core.util.UndalErrors
 import com.undal.syl.app.core.util.UndalResult
 import kotlinx.coroutines.flow.Flow
@@ -274,11 +275,12 @@ class VendorStoreRepo @Inject constructor(
     }
 
     fun radiusNotice(radiusKm: Double): String =
-        "Pins further than ${"%.1f".format(radiusKm)} km from the kitchen are refused at checkout, and the " +
+        "Pins further than ${UndalDigits.format(radiusKm, 1)} km from the kitchen are refused at checkout, and the " +
             "fee is charged per whole kilometre. Changing this changes who can order from you."
 
     fun feePreviewText(distanceKm: Double, perKmPaisa: Long): String =
-        "${Money.format(Money.deliveryFeePaisa(distanceKm, perKmPaisa))} for ${"%.1f".format(distanceKm)} km"
+        "${Money.format(Money.deliveryFeePaisa(distanceKm, perKmPaisa))} for " +
+            "${UndalDigits.format(distanceKm, 1)} km"
 
     // ------------------------------------------------------------- persistence
 

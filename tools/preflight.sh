@@ -14,19 +14,35 @@ if [ "$#" -eq 0 ]; then
 fi
 
 missing=()
+placeholder=()
 for name in "$@"; do
   value="${!name:-}"
   if [ -z "$value" ]; then
     missing+=("$name")
+  # A secret that was copy-pasted from the documentation is not a secret. The
+  # build gate (verifyReleaseInputs) refuses these too; failing here as well
+  # means the workflow stops in seconds, with the same list, instead of after a
+  # Gradle configuration.
+  elif [[ "$value" == *YOUR-SUBDOMAIN* || "$value" == *REPLACE_* ]]; then
+    placeholder+=("$name")
   fi
 done
 
-if [ "${#missing[@]}" -gt 0 ]; then
+if [ "${#missing[@]}" -gt 0 ] || [ "${#placeholder[@]}" -gt 0 ]; then
   printf '\n=== Undal preflight failed ===\n'
-  printf 'Missing %d required secret(s):\n' "${#missing[@]}"
-  for name in "${missing[@]}"; do
-    printf '  · %s\n' "$name"
-  done
+  if [ "${#missing[@]}" -gt 0 ]; then
+    printf 'Missing %d required secret(s):\n' "${#missing[@]}"
+    for name in "${missing[@]}"; do
+      printf '  · %s\n' "$name"
+    done
+  fi
+  if [ "${#placeholder[@]}" -gt 0 ]; then
+    printf '\n%d secret(s) still hold the example value from the documentation:\n' "${#placeholder[@]}"
+    for name in "${placeholder[@]}"; do
+      printf '  · %s\n' "$name"
+    done
+    printf '  (a value containing YOUR-SUBDOMAIN or REPLACE_ is a placeholder, not an address)\n'
+  fi
   cat <<'CHECKLIST'
 
 Add each one on your phone:

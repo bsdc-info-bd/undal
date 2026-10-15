@@ -34,7 +34,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.collectAsState
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -92,17 +92,19 @@ fun VendorDashboardScreen(
     onPreviewAsCustomer: () -> Unit,
     viewModel: VendorDashboardViewModel = hiltViewModel()
 ) {
-    val state by viewModel.state.collectAsState()
-    val now by viewModel.now.collectAsState()
+    val state by viewModel.state.collectAsStateWithLifecycle()
+    val now by viewModel.now.collectAsStateWithLifecycle()
     val context = LocalContext.current
     val haptics = androidx.compose.ui.platform.LocalHapticFeedback.current
     var refreshing by remember { mutableStateOf(false) }
 
     LaunchedEffect(Unit) { viewModel.refresh(context) }
     LaunchedEffect(refreshing) {
-        if (refreshing) {
+        if (!refreshing) return@LaunchedEffect
+        try {
             viewModel.refreshAll(context)
-            kotlinx.coroutines.delay(600L)
+            kotlinx.coroutines.delay(350L)
+        } finally {
             refreshing = false
         }
     }

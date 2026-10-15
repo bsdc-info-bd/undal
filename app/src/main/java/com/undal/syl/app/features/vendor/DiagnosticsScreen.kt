@@ -41,7 +41,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.collectAsState
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -85,7 +85,7 @@ fun DiagnosticsScreen(
     onOpenSupport: () -> Unit,
     viewModel: DiagnosticsViewModel = hiltViewModel()
 ) {
-    val state by viewModel.state.collectAsState()
+    val state by viewModel.state.collectAsStateWithLifecycle()
     val context = LocalContext.current
     var showReady by remember { mutableStateOf(false) }
 
@@ -137,7 +137,13 @@ fun DiagnosticsScreen(
                 context.startActivity(AlarmChannels.exactAlarmSettings())
             }
 
-            DiagnosticsViewModel.Fix.AUTOSTART -> Unit
+            // Some ROMs rename or move this screen between versions, so the
+            // answer decides what the vendor is told: opened, or not on this phone.
+            DiagnosticsViewModel.Fix.AUTOSTART -> {
+                if (!viewModel.openAutostartSettings(context)) {
+                    viewModel.noteAutostartUnavailable()
+                }
+            }
 
             DiagnosticsViewModel.Fix.TOKEN -> viewModel.reregister(context)
 

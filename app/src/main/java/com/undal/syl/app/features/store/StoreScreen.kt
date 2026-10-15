@@ -38,7 +38,8 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.collectAsState
+import androidx.compose.ui.platform.LocalFocusManager
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -91,7 +92,8 @@ fun StoreScreen(
     sharedImageModifier: @Composable (String) -> Modifier = { Modifier },
     viewModel: StoreViewModel = hiltViewModel()
 ) {
-    val state by viewModel.state.collectAsState()
+    val state by viewModel.state.collectAsStateWithLifecycle()
+    val focus = LocalFocusManager.current
     var refreshing by remember { mutableStateOf(false) }
 
     LaunchedEffect(Unit) {
@@ -99,10 +101,16 @@ fun StoreScreen(
         viewModel.refreshOffers()
     }
     LaunchedEffect(refreshing) {
-        if (refreshing) {
+        if (!refreshing) return@LaunchedEffect
+        // The pull-to-refresh indicator turns off when the work finishes — and it
+        // turns off even if this coroutine is cancelled on the way (the customer
+        // swipes again, or walks to another screen), because a spinner that never
+        // stops is worse than no spinner at all.
+        try {
             viewModel.refreshAddress()
             viewModel.refreshOffers()
-            kotlinx.coroutines.delay(700)
+            kotlinx.coroutines.delay(350)
+        } finally {
             refreshing = false
         }
     }
@@ -201,7 +209,12 @@ fun StoreScreen(
                         hint = "kacchi, biryani, tea …",
                         leadingIcon = Icons.Filled.Star,
                         keyboardType = KeyboardType.Text,
-                        imeAction = ImeAction.Search
+                        imeAction = ImeAction.Search,
+                        // The Search key on a Bangla or English keyboard used to
+                        // do nothing at all, leaving the keyboard covering the
+                        // menu the customer was searching. Now it puts the
+                        // keyboard away, which is what the key means.
+                        onImeAction = { focus.clearFocus() }
                     )
                 }
 
@@ -241,7 +254,7 @@ fun StoreScreen(
                 }
 
                 if (state.loading) {
-                    items(4) {
+                    items(count = 4, key = { "shimmer-$it" }) {
                         ShimmerListRow()
                     }
                 } else if (state.cards.isEmpty()) {
