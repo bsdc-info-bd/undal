@@ -12,9 +12,9 @@ the count below is the honest count at the time of writing.
 
 | Ledger | Count |
 | --- | --- |
-| Closed, with a fix and a gate in this repository | **61** |
+| Closed, with a fix and a gate in this repository | **64** |
 | Recorded as deliberate, or checked and already correct (not counted) | 3 |
-| Open leads (identified, not yet fixed) | 8 |
+| Open leads (identified, not yet fixed) | 5 |
 | Waiting on a real phone, a real card in a hand (owner's acceptance list) | 5 |
 
 **The rules this ledger runs on**
@@ -458,6 +458,49 @@ tracking link.** Checked entry, not a fix: the route returns no customer
 identity at all, and the test asserts it. Verified with
 `worker/test/store-order.test.ts`.
 
+## I. Found while closing the open leads
+
+**062 — A basket longer than forty lines lost its tail in silence.** *Symptom.*
+The web receipt printed the first forty dishes and stopped; the totals underneath
+still covered the whole basket, so a customer adding up the rows on screen found
+an amount they could not explain. *Cause.* `receiptLines()` sliced the order's
+items to `MAX_RECEIPT_LINES` and returned what was left, with nothing to say a
+row had been dropped. *Fix.* the function returns the rows **and** how many were
+past the cap, the status route carries `itemsOmitted`, and the page prints
+"N more dishes on this order are not listed here — the totals below cover all of
+them." The cap stays, because a page is not a ledger; the silence does not.
+*Proof.* two new tests in `worker/test/store-order.test.ts`: forty rows are
+omitted-never, forty-one say so once, and the page prints the note while the
+total is unchanged (`npm test`, 144 tests).
+
+**063 — The profile's phone field could print a number back in Bangla digits.**
+*Symptom.* A profile saved before numbers were normalised held ০১৭১২৩৪৫৬৭৮; the
+field on the account screen showed it that way, and the Save button offered to
+save a change nobody had made. *Cause.* `ProfileViewModel.load()` passed the
+stored string through untouched, and the screen compared the draft with the
+state as text, so `01712 345678`, `01712345678` and `+8801712345678` were three
+different numbers. *Fix.* the field is filled with `UndalPhone.pretty(...)` — the
+ASCII form the rest of the app uses, spaced the way a number is read out — the
+state after a save stores the same shape, and the Save button compares
+`Validators.normalizeBdMobile` on both sides, so a saved number is never
+mistaken for an unsaved one. *Proof.* Kotlin shape guard and the import
+contract, over all 145 files.
+
+**064 — The readiness screen promised a watchdog row that did not exist.**
+*Symptom.* `docs/ALERT-RELIABILITY.md` tells the owner that a phone which was
+swiped away or killed by a battery cleaner rebuilds itself within nine minutes,
+and that "the diagnostics screen reports all of this in words —
+`AlertWatchdog.describe()` — with its own repair action". The screen had no such
+row. *Cause.* `AlertWatchdog.describe()`, `isArmed()`, `nextCheckLabel()`,
+`Fix.WATCHDOG` and its button label all existed; no `Check` ever used them, so
+the enum value, the label and the description were dead code and the promise was
+kept only by the alarm itself. *Fix.* a `watchdog` row on the phones that keep
+that alarm (`AlertWatchdog.isKitchenDevice`), showing `describe()`, and pointing
+at the exact-alarms setting when the alarm is armed but Android will deliver it
+late, or at the watcher button — which arms the watchdog, in
+`KitchenWatchService.start()` — when it is not armed at all. *Proof.* Kotlin
+shape guard; the row's own id in `DiagnosticsViewModel`.
+
 ---
 
 ## Checked and deliberately not changed
@@ -493,7 +536,10 @@ audit will otherwise re-find them.
 
 ## Open leads — identified, not yet closed
 
-These are real, they are next, and they are not counted above.
+These are real, they are next, and they are not counted above. Three that were
+here have moved into the ledger — the profile's phone display (063), the
+receipt's forty-line cap (062) and the watchdog's missing row (064) — and the
+rest are below, renumbered.
 
 1. **The customer's order-tracking ticker** is slowed for a finished order (see
    the closed entry for it above), but while an order is live it still ticks
@@ -501,25 +547,17 @@ These are real, they are next, and they are not counted above.
    on the back stack rather than in front of the customer. The three vendor
    screens were converted to `stateIn(WhileSubscribed)`; this one needs the same
    treatment without losing the imperative state writes around it.
-2. **`ProfileScreen`'s phone field** now writes ASCII, but the *display* of a
-   number stored by an older version can still show Bangla digits until the
-   profile is saved once. A display-time `pretty()` is the fix.
-3. **`UndalConfirmDialog` messages over ~6 lines** rely on the Material dialog's
+2. **`UndalConfirmDialog` messages over ~6 lines** rely on the Material dialog's
    own scrolling; the delete-account copy is long enough that this should be
    measured on a 360 dp phone with a large font scale.
-4. **Cart `bottomBar` on a phone with the keyboard open** — `UndalScaffold`
+3. **Cart `bottomBar` on a phone with the keyboard open** — `UndalScaffold`
    handles the IME, but the coupon row directly above the bar should be checked
    with the keyboard up on a 5.3-inch device.
-5. **Screens under `features/legal/`** have no `imePadding` need, but their
+4. **Screens under `features/legal/`** have no `imePadding` need, but their
    headings are the app's longest strings and should be checked at 200% font
    scale.
-6. **`VendorMenuScreen`'s image upload path** reports progress but no cancel
+5. **`VendorMenuScreen`'s image upload path** reports progress but no cancel
    affordance on a slow connection.
-7. **The 40-line cap on a web receipt** is a judgement, not a measurement: an
-   order with 41 lines loses one. It should instead say that the bill is long.
-8. **`docs/ALERT-RELIABILITY.md`'s ladder** describes four fallbacks; the
-   diagnostics screen shows three of them. The fourth is the watchdog's own
-   alarm and is not surfaced.
 
 ---
 

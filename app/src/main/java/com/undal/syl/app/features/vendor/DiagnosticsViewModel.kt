@@ -18,6 +18,7 @@ import androidx.lifecycle.viewModelScope
 import com.google.firebase.firestore.FirebaseFirestore
 import com.google.firebase.messaging.FirebaseMessaging
 import com.undal.syl.app.R
+import com.undal.syl.app.core.background.AlertWatchdog
 import com.undal.syl.app.core.background.KitchenWatchService
 import com.undal.syl.app.core.background.KitchenWatchState
 import com.undal.syl.app.core.background.PresenceHeartbeat
@@ -361,6 +362,40 @@ class DiagnosticsViewModel @Inject constructor(
                 blocking = !volumeHealthy
             )
         )
+
+        // The watchdog, the rung nothing else on this screen shows. The watcher
+        // row above is a fact about *now*; this is a fact about what happens
+        // after Android ends the process — a swipe off the recents list, a
+        // battery cleaner, a low-memory kill. `docs/ALERT-RELIABILITY.md` makes
+        // the promise, `AlertWatchdog` keeps it, and the owner could not see it
+        // anywhere. A customer phone never keeps this alarm, so the row only
+        // exists on a kitchen phone.
+        if (AlertWatchdog.isKitchenDevice(context)) {
+            val watchdogArmed = AlertWatchdog.isArmed(context)
+            val watchdogLate = AlertWatchdog.exactAlarmBlocked(context)
+            add(
+                Check(
+                    id = "watchdog",
+                    title = "Rebuilds itself if Android kills it",
+                    detail = if (watchdogArmed && watchdogLate) {
+                        AlertWatchdog.describe(context) +
+                            " Android has not allowed exact alarms, so that self-check runs late."
+                    } else {
+                        AlertWatchdog.describe(context)
+                    },
+                    status = if (watchdogArmed && !watchdogLate) Status.OK else Status.ATTENTION,
+                    // Arming the watchdog is the same act as starting the
+                    // watcher — the service arms it — so this button is the
+                    // watcher button, and a phone that is armed but late is sent
+                    // to the exact-alarms setting instead.
+                    fix = when {
+                        watchdogArmed && watchdogLate -> Fix.EXACT_ALARMS
+                        watchdogArmed -> null
+                        else -> Fix.WATCHDOG
+                    }
+                )
+            )
+        }
     }
 
     /**

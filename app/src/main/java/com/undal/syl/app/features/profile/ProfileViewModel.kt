@@ -12,6 +12,7 @@ import com.undal.syl.app.core.maps.UndalLocation
 import com.undal.syl.app.core.net.CloudinaryUploader
 import com.undal.syl.app.core.session.AuthSession
 import com.undal.syl.app.core.util.UndalResult
+import com.undal.syl.app.core.util.UndalPhone
 import com.undal.syl.app.core.util.Validators
 import com.undal.syl.app.data.repo.AuthRepo
 import com.undal.syl.app.core.fcm.TokenRegistrar
@@ -107,7 +108,11 @@ class ProfileViewModel @Inject constructor(
                 loading = false,
                 name = authRepo.loadProfileName().orEmpty(),
                 email = authRepo.currentEmail().orEmpty(),
-                phone = authRepo.loadProfilePhone().orEmpty(),
+                // Printed the way a number is read out — 01712 345678 — and in
+                // ASCII, because a profile written by an older build can hold the
+                // Bangla row. The field below edits this string, and every save
+                // normalises it back to 01XXXXXXXXX before it is stored.
+                phone = UndalPhone.pretty(authRepo.loadProfilePhone().orEmpty()),
                 photoUrl = authRepo.loadProfilePhoto().orEmpty(),
                 address = location,
                 // A server question, not a cached one: see AuthRepo.isEmailVerified.
@@ -199,7 +204,7 @@ class ProfileViewModel @Inject constructor(
                     _state.value = _state.value.copy(
                         savingBasics = false,
                         name = name.trim(),
-                        phone = cleanPhone.ifBlank { phone.trim() },
+                        phone = UndalPhone.pretty(cleanPhone.ifBlank { phone.trim() }),
                         notice = "Saved. The kitchen and the rider will use this name and number.",
                         noticeIsError = false
                     )

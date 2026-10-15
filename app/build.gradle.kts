@@ -63,7 +63,14 @@ android {
 
         // Deep links (PART N): the Cloudflare Worker host is written at build
         // time, so any sub-domain the owner creates is picked up automatically.
-        manifestPlaceholders["undalWorkerHost"] = workerHost
+        //
+        // A debug build without the owner's secret gets `undal.invalid` — a name
+        // under the reserved `.invalid` top-level domain (RFC 2606), which can
+        // never resolve and therefore can never be mistaken for a real address.
+        // It exists because a manifest placeholder cannot be empty: an intent
+        // filter with no host is not a filter. A release build never reaches this
+        // line with a blank value — `verifyReleaseInputs` stops it first.
+        manifestPlaceholders["undalWorkerHost"] = workerHost.ifBlank { "undal.invalid" }
 
         vectorDrawables.useSupportLibrary = true
 

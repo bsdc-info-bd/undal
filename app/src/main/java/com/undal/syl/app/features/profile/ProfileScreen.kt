@@ -63,6 +63,7 @@ import com.undal.syl.app.core.maps.UndalLocationMap
 import com.undal.syl.app.core.theme.UndalDimens
 import com.undal.syl.app.core.util.TimeDhaka
 import com.undal.syl.app.core.util.UndalDigits
+import com.undal.syl.app.core.util.Validators
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import com.undal.syl.app.core.theme.undalSemantics
@@ -292,8 +293,14 @@ fun ProfileScreen(
                 UndalPrimaryButton(
                     text = if (state.savingBasics) "Saving…" else "Save details",
                     onClick = { viewModel.saveBasics(draftName, draftPhone) },
+                    // The phone is compared as a number, not as a string: the
+                    // profile prints 01712 345678 and a customer may type
+                    // 01712345678 or +8801712345678, and none of those is a
+                    // change worth offering to save.
                     enabled = !state.savingBasics &&
-                        (draftName != state.name || draftPhone != state.phone),
+                        (draftName != state.name ||
+                            Validators.normalizeBdMobile(draftPhone) !=
+                            Validators.normalizeBdMobile(state.phone)),
                     loading = state.savingBasics,
                     icon = Icons.Filled.Check
                 )

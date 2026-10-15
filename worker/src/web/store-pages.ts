@@ -1021,7 +1021,7 @@ export async function handleOrderTracking(orderId: string): Promise<Response> {
   <h2 style="margin-top:10px" id="undal-order-title">Order</h2>
   <ul class="steps" id="undal-steps">
     <li data-status="placed"><span class="dot"></span><span>Placed — the kitchen has your order</span></li>
-    <li data-status="accepted"><span class="dot"></span><span>Accepted — the kitchen is cooking</span></li>
+    <li data-status="accepted"><span class="dot"></span><span>Cooking — the prep timer is running</span></li>
     <li data-status="ready"><span class="dot"></span><span>Ready — packed and waiting for the rider</span></li>
     <li data-status="in_delivery"><span class="dot"></span><span>On the way — keep the cash ready</span></li>
     <li data-status="delivered"><span class="dot"></span><span>Delivered — thank you</span></li>
@@ -1036,7 +1036,7 @@ export async function handleOrderTracking(orderId: string): Promise<Response> {
   var orderId = ${JSON.stringify(orderId.replace(/[^A-Za-z0-9]/g, ""))};
   var labels = {
     placed: ["Placed", "The kitchen has your order and is looking at it now."],
-    accepted: ["Cooking", "Accepted — the prep timer is running in the kitchen."],
+    accepted: ["Cooking", "The kitchen has accepted this order and the prep timer is running."],
     ready: ["Ready", "Packed and waiting for the rider."],
     in_delivery: ["On the way", "The rider has left the kitchen. Keep the cash ready."],
     delivered: ["Delivered", "Delivered and paid. Thank you for ordering from Undal."],
@@ -1103,6 +1103,18 @@ export async function handleOrderTracking(orderId: string): Promise<Response> {
     }
     if (items.length === 0) {
       rows += '<p class="receipt-waiting">The dishes on this order are on the kitchen\u2019s copy of the bill.</p>';
+    }
+    // A long basket: the page lists the first rows and says how many are behind
+    // them, so the lines on screen never pretend to be the whole bill.
+    var omitted = Number(order.itemsOmitted) || 0;
+    if (omitted > 0) {
+      rows +=
+        '<p class="receipt-note">' +
+        omitted +
+        (omitted === 1
+          ? " more dish on this order is not listed here"
+          : " more dishes on this order are not listed here") +
+        " \u2014 the totals below cover all of them.</p>";
     }
     rows += receiptRow(
       "Delivery · " + km(order.distanceKm),
@@ -1257,7 +1269,7 @@ export async function handleAboutPage(env: Env, request: Request): Promise<Respo
     ["Pick your food", `Every dish on the menu is cooked to order — ${available.length} of the ${items.length} on the board today. Tap one to read what is in it, how long it takes and what it costs.`],
     ["Drop your pin", "On the checkout the map shows exactly where we will deliver. Drag the pin, read the address it worked out and tick it. The fee is your distance from the kitchen multiplied by the store's own rate, rounded up to the whole kilometre."],
     ["Send the order", "The kitchen is alerted the moment you order — a loud looping alarm on the merchant app, even when that phone is asleep, locked or in a pocket. That is why the app asks for the battery exemption."],
-    ["Follow it live", "Your tracking page updates itself. Confirmed, accepted, preparing, ready, dispatched, delivered: each step is written the second the kitchen taps it."]
+    ["Follow it live", `Your tracking page updates itself. Placed, cooking, ready, on the way, delivered: the same five words the kitchen's own screen uses, written the second the kitchen taps it.`]
   ];
 
   const todayLine = status.todaySlots.length === 0

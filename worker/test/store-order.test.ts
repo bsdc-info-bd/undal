@@ -118,6 +118,75 @@ test("a hostile order document produces a small bill, not a broken page", async 
   }
 });
 
+test("a basket longer than the receipt stops saying so, it does not go quiet", async () => {
+  const lines = (count: number) =>
+    Array.from({ length: count }, (_, index) => ({
+      name: `Dish ${index + 1}`,
+      qty: 1,
+      unitAmountPaisa: 10000,
+      lineTotalAmountPaisa: 10000,
+    }));
+
+  // Forty rows fit. The bill is complete, and nothing claims otherwise.
+  const fits = new FakeFirebase();
+  const restoreFits = fits.install();
+  try {
+    fits.setDocument(`orders/${ORDER_ID}`, webOrder({ items: lines(40) }));
+    const payload = (await (await handleStoreOrderStatus(fits.env, ORDER_ID)).json()) as {
+      order: { items: unknown[]; itemsOmitted: number };
+    };
+    assert.equal(payload.order.items.length, 40);
+    assert.equal(payload.order.itemsOmitted, 0);
+  } finally {
+    restoreFits();
+  }
+
+  // Forty-one do not — one row is past the page's limit, and the receipt says
+  // how many are behind it instead of leaving the customer to add up rows that
+  // do not match the total.
+  const over = new FakeFirebase();
+  const restoreOver = over.install();
+  try {
+    over.setDocument(`orders/${ORDER_ID}`, webOrder({ items: lines(41) }));
+    const payload = (await (await handleStoreOrderStatus(over.env, ORDER_ID)).json()) as {
+      order: { items: unknown[]; itemsOmitted: number };
+    };
+    assert.equal(payload.order.items.length, 40);
+    assert.equal(payload.order.itemsOmitted, 1);
+  } finally {
+    restoreOver();
+  }
+});
+
+test("the receipt prints how many rows the page left out", async () => {
+  const html = await (await handleOrderTracking(ORDER_ID)).text();
+  const order = {
+    id: ORDER_ID,
+    shortId: "UND-1001",
+    status: "accepted",
+    note: "",
+    cancelNote: "",
+    prepEndsAt: "",
+    items: [{ name: "Kacchi biryani", qty: 1, unitPaisa: 32000, lineTotalPaisa: 32000 }],
+    itemsOmitted: 3,
+    subtotalPaisa: 64000,
+    deliveryPaisa: 4000,
+    discountPaisa: 0,
+    couponCode: "",
+    distanceKm: 2,
+    createdAt: "2026-10-15T12:00:00.000Z",
+    totalPaisa: 68000,
+    updatedAt: "2026-10-15T12:05:00.000Z",
+  };
+  const page = runInlineScript(html, { fetch: async () => ({ json: { ok: true, order } }) });
+  await settle();
+
+  const rows = page.ids("undal-receipt-rows").innerHTML;
+  assert.match(rows, /3 more dishes on this order are not listed here/);
+  // The total is still the whole basket, which is the point of saying so.
+  assert.equal(page.ids("undal-order-total").textContent, "৳ 680");
+});
+
 test("the tracking page prints the bill it is handed, escaping what comes from the kitchen", async () => {
   const html = await (await handleOrderTracking(ORDER_ID)).text();
   const order = {
