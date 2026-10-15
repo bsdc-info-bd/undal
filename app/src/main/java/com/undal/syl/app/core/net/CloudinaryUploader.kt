@@ -42,7 +42,15 @@ class CloudinaryUploader @Inject constructor(
      */
     suspend fun uploadImage(
         uri: Uri,
-        onProgress: (Float) -> Unit = {}
+        onProgress: (Float) -> Unit = {},
+        /**
+         * The id the SDK gives this upload the moment it starts, handed over so
+         * the caller can stop it again through [cancel]. The id is the only way
+         * to address one upload: the SDK's own cancellation is what actually
+         * stops the bytes, so a "stop" button that does not have this would be a
+         * button that only stops the waiting.
+         */
+        onRequestId: (String) -> Unit = {}
     ): UndalResult<UploadedImage> {
         if (!UndalBuildInfo.isCloudinaryConfigured) {
             return UndalResult.Failure(
@@ -52,7 +60,7 @@ class CloudinaryUploader @Inject constructor(
         }
         return suspendCancellableCoroutine { continuation ->
             val callback = object : UploadCallback {
-                override fun onStart(requestId: String) = Unit
+                override fun onStart(requestId: String) = onRequestId(requestId)
 
                 override fun onProgress(requestId: String, bytes: Long, totalBytes: Long) {
                 // Cloudinary compresses on its side; the phone only needs to show
@@ -110,6 +118,23 @@ class CloudinaryUploader @Inject constructor(
             }
         }
     }
+
+    /**
+     * Stops an upload that is still running.
+     *
+     * Through the SDK, not by walking away from it: the request is handed to
+     * Cloudinary's own runner, so cancelling here stops the transfer, and the
+     * callback above answers with [ErrorInfo.REQUEST_CANCELLED] — the same
+     * sentence a customer sees for any other cancelled upload. Wrapped, because
+     * a cancel that throws is worse than no cancel: the caller has already told
+     * the person the upload has stopped.
+     *
+     * Answers whether the SDK found the request. `false` means it had already
+     * finished, failed or been cancelled, and the phone simply has not been told.
+     */
+    fun cancel(requestId: String): Boolean = runCatching {
+        MediaManager.get().cancelRequest(requestId)
+    }.getOrDefault(false)
 
     private fun describe(error: ErrorInfo): String = when (error.code) {
         ErrorInfo.FILE_DOES_NOT_EXIST, ErrorInfo.URI_DOES_NOT_EXIST, ErrorInfo.RESOURCE_DOES_NOT_EXIST ->

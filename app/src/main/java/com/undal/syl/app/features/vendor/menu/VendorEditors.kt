@@ -123,7 +123,8 @@ internal fun VendorPhotoRow(
     currentUrl: String,
     progress: Float?,
     label: String,
-    onPicked: (Uri) -> Unit
+    onPicked: (Uri) -> Unit,
+    onCancel: (() -> Unit)? = null
 ) {
     val launcher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.PickVisualMedia()
@@ -147,7 +148,12 @@ internal fun VendorPhotoRow(
                     launcher.launch(
                         PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
                     )
-                }
+                },
+                // Hidden rather than left live: a second photo picked while the
+                // first is still travelling would write its percentages over the
+                // first one's and race it to the draft. One at a time is the only
+                // promise the progress bar can keep.
+                enabled = progress == null
             )
             if (progress != null) {
                 Spacer(Modifier.height(UndalDimens.xs))
@@ -155,11 +161,26 @@ internal fun VendorPhotoRow(
                     progress = { progress.coerceIn(0f, 1f) },
                     modifier = Modifier.fillMaxWidth()
                 )
-                Text(
-                    text = "$label uploading… ${(progress * 100).toInt()}%",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text(
+                        text = "$label uploading… ${(progress * 100).toInt()}%",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.weight(1f)
+                    )
+                    // Only while there is something to stop, and it stops the
+                    // transfer itself — on a slow connection the kitchen can
+                    // change its mind without waiting out the photo or spending
+                    // the data on it.
+                    if (onCancel != null) {
+                        // The design system's text button, not Material's: it keeps
+                        // the 48 dp touch target every other control in the app has.
+                        UndalTextButton(text = "Stop", onClick = onCancel)
+                    }
+                }
             } else if (currentUrl.isNotBlank()) {
                 Text(
                     text = "$label is set.",
@@ -312,7 +333,8 @@ fun DishEditorSheet(
             currentUrl = draft.imageUrl,
             progress = state.uploadProgress,
             label = "Dish photo",
-            onPicked = viewModel::uploadDishImage
+            onPicked = viewModel::uploadDishImage,
+            onCancel = viewModel::cancelUpload
         )
         Spacer(Modifier.height(UndalDimens.xs))
         Text(text = "Section", style = MaterialTheme.typography.labelLarge)
@@ -458,7 +480,8 @@ fun SectionEditorSheet(
                 currentUrl = draft.iconUrl,
                 progress = state.uploadProgress,
                 label = "Section image",
-                onPicked = viewModel::uploadSectionIcon
+                onPicked = viewModel::uploadSectionIcon,
+                onCancel = viewModel::cancelUpload
             )
         } else {
             Spacer(Modifier.height(UndalDimens.xs))
@@ -536,7 +559,8 @@ fun ComboEditorSheet(
             currentUrl = draft.imageUrl,
             progress = state.uploadProgress,
             label = "Combo photo",
-            onPicked = viewModel::uploadComboImage
+            onPicked = viewModel::uploadComboImage,
+            onCancel = viewModel::cancelUpload
         )
         Spacer(Modifier.height(UndalDimens.xs))
         Text(
@@ -706,7 +730,8 @@ fun CampaignEditorSheet(
             currentUrl = draft.bannerUrl,
             progress = state.uploadProgress,
             label = "Banner",
-            onPicked = viewModel::uploadCampaignBanner
+            onPicked = viewModel::uploadCampaignBanner,
+            onCancel = viewModel::cancelUpload
         )
         Spacer(Modifier.height(UndalDimens.xs))
         UndalTextField(

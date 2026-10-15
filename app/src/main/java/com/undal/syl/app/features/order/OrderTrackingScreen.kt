@@ -38,17 +38,21 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
-import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.undal.syl.app.core.design.UndalAlertBanner
 import com.undal.syl.app.core.design.UndalCard
 import com.undal.syl.app.core.design.UndalEmptyState
@@ -88,6 +92,31 @@ fun OrderTrackingScreen(
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     val context = LocalContext.current
+
+    // The ticker behind this screen is told when there is somebody to tick for.
+    // `ON_START`/`ON_STOP` are the pair Navigation dispatches when this screen
+    // comes forward and when another one covers it — including the moment the
+    // customer presses home, which is the one that matters most: a countdown
+    // nobody can see does not need a clock, and a phone in a pocket should not
+    // be woken once a second for one.
+    val lifecycleOwner = LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            when (event) {
+                Lifecycle.Event.ON_START -> viewModel.onScreenVisible()
+                Lifecycle.Event.ON_STOP -> viewModel.onScreenHidden()
+                else -> Unit
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose {
+            lifecycleOwner.lifecycle.removeObserver(observer)
+            // The observer is gone before the last ON_STOP can arrive, so the
+            // screen says so itself rather than leaving the ticker running for a
+            // screen that no longer exists.
+            viewModel.onScreenHidden()
+        }
+    }
 
     LaunchedEffect(orderId) { viewModel.bind(orderId) }
     LaunchedEffect(openChatInitially) { if (openChatInitially) viewModel.openChat() }

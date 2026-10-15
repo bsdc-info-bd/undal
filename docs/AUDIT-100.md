@@ -12,9 +12,9 @@ the count below is the honest count at the time of writing.
 
 | Ledger | Count |
 | --- | --- |
-| Closed, with a fix and a gate in this repository | **64** |
+| Closed, with a fix and a gate in this repository | **66** |
 | Recorded as deliberate, or checked and already correct (not counted) | 3 |
-| Open leads (identified, not yet fixed) | 5 |
+| Open leads (identified, not yet fixed) | 3 |
 | Waiting on a real phone, a real card in a hand (owner's acceptance list) | 5 |
 
 **The rules this ledger runs on**
@@ -501,6 +501,38 @@ late, or at the watcher button — which arms the watchdog, in
 `KitchenWatchService.start()` — when it is not armed at all. *Proof.* Kotlin
 shape guard; the row's own id in `DiagnosticsViewModel`.
 
+**065 — The order screen kept a one-second clock running for nobody.** *Symptom.*
+The battery, not the person: the ticker behind live order tracking ran for as
+long as the ViewModel lived, so a customer who pressed home — or who walked off
+to the menu with tracking still on the back stack — left a phone waking its CPU
+once a second to redraw a countdown nobody could see. On an order that takes
+forty minutes that is 2,400 wake-ups for a screen in a pocket. *Fix.* the screen
+tells the ViewModel when it is in front (`ON_START`/`ON_STOP` through its own
+`LocalLifecycleOwner`, with the handler removed on dispose), and the ticker gains
+a third speed: while nobody is looking it stops touching the clock and simply
+waits, and `onScreenVisible()` reads the time the instant the customer is back,
+so the first frame they see is current. The order itself is not missed while it
+waits — the status arrives on the Firestore document and the `orderLive` flag,
+which are listeners, not ticks. *Proof.* Kotlin shape guard and the import
+contract; the cadence itself is the same two-speed delay a gate already covers.
+
+**066 — A photo upload could not be stopped, and two of them could race.**
+*Symptom.* The kitchen picked a 4 MB photo on a slow connection, watched a
+progress bar that was not moving, and had no way out of it: no stop, and the
+"pick a photo" button stayed live underneath, so picking a second file wrote its
+percentages over the first one's and then raced it to the draft's `imageUrl` —
+the upload that finished last won. *Cause.* `CloudinaryUploader.uploadImage`
+discarded the request id the SDK hands out in `onStart`, and the four editors in
+`VendorMenuViewModel` each launched their own coroutine into the one
+`uploadProgress` field. *Fix.* the id is passed back through the repository and
+the SDK's own `cancelRequest(id)` is what the new Stop button calls, so the
+transfer stops rather than the screen merely stopping the wait — the SDK answers
+`REQUEST_CANCELLED`, which the uploader already knows how to word. One upload at
+a time, and the pick button is disabled while one is running. *Proof.* Kotlin
+shape guard and the import contract over all 145 files; the SDK's own
+`MediaManager.cancelRequest` and `ErrorInfo.REQUEST_CANCELLED` were read from
+`cloudinary_android` 3.1.3's source rather than assumed.
+
 ---
 
 ## Checked and deliberately not changed
@@ -536,28 +568,23 @@ audit will otherwise re-find them.
 
 ## Open leads — identified, not yet closed
 
-These are real, they are next, and they are not counted above. Three that were
+These are real, they are next, and they are not counted above. Five that were
 here have moved into the ledger — the profile's phone display (063), the
-receipt's forty-line cap (062) and the watchdog's missing row (064) — and the
-rest are below, renumbered.
+receipt's forty-line cap (062), the watchdog's missing row (064), the tracking
+ticker that ran off screen (065) and the upload that could not be stopped (066)
+— and the three that are left are below, renumbered. Each of the three is a
+measurement on a real phone rather than a code change, which is why they are
+still here and not above.
 
-1. **The customer's order-tracking ticker** is slowed for a finished order (see
-   the closed entry for it above), but while an order is live it still ticks
-   inside `viewModelScope` (`OrderTrackingViewModel`) even when the screen sits
-   on the back stack rather than in front of the customer. The three vendor
-   screens were converted to `stateIn(WhileSubscribed)`; this one needs the same
-   treatment without losing the imperative state writes around it.
-2. **`UndalConfirmDialog` messages over ~6 lines** rely on the Material dialog's
+1. **`UndalConfirmDialog` messages over ~6 lines** rely on the Material dialog's
    own scrolling; the delete-account copy is long enough that this should be
    measured on a 360 dp phone with a large font scale.
-3. **Cart `bottomBar` on a phone with the keyboard open** — `UndalScaffold`
+2. **Cart `bottomBar` on a phone with the keyboard open** — `UndalScaffold`
    handles the IME, but the coupon row directly above the bar should be checked
    with the keyboard up on a 5.3-inch device.
-4. **Screens under `features/legal/`** have no `imePadding` need, but their
+3. **Screens under `features/legal/`** have no `imePadding` need, but their
    headings are the app's longest strings and should be checked at 200% font
    scale.
-5. **`VendorMenuScreen`'s image upload path** reports progress but no cancel
-   affordance on a slow connection.
 
 ---
 
