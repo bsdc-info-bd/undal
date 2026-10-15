@@ -10,7 +10,7 @@ laptop step, no CLI step, no paid service anywhere in the stack.
 
 > Status of the build plan: **Response 1 of 5** is complete — foundation,
 > security rules, Worker, pipelines and the counted feature list.
-> `FEATURES.md` tracks the 257 features and ticks each one only when it is
+> `FEATURES.md` tracks the 263 features and ticks each one only when it is
 > really implemented.
 
 ---
@@ -255,7 +255,7 @@ first build of the project cannot fail on a bleeding-edge version skew.
 ```
 undal/
 ├── README.md                       this runbook
-├── FEATURES.md                     the counted 257-feature checklist
+├── FEATURES.md                     the counted 263-feature checklist
 ├── docs/ALERT-RELIABILITY.md       the alert ladder: payload, channels, manifest, acceptance
 ├── docs/CRASH-DISCIPLINE.md        why no ViewModel coroutine may end the process
 ├── assets/sound/                   the official Undal order sound
@@ -289,17 +289,17 @@ Steering the build with the task owner's command phrases: `Continue`,
 
 ## 11 · Acceptance table (PART R)
 
-Eighteen things that have to be true before this is called finished. The **result**
+Nineteen things that have to be true before this is called finished. The **result**
 column is what was actually run for this build; the **your phone** column is the
 step only you can do, because it needs your own Firebase project.
 
 | # | What is checked | How | Result |
 | --- | --- | --- | --- |
 | 1 | The Worker compiles | `cd worker && npx tsc --noEmit` | **0 errors** |
-| 2 | The Android sources hang together without a compiler | `python3 tools/check_kotlin_shape.py` and `check_import_contracts.py` | **128 files**: balanced, no split strings, every `com.undal.syl.app` import and member call resolves, 283 cross-package names indexed |
-| 3 | No unfinished markers anywhere | `bash tools/check_no_placeholders.sh` | **clean across 188 files** |
-| 4 | The web prices food exactly like the app | `node tools/check-web-rules.mjs` | **17 rule families · 130 comparisons**, all from the app's own test vectors (82 assertions shared, app-only rules declared out loud) |
-| 5 | Every page renders and every route has a handler | `cd worker && npm test` | **114 tests across 8 files**; `/ /store /item/{id} /about /basket /checkout /login /account /track /order/{id} /download /robots.txt /sitemap.xml /manifest.webmanifest /sw.js /icons/* /healthz /api/store/* /api/account/*` are asserted by name, and the rendered pages are asserted as HTML |
+| 2 | The Android sources hang together without a compiler | `python3 tools/check_kotlin_shape.py` and `check_import_contracts.py` | **142 files**: balanced, no split strings, every `com.undal.syl.app` import and member call resolves, 310 cross-package names indexed |
+| 3 | No unfinished markers anywhere | `bash tools/check_no_placeholders.sh` | **clean across 207 files** |
+| 4 | The web prices food exactly like the app | `node tools/check-web-rules.mjs` | **20 rule families · 220 comparisons**, all from the app's own test vectors (140 assertions shared, app-only rules declared out loud) |
+| 5 | Every page renders and every route has a handler | `cd worker && npm test` | **134 tests across 10 files**; `/ /store /item/{id} /about /basket /checkout /login /account /track /order/{id} /download /robots.txt /sitemap.xml /manifest.webmanifest /sw.js /icons/* /healthz /api/store/* /api/account/*` are asserted by name, and the rendered pages are asserted as HTML |
 | 6 | The API refuses politely | `curl` probes | no web key → a sentence, not a stack trace; order without a token → `missing-id-token`; rate buckets 90/120/300 per minute per IP |
 | 7 | Icons and QR codes are real images | decoded with `pngjs`; QR matrix compared with `qrcode@1.5.4` | icons **1744 / 5868 / 4054 bytes**, QR **exact match on 43 URLs** |
 | 8 | The web store installs as an app | manifest + service worker + `/download` with two QR codes and the unknown-sources guide | shipped (P-014, P-016) |
@@ -313,6 +313,7 @@ step only you can do, because it needs your own Firebase project.
 | 16 | Nothing here costs money | Spark plan, Cloudinary free, Workers free, OpenStreetMap tiles, Actions free — see §7 | no billing account anywhere |
 | 17 | The order alert leaves the Worker in the only shape that can ring a phone | `worker/test/fcm-alert.test.ts` | **14 tests**: data-only with no `notification` block anywhere, `android.priority HIGH`, `ttl 300s`, APNs headers at a priority Apple permits, topic fallback when the device list is empty, dead tokens purged |
 | 18 | The web account is the app's account, and only its owner can touch it | `worker/test/account.test.ts` against a fake Firebase that signs real RS256 tokens | **27 tests**: a uid only ever comes from a verified ID token, a forged one is refused by the real signature check, a profile is written only in the shape the Firestore rules accept, the history needs no composite index |
+| 19 | Nothing in the app breaks a promise to Android, and the crash guard cannot loop | `python3 tools/check_foreground_contract.py` and `CrashRecoveryPolicyTest` | **142 files**: every foreground-service call goes through `UndalForeground`, every `onStartCommand` takes the foreground before it decides anything, and no `Task` is read as though `getResult()` waited; **12 tests** pin one startup reopen then the honest screen, three ordinary reopens then the honest screen, two honest screens then the platform |
 
 **What only your project can prove.** Four checks need your real Firebase project,
 your Cloudinary account and a signed keystore, so run them once after §3e:

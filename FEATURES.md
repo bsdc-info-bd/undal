@@ -8,14 +8,14 @@ backend** — never when it is merely planned or sketched.
 | --- | --- | --- |
 | Customer portal | C-001 … C-081 | 81 |
 | Vendor portal | V-001 … V-110 | 110 |
-| Platform · web · deep links · CI | P-001 … P-066 | 66 |
-| **Total** | | **257** |
+| Platform · web · deep links · CI | P-001 … P-072 | 72 |
+| **Total** | | **263** |
 
-**Progress: 257 / 257 implemented (100 %)** — every block is ticked: the
+**Progress: 263 / 263 implemented (100 %)** — every block is ticked: the
 customer portal (C-001 … C-081), the vendor portal (V-001 … V-110) and the
-platform, web, deep-link and release block (P-001 … P-066). Nothing here is
+platform, web, deep-link and release block (P-001 … P-072). Nothing here is
 "planned": each line is code in this repository, verified by
-`grep -c '^- \[x\]' FEATURES.md` (257) and by the acceptance table in README §11.
+`grep -c '^- \[x\]' FEATURES.md` (263) and by the acceptance table in README §11.
 
 Legend: `[x]` shipped and wired · `[ ]` still to ship.
 
@@ -218,7 +218,7 @@ Legend: `[x]` shipped and wired · `[ ]` still to ship.
 - [x] V-109 · Vendor inbox mirroring the kitchen alert history
 - [x] V-110 · One-tap share of the store link
 
-## P · Platform, web, deep links and delivery (66)
+## P · Platform, web, deep links and delivery (72)
 
 - [x] P-001 · Single-deploy Cloudflare Worker architecture (router, routes, crons in one bundle)
 - [x] P-002 · FCM HTTP v1 with service-account OAuth2 (RS256 JWT minted in Web Crypto, token cached in KV)
@@ -241,7 +241,7 @@ Legend: `[x]` shipped and wired · `[ ]` still to ship.
 - [x] P-019 · Boot receiver rescheduling the heartbeat, the retry workers and the alert watchdog, plus a nine-minute alarm watchdog that rebuilds the order watcher and the heartbeat after Android kills or a swipe closes the app
 - [x] P-020 · WorkManager retry queue for failed notification relays
 - [x] P-021 · Firestore offline persistence tuned to a 100 MB local cache
-- [x] P-022 · Realtime Database keepSynced for chat and live order flags
+- [x] P-022 · Realtime Database disk persistence, with chat and live order flags kept synced by the screens that read them rather than wholesale at every cold start
 - [x] P-023 · Crashlytics wired and monitored for a crash-free rate
 - [x] P-024 · Analytics events for order placed, accept latency and offer opens
 - [x] P-025 · Performance traces for cold start and order submission
@@ -292,6 +292,15 @@ Legend: `[x]` shipped and wired · `[ ]` still to ship.
 - [x] P-064 · Firestore indexes deployed by the deploy-worker workflow
 - [x] P-065 · APNs delivery headers alongside the Android alert priority
 - [x] P-066 · `docs/ALERT-RELIABILITY.md`: the ladder, the manifest and the device acceptance matrix
+
+### Opening the app without dying (P-067 … P-072)
+
+- [x] P-067 · One door to Android's foreground-service API: `UndalForeground` takes the promise in the first statement of every `onStartCommand`, a stop is a plain `stopService`, and `tools/check_foreground_contract.py` refuses the old shape in CI
+- [x] P-068 · A startup budget in the crash guard: a crash inside eight seconds of opening gets one reopen and then an honest screen, so the app can never loop itself back onto the glass
+- [x] P-069 · `SafeModeActivity`: what Undal shows when it cannot start — the exception in words, a copyable report naming version, device and frames, one tap to try again and one to call the kitchen, built out of nothing that can itself fail
+- [x] P-070 · The opening frame costs nothing: WorkManager, osmdroid, Cloudinary, the notification channels and the watchdog all start off the main thread, and each step fails alone rather than taking the process with it
+- [x] P-071 · One synchronous answer to "is this phone the kitchen", read by the alert watchdog, the boot receiver, the push handler and the fifteen-minute heartbeat — no `Task` read as though `getResult()` waited for it
+- [x] P-072 · The role read off the ID token by the router corrects the role the session guessed at, so a kitchen phone never spends the first second of a cold start as a customer's
 
 ---
 

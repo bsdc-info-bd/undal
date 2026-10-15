@@ -78,6 +78,13 @@ jobs:
           python3 tools/check_kotlin_shape.py
           python3 tools/check_import_contracts.py
 
+      # The two mistakes that compile, pass every test, and then kill the process
+      # from a thread nobody is watching: a foreground service that stops without
+      # ever taking the foreground, and a `Task` read as though `getResult()`
+      # waited for it. Both are the shape of the crash this app shipped with.
+      - name: Foreground-service and Task-read gate
+        run: python3 tools/check_foreground_contract.py
+
       # The kitchen's ability to ring spans the Worker and the app: a topic name,
       # a message type, a channel id, a cron and a route. None of them can be
       # felt by a test, so they are read from both sides and compared here.
