@@ -34,6 +34,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -61,6 +62,7 @@ import com.undal.syl.app.core.design.UndalTextField
 import com.undal.syl.app.core.maps.UndalLocationMap
 import com.undal.syl.app.core.theme.UndalDimens
 import com.undal.syl.app.core.util.TimeDhaka
+import com.undal.syl.app.core.util.UndalDigits
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import com.undal.syl.app.core.theme.undalSemantics
@@ -88,7 +90,7 @@ fun ProfileScreen(
     var currentPassword by remember { mutableStateOf("") }
     var newPassword by remember { mutableStateOf("") }
     var confirmPassword by remember { mutableStateOf("") }
-    var showDeleteConfirm by remember { mutableStateOf(false) }
+    var showDeleteConfirm by rememberSaveable { mutableStateOf(false) }
 
     LaunchedEffect(Unit) { viewModel.refreshAddress() }
 
@@ -272,7 +274,14 @@ fun ProfileScreen(
                 Spacer(Modifier.height(UndalDimens.sm))
                 UndalTextField(
                     value = draftPhone,
-                    onValueChange = { draftPhone = it.filter { ch -> ch.isDigit() || ch == '+' }.take(15) },
+                    // `Char.isDigit()` is true for the Bangla row too, which would
+                    // have written ০১৭১২৩৪৫৬৭৮ into the profile — a number the
+                    // Worker, the rider's dialer and the order document all read as
+                    // ASCII. Numbers the app stores are ASCII, whatever keyboard
+                    // typed them.
+                    onValueChange = {
+                        draftPhone = UndalDigits.toAscii(it).filter { ch -> ch in '0'..'9' || ch == '+' }.take(15)
+                    },
                     label = "Mobile number",
                     hint = "01712345678",
                     keyboardType = KeyboardType.Phone,

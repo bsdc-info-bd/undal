@@ -1,4 +1,5 @@
 package com.undal.syl.app.core.model
+import java.util.Locale
 
 import com.google.firebase.Timestamp
 import com.undal.syl.app.core.util.CouponMath
@@ -56,7 +57,7 @@ data class MenuDraft(
 
     val tags: List<String>
         get() = tagsText.split(',')
-            .map { it.trim().lowercase() }
+            .map { it.trim().lowercase(Locale.ENGLISH) }
             .filter { it.isNotEmpty() }
             .distinct()
             .take(8)
@@ -301,7 +302,7 @@ data class CouponDraft(
     val showOnWeb: Boolean = true
 ) {
 
-    val normalisedCode: String get() = code.trim().uppercase().replace(' ', '-')
+    val normalisedCode: String get() = code.trim().uppercase(Locale.ENGLISH).replace(' ', '-')
 
     val codeError: String?
         get() = if (CODE_PATTERN.matches(normalisedCode)) {

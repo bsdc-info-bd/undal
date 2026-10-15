@@ -1,5 +1,6 @@
 package com.undal.syl.app.data.repo
 
+import java.util.Locale
 import com.google.firebase.firestore.FirebaseFirestore
 import com.undal.syl.app.core.model.Category
 import com.undal.syl.app.core.model.Combo
@@ -158,7 +159,7 @@ class MenuRepo @Inject constructor(
         }.filter { card ->
             subcategoryId == null || (card as? MenuCard.Dish)?.item?.subcategoryId == subcategoryId
         }.filter { card ->
-            card.searchText.contains(query.trim().lowercase())
+            card.searchText.contains(query.trim().lowercase(Locale.ENGLISH))
         }
 
         val popularity = snapshot.items.associate { it.id to it.orderCount }

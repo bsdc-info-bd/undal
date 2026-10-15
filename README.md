@@ -214,6 +214,12 @@ from `UndalGuards`, so a failed read becomes one sentence on the screen.
 **`docs/ALERT-RELIABILITY.md`**, together with the device acceptance matrix that
 has to be run on the real kitchen phone.
 
+**`docs/AUDIT-100.md`** is the ledger that this work is written down in: one
+hundred real defects — crashes, inputs, layout, performance, money, the web
+storefront — each with the file it was fixed in and the gate that keeps it
+fixed, plus the leads that are still open and the five things only a real phone
+and a real cash hand can close.
+
 ---
 
 ## 7 · What costs nothing
@@ -258,6 +264,7 @@ undal/
 ├── FEATURES.md                     the counted 263-feature checklist
 ├── docs/ALERT-RELIABILITY.md       the alert ladder: payload, channels, manifest, acceptance
 ├── docs/CRASH-DISCIPLINE.md        why no ViewModel coroutine may end the process
+├── docs/AUDIT-100.md               the audit ledger: every defect, its fix and its proof
 ├── assets/sound/                   the official Undal order sound
 ├── app/                            the Android app (customer + kitchen)
 ├── firebase/                       rules, indexes, firebase.json

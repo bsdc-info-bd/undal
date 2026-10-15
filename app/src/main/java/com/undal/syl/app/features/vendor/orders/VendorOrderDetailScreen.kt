@@ -1,7 +1,7 @@
 package com.undal.syl.app.features.vendor.orders
 
+import java.util.Locale
 import android.content.Intent
-import android.net.Uri
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -42,6 +42,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.draw.clip
 import androidx.compose.foundation.shape.CircleShape
@@ -71,6 +72,7 @@ import com.undal.syl.app.core.util.OrderStateMachine
 import com.undal.syl.app.core.util.OrderStatus
 import com.undal.syl.app.core.util.TimeDhaka
 import com.undal.syl.app.core.util.UndalDigits
+import com.undal.syl.app.core.util.UndalPhone
 import com.undal.syl.app.features.vendor.VendorAgePill
 import com.undal.syl.app.features.vendor.VendorChip
 import com.undal.syl.app.features.vendor.VendorSection
@@ -101,15 +103,15 @@ fun VendorOrderDetailScreen(
     val clipboard = LocalClipboardManager.current
     val listState = rememberLazyListState()
     val scope = rememberCoroutineScope()
-    var readyChecked by remember { mutableStateOf(false) }
-    var collectedChecked by remember { mutableStateOf(false) }
+    var readyChecked by rememberSaveable { mutableStateOf(false) }
+    var collectedChecked by rememberSaveable { mutableStateOf(false) }
 
     LaunchedEffect(orderId, openChatInitially) { viewModel.bind(orderId, openChatInitially) }
 
     // A push can carry `?sheet=accept|reject|ready|delivered` straight into the
     // right confirmation (V-030, V-031, V-033).
     LaunchedEffect(orderId, sheet) {
-        when (sheet?.lowercase()) {
+        when (sheet?.lowercase(Locale.ENGLISH)) {
             "accept" -> viewModel.openSheet(VendorOrderDetailViewModel.Sheet.Accept)
             "reject" -> viewModel.openSheet(VendorOrderDetailViewModel.Sheet.Reject)
             "ready" -> viewModel.openSheet(VendorOrderDetailViewModel.Sheet.Ready)
@@ -344,11 +346,15 @@ fun VendorOrderDetailScreen(
                                 style = MaterialTheme.typography.bodyMedium,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 modifier = Modifier.combinedClickable(
+                                    // UndalPhone, not a hand-built tel: intent: the
+                                    // number may have been typed on a Bangla keypad
+                                    // (০১৭…) and a phone with no dialer must not take
+                                    // the kitchen's screen down with it.
                                     onClick = {
-                                        if (order.phone.isNotBlank()) {
-                                            context.startActivity(
-                                                Intent(Intent.ACTION_DIAL, Uri.parse("tel:${order.phone}"))
-                                            )
+                                        if (order.phone.isNotBlank() &&
+                                            !UndalPhone.dial(context, order.phone)
+                                        ) {
+                                            clipboard.setText(AnnotatedString(order.phone))
                                         }
                                     },
                                     onLongClick = {
@@ -365,10 +371,13 @@ fun VendorOrderDetailScreen(
                         UndalSecondaryButton(
                             text = "Call",
                             onClick = {
-                                if (order.phone.isNotBlank()) {
-                                    context.startActivity(
-                                        Intent(Intent.ACTION_DIAL, Uri.parse("tel:${order.phone}"))
-                                    )
+                                if (order.phone.isNotBlank() &&
+                                    !UndalPhone.dial(context, order.phone)
+                                ) {
+                                    // No dialer here: the number still leaves with
+                                    // the vendor, on the clipboard, so the call can
+                                    // be made from a phone that has one.
+                                    clipboard.setText(AnnotatedString(order.phone))
                                 }
                             },
                             icon = Icons.Filled.Call,

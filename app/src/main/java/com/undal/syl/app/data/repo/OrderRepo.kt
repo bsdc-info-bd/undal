@@ -1,5 +1,6 @@
 package com.undal.syl.app.data.repo
 
+import java.util.Locale
 import android.content.Context
 import com.google.firebase.Timestamp
 import com.google.firebase.auth.FirebaseAuth
@@ -174,7 +175,7 @@ class OrderRepo @Inject constructor(
 
         val orderReference = firestore.collection(ORDERS).document()
         val orderId = orderReference.id
-        val couponCode = draft.couponCode.trim().uppercase()
+        val couponCode = draft.couponCode.trim().uppercase(Locale.ENGLISH)
 
         val outcome = runCatching {
             firestore.runTransaction<PlacedOrder> { transaction ->

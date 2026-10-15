@@ -1,5 +1,6 @@
 package com.undal.syl.app.core.model
 
+import java.util.Locale
 import com.undal.syl.app.core.util.Money
 
 /**
@@ -80,10 +81,10 @@ data class MenuItem(
 
     fun matches(query: String): Boolean {
         if (query.isBlank()) return true
-        val needle = query.trim().lowercase()
-        return name.lowercase().contains(needle) ||
-            description.lowercase().contains(needle) ||
-            tags.any { it.lowercase().contains(needle) }
+        val needle = query.trim().lowercase(Locale.ENGLISH)
+        return name.lowercase(Locale.ENGLISH).contains(needle) ||
+            description.lowercase(Locale.ENGLISH).contains(needle) ||
+            tags.any { it.lowercase(Locale.ENGLISH).contains(needle) }
     }
 
     companion object {
@@ -130,8 +131,8 @@ data class Combo(
 
     fun matches(query: String): Boolean {
         if (query.isBlank()) return true
-        val needle = query.trim().lowercase()
-        return name.lowercase().contains(needle) || description.lowercase().contains(needle)
+        val needle = query.trim().lowercase(Locale.ENGLISH)
+        return name.lowercase(Locale.ENGLISH).contains(needle) || description.lowercase(Locale.ENGLISH).contains(needle)
     }
 
     companion object {
@@ -183,7 +184,7 @@ sealed interface MenuCard {
         override val imageUrl: String get() = combo.imageUrl
         override val categoryId: String get() = COMBO_CATEGORY
         override val available: Boolean get() = combo.available
-        override val searchText: String get() = combo.name.lowercase() + " " + combo.description.lowercase()
+        override val searchText: String get() = combo.name.lowercase(Locale.ENGLISH) + " " + combo.description.lowercase(Locale.ENGLISH)
     }
 
     companion object {
@@ -193,11 +194,11 @@ sealed interface MenuCard {
 
 private fun MenuItem.searchText(): String =
     buildString {
-        append(name.lowercase())
+        append(name.lowercase(Locale.ENGLISH))
         append(' ')
-        append(description.lowercase())
+        append(description.lowercase(Locale.ENGLISH))
         append(' ')
-        append(tags.joinToString(" ").lowercase())
+        append(tags.joinToString(" ").lowercase(Locale.ENGLISH))
         append(' ')
         append(if (veg) "vegetarian veg" else "non vegetarian")
     }

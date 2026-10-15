@@ -25,6 +25,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -68,10 +69,10 @@ fun VendorScheduleScreen(
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     val haptics = LocalHapticFeedback.current
-    var addingSpecial by remember { mutableStateOf(false) }
-    var specialClosed by remember { mutableStateOf(true) }
-    var specialNote by remember { mutableStateOf("") }
-    var specialMillis by remember { mutableStateOf(System.currentTimeMillis()) }
+    var addingSpecial by rememberSaveable { mutableStateOf(false) }
+    var specialClosed by rememberSaveable { mutableStateOf(true) }
+    var specialNote by rememberSaveable { mutableStateOf("") }
+    var specialMillis by rememberSaveable { mutableStateOf(System.currentTimeMillis()) }
 
     UndalScaffold(
         title = "Opening hours",

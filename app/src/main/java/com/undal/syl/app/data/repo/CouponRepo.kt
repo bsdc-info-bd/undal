@@ -4,6 +4,7 @@ import com.google.firebase.firestore.FirebaseFirestore
 import com.undal.syl.app.core.net.WorkerApi
 import com.undal.syl.app.core.util.CouponMath
 import com.undal.syl.app.core.util.Money
+import java.util.Locale
 import kotlinx.coroutines.tasks.await
 import org.json.JSONObject
 import javax.inject.Inject
@@ -135,7 +136,7 @@ class CouponRepo @Inject constructor(
         val board = buildList {
             for (index in 0 until (rows?.length() ?: 0)) {
                 val row = rows?.optJSONObject(index) ?: continue
-                val code = row.optString("code").trim().uppercase()
+                val code = row.optString("code").trim().uppercase(Locale.ENGLISH)
                 if (code.isBlank()) continue
                 add(fromBoardRow(code, row))
             }
@@ -155,7 +156,7 @@ class CouponRepo @Inject constructor(
 
     /** Reads and validates one code against the live document and the basket. */
     suspend fun validate(rawCode: String, subtotalPaisa: Long, deliveryPaisa: Long = 0L): Outcome {
-        val code = rawCode.trim().uppercase()
+        val code = rawCode.trim().uppercase(Locale.ENGLISH)
         if (code.isBlank()) return Outcome.Rejected("Enter a coupon code.")
 
         val document = runCatching {
@@ -228,7 +229,7 @@ class CouponRepo @Inject constructor(
     /** Maps one row of the Worker's public board into the app's coupon shape. */
     private fun fromBoardRow(code: String, row: JSONObject): Coupon = Coupon(
         code = code,
-        type = row.optString("type").trim().lowercase(),
+        type = row.optString("type").trim().lowercase(Locale.ENGLISH),
         value = row.optLong("value", 0L),
         active = true,
         description = row.optString("description"),

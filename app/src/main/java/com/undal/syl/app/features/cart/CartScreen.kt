@@ -1,5 +1,7 @@
 package com.undal.syl.app.features.cart
 
+import androidx.compose.runtime.saveable.rememberSaveable
+import java.util.Locale
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
@@ -91,8 +93,8 @@ fun CartScreen(
     viewModel: CartViewModel = hiltViewModel()
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
-    var couponInput by remember { mutableStateOf("") }
-    var showClearConfirm by remember { mutableStateOf(false) }
+    var couponInput by rememberSaveable { mutableStateOf("") }
+    var showClearConfirm by rememberSaveable { mutableStateOf(false) }
 
     LaunchedEffect(Unit) { viewModel.refreshAddress() }
 
@@ -266,7 +268,7 @@ fun CartScreen(
                                     // Codes are upper-case A–Z, 0–9, - and _: a
                                     // space pasted from a WhatsApp message is not
                                     // part of the code, and neither is the ৳ sign.
-                                    couponInput = it.uppercase()
+                                    couponInput = it.uppercase(Locale.ENGLISH)
                                         .filter { ch -> ch.isLetterOrDigit() || ch == '-' || ch == '_' }
                                         .take(24)
                                 },

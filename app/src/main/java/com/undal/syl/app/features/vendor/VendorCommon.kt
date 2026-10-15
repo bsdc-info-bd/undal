@@ -1,5 +1,6 @@
 package com.undal.syl.app.features.vendor
 
+import java.util.Locale
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -114,7 +115,7 @@ fun VendorStatCard(
     ) {
         Column(modifier = Modifier.padding(UndalDimens.sm)) {
             Text(
-                text = label.uppercase(),
+                text = label.uppercase(Locale.ENGLISH),
                 style = MaterialTheme.typography.labelSmall,
                 color = if (highlight) {
                     MaterialTheme.colorScheme.onPrimaryContainer

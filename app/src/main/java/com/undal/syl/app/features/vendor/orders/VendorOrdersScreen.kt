@@ -1,5 +1,6 @@
 package com.undal.syl.app.features.vendor.orders
 
+import java.util.Locale
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -52,9 +53,13 @@ fun VendorOrdersScreen(
     var refreshing by remember { mutableStateOf(false) }
 
     LaunchedEffect(refreshing) {
-        if (refreshing) {
+        if (!refreshing) return@LaunchedEffect
+        // The indicator stops when the work stops, cancelled or not: a queued
+        // order must never be hidden behind a spinner that cannot turn off.
+        try {
             viewModel.refresh()
-            kotlinx.coroutines.delay(600L)
+            kotlinx.coroutines.delay(350L)
+        } finally {
             refreshing = false
         }
     }
@@ -102,7 +107,7 @@ fun VendorOrdersScreen(
                 if (state.visible.isEmpty() && !state.loading) {
                     VendorEmptyState(
                         icon = Icons.Filled.ShoppingCart,
-                        title = "Nothing in ${state.filter.label.lowercase()}",
+                        title = "Nothing in ${state.filter.label.lowercase(Locale.ENGLISH)}",
                         message = when (state.filter) {
                             VendorQueueFilter.NEW -> "No order is waiting for an answer. The alert loop is armed."
                             VendorQueueFilter.PREPARING -> "Nothing is cooking right now."
@@ -125,8 +130,10 @@ fun VendorOrdersScreen(
                             ),
                             verticalArrangement = Arrangement.spacedBy(UndalDimens.xs)
                         ) {
-                            items(state.visible.size) { index ->
-                                val order = state.visible[index]
+                            // Keyed by the order, not by the row: a new order
+                            // arriving at the top must not hand this row's
+                            // composition (and its age badge) to a different order.
+                            items(state.visible, key = { it.id }) { order ->
                                 VendorOrderCard(
                                     order = order,
                                     onClick = {

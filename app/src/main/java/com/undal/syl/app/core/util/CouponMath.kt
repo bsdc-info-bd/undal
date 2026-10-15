@@ -1,4 +1,5 @@
 package com.undal.syl.app.core.util
+import java.util.Locale
 
 import java.time.Instant
 import java.time.ZoneOffset
@@ -132,7 +133,7 @@ object CouponMath {
 
     // ---------------------------------------------------------------- parsing
 
-    fun typeOf(value: Any?): String? = when (value?.toString()?.trim()?.lowercase()) {
+    fun typeOf(value: Any?): String? = when (value?.toString()?.trim()?.lowercase(Locale.ENGLISH)) {
         TYPE_PERCENT -> TYPE_PERCENT
         TYPE_FIXED -> TYPE_FIXED
         TYPE_FREE_DELIVERY -> TYPE_FREE_DELIVERY
@@ -191,7 +192,7 @@ object CouponMath {
         val seen = mutableListOf<String>()
         raw.forEach { entry ->
             if (entry !is String) return@forEach
-            val day = entry.trim().lowercase().take(3)
+            val day = entry.trim().lowercase(Locale.ENGLISH).take(3)
             if (day in WEEKDAYS && day !in seen) seen.add(day)
         }
         return seen
@@ -269,7 +270,7 @@ object CouponMath {
             return Verdict(false, "expired", 0L)
         }
 
-        val days = coupon.daysOfWeek.map { it.trim().lowercase().take(3) }.filter { it in WEEKDAYS }
+        val days = coupon.daysOfWeek.map { it.trim().lowercase(Locale.ENGLISH).take(3) }.filter { it in WEEKDAYS }
         if (days.isNotEmpty() && days.none { it == context.clock.weekday.take(3) }) {
             return Verdict(false, "not today", 0L)
         }
@@ -312,7 +313,7 @@ object CouponMath {
         var bestExpiry = Long.MAX_VALUE
         for (coupon in coupons) {
             if (coupon.autoApply.not()) continue
-            val code = coupon.code.trim().uppercase()
+            val code = coupon.code.trim().uppercase(Locale.ENGLISH)
             if (code.isEmpty()) continue
             val verdict = evaluate(coupon, context)
             if (!verdict.eligible) continue
@@ -371,7 +372,7 @@ object CouponMath {
             parts.add("$from–$to")
         }
         if (coupon.daysOfWeek.isNotEmpty()) {
-            parts.add(coupon.daysOfWeek.joinToString(", ") { it.trim().lowercase().take(3) })
+            parts.add(coupon.daysOfWeek.joinToString(", ") { it.trim().lowercase(Locale.ENGLISH).take(3) })
         }
         if (coupon.maxDiscountPaisa > 0L && coupon.kind != TYPE_PERCENT && coupon.kind != TYPE_FREE_DELIVERY) {
             parts.add("up to ${Money.format(coupon.maxDiscountPaisa)}")

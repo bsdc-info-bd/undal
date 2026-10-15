@@ -1,4 +1,5 @@
 package com.undal.syl.app.core.util
+import java.util.Locale
 
 /**
  * Field validation for every form in the app.
@@ -143,7 +144,7 @@ object Validators {
     fun deliveryNote(raw: String): String? = requiredText("delivery note", raw, maximum = MAX_ADDRESS_TEXT)
 
     fun couponCode(raw: String): String? {
-        val value = raw.trim().uppercase()
+        val value = raw.trim().uppercase(Locale.ENGLISH)
         return when {
             value.isEmpty() -> "Enter the coupon code."
             !COUPON_CODE.matches(value) -> "Coupon codes use letters, numbers, - and _ only."

@@ -1,5 +1,7 @@
 package com.undal.syl.app.features.vendor.menu
 
+import androidx.compose.runtime.saveable.rememberSaveable
+import java.util.Locale
 import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
@@ -192,7 +194,7 @@ internal fun VendorDateField(
     millis: Long?,
     onPicked: (Long) -> Unit
 ) {
-    var open by remember { mutableStateOf(false) }
+    var open by rememberSaveable { mutableStateOf(false) }
     val shown = millis?.let { TimeDhaka.formatDate(TimeDhaka.fromInstant(Instant.ofEpochMilli(it)).toLocalDate()) }
         .orEmpty()
     Row(verticalAlignment = Alignment.CenterVertically) {
@@ -709,7 +711,7 @@ fun CampaignEditorSheet(
         Spacer(Modifier.height(UndalDimens.xs))
         UndalTextField(
             value = draft.code,
-            onValueChange = { viewModel.onCampaignDraftChange(draft.copy(code = it.uppercase())) },
+            onValueChange = { viewModel.onCampaignDraftChange(draft.copy(code = it.uppercase(Locale.ENGLISH))) },
             label = "Coupon code shown on the banner (optional)",
             hint = "FRIYAY10",
             singleLine = true
@@ -757,7 +759,7 @@ fun CouponEditorSheet(
     ) {
         UndalTextField(
             value = draft.code,
-            onValueChange = { viewModel.onCouponDraftChange(draft.copy(code = it.uppercase())) },
+            onValueChange = { viewModel.onCouponDraftChange(draft.copy(code = it.uppercase(Locale.ENGLISH))) },
             label = "Code",
             hint = "WELCOME10",
             error = draft.codeError,
@@ -880,7 +882,7 @@ fun CouponEditorSheet(
         Row(horizontalArrangement = Arrangement.spacedBy(UndalDimens.xs)) {
             listOf("fri", "sat", "sun").forEach { day ->
                 VendorChip(
-                    label = day.uppercase(),
+                    label = day.uppercase(Locale.ENGLISH),
                     selected = day in draft.days,
                     onClick = {
                         val next = if (day in draft.days) draft.days - day else draft.days + day
@@ -893,7 +895,7 @@ fun CouponEditorSheet(
         Row(horizontalArrangement = Arrangement.spacedBy(UndalDimens.xs)) {
             listOf("mon", "tue", "wed", "thu").forEach { day ->
                 VendorChip(
-                    label = day.uppercase(),
+                    label = day.uppercase(Locale.ENGLISH),
                     selected = day in draft.days,
                     onClick = {
                         val next = if (day in draft.days) draft.days - day else draft.days + day

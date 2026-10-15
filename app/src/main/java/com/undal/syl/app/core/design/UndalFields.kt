@@ -98,7 +98,13 @@ fun UndalTextField(
             keyboardActions = KeyboardActions(
                 onDone = { onImeAction?.invoke() },
                 onGo = { onImeAction?.invoke() },
-                onNext = { onImeAction?.invoke() }
+                onNext = { onImeAction?.invoke() },
+                // A keyboard with a Search key and a keyboard with a Send key
+                // both need an answer from this file: without these two the key
+                // was dead — the menu's Search and the chat's Send did nothing —
+                // which is exactly the sort of thing blamed on the phone.
+                onSearch = { onImeAction?.invoke() },
+                onSend = { onImeAction?.invoke() }
             ),
             supportingText = when {
                 error != null -> {
@@ -160,7 +166,13 @@ fun UndalPasswordField(
             keyboardActions = KeyboardActions(
                 onDone = { onImeAction?.invoke() },
                 onGo = { onImeAction?.invoke() },
-                onNext = { onImeAction?.invoke() }
+                onNext = { onImeAction?.invoke() },
+                // A keyboard with a Search key and a keyboard with a Send key
+                // both need an answer from this file: without these two the key
+                // was dead — the menu's Search and the chat's Send did nothing —
+                // which is exactly the sort of thing blamed on the phone.
+                onSearch = { onImeAction?.invoke() },
+                onSend = { onImeAction?.invoke() }
             ),
             supportingText = when {
                 error != null -> {

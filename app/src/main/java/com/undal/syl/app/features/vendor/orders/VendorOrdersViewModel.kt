@@ -8,9 +8,12 @@ import com.undal.syl.app.data.repo.VendorOrderRepo
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import javax.inject.Inject
 
@@ -54,16 +57,24 @@ class VendorOrdersViewModel @Inject constructor(
     private val refreshKey = MutableStateFlow(0)
     private var week: List<VendorOrder> = emptyList()
 
-    private val _now = MutableStateFlow(System.currentTimeMillis())
-    val now: StateFlow<Long> = _now.asStateFlow()
+    /**
+     * The age badges, ticking once a second — but only while a screen is looking.
+     *
+     * This was a `while (true)` loop inside `viewModelScope`, and a view model
+     * lives for as long as its screen is on the back stack: on a kitchen phone
+     * left in a pocket with the queue open, that was one wake-up per second, for
+     * hours, for a number nobody was reading. `WhileSubscribed` ties the clock to
+     * the screen instead, with five seconds of grace so a rotation does not
+     * restart it.
+     */
+    val now: StateFlow<Long> = flow {
+        while (true) {
+            emit(System.currentTimeMillis())
+            delay(1_000L)
+        }
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000L), System.currentTimeMillis())
 
     init {
-        viewModelScope.launch(guard) {
-            while (true) {
-                _now.value = System.currentTimeMillis()
-                delay(1_000L)
-            }
-        }
         viewModelScope.launch(guard) {
             refreshKey.flatMapLatest { vendorOrderRepo.observeWeek() }.collect { feed ->
                 week = feed.orders

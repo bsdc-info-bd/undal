@@ -100,9 +100,11 @@ fun VendorDashboardScreen(
 
     LaunchedEffect(Unit) { viewModel.refresh(context) }
     LaunchedEffect(refreshing) {
-        if (refreshing) {
+        if (!refreshing) return@LaunchedEffect
+        try {
             viewModel.refreshAll(context)
-            kotlinx.coroutines.delay(600L)
+            kotlinx.coroutines.delay(350L)
+        } finally {
             refreshing = false
         }
     }
