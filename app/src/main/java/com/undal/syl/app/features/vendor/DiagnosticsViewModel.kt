@@ -90,7 +90,15 @@ class DiagnosticsViewModel @Inject constructor(
         val fullScreenIntentAllowed: Boolean = true,
         val watchRunning: Boolean = false,
         val serverSeesToken: Boolean? = null,
-        val test: TestAlert = TestAlert()
+        val test: TestAlert = TestAlert(),
+        /**
+         * One sentence when a read behind this screen failed.
+         *
+         * The readiness screen is where the kitchen goes when the phone has been
+         * quiet, so a failure here has to be distinguishable from "every check
+         * passed" — the opposite reading of the same empty screen.
+         */
+        val notice: String? = null
     ) {
         /** Every check that would lose an order is passing. */
         val armed: Boolean get() = checks.none { it.blocking && it.status != Status.OK }
@@ -113,7 +121,7 @@ class DiagnosticsViewModel @Inject constructor(
      * shows messages.
      */
     private val guard = com.undal.syl.app.core.util.UndalGuards.viewModel("checking this device") { message ->
-        _state.value = _state.value.copy(message = message)
+        _state.value = _state.value.copy(notice = message, soundTesting = false)
     }
 
     private var testPlayer: MediaPlayer? = null

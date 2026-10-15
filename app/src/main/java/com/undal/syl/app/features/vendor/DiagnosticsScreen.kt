@@ -165,10 +165,21 @@ fun DiagnosticsScreen(
 
             Spacer(Modifier.height(UndalDimens.md))
 
+            // A failed read is said first, and it suppresses the "every check
+            // passes" banner below: with no checks read at all, that banner would
+            // be the one lie this screen must never tell.
+            if (state.notice != null) {
+                UndalAlertBanner(
+                    text = state.notice.orEmpty(),
+                    icon = Icons.Filled.Warning
+                )
+                Spacer(Modifier.height(UndalDimens.sm))
+            }
+
             val failing = state.checks.filter { it.status != DiagnosticsViewModel.Status.OK }
             val ready = state.checks.filter { it.status == DiagnosticsViewModel.Status.OK }
 
-            if (failing.isEmpty()) {
+            if (failing.isEmpty() && state.notice == null) {
                 UndalAlertBanner(
                     text = "Every check passes. Scroll to the last card and ring this phone once — that is the " +
                         "only test that proves the whole chain.",

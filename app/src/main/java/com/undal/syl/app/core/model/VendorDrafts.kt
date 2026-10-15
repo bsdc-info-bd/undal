@@ -12,6 +12,14 @@ import com.undal.syl.app.core.util.Validators
  * "a price must be more than zero" instead of watching a save button stay grey.
  */
 
+/**
+ * The ceiling the security rules put on a dish: `amountPaisa <= 1000000` in
+ * `firebase/firestore.rules`, in paisa, so ৳10,000. It is written here as a name
+ * because two fields are measured against it and the rules measure only the one
+ * they can see — and a limit that lives in a literal in one `when` branch drifts.
+ */
+const val MAX_ITEM_PAISA: Long = 1_000_000L
+
 data class MenuDraft(
     val id: String? = null,
     val name: String = "",
@@ -66,15 +74,26 @@ data class MenuDraft(
             priceText.isBlank() -> "Set what the customer pays."
             pricePaisa == null -> "That price is not a number."
             (pricePaisa ?: 0L) <= 0L -> "A price must be more than zero."
-            (pricePaisa ?: 0L) > 1_000_000L -> "The maximum item price is ৳ 10,000."
+            (pricePaisa ?: 0L) > MAX_ITEM_PAISA -> "The maximum item price is ${Money.format(MAX_ITEM_PAISA)}."
             else -> null
         }
 
+    /**
+     * The compare price is capped by the same ceiling, because it is not a second
+     * number: `amountPaisa` is whichever of the two is larger, and that is the
+     * field the rules put a ceiling on. An editor that capped only the price let a
+     * dish through with a ৳15,000 "was" price and a ৳500 "now" price, and the
+     * database refused the save with nothing but "Missing or insufficient
+     * permissions" — which reads as a broken menu editor, not a price too high.
+     */
     val compareError: String?
         get() = when {
             compareText.isBlank() -> null
             comparePaisa == null -> "That compare price is not a number."
             (comparePaisa ?: 0L) < (pricePaisa ?: 0L) -> "The compare price must be at least the price."
+            (comparePaisa ?: 0L) > MAX_ITEM_PAISA ->
+                "The maximum price is ${Money.format(MAX_ITEM_PAISA)}, and the compare price is stored as " +
+                    "this dish's list price."
             else -> null
         }
 
