@@ -303,7 +303,7 @@ jobs:
           {
             echo "## Undal Worker deployed"
             echo ""
-            echo "- Cron 1: \`*/5 * * * *\` — vendor presence watchdog (auto-offline after 15 minutes)."
+            echo "- Cron 1: \`*/5 * * * *\` — vendor presence watchdog (ten minutes of silence pauses an open kitchen; the phone coming back inside 30 minutes restores it)."
             echo "- Cron 2: \`0 12 * * *\` = 18:00 Asia/Dhaka — daily offer broadcast to \`promos_all\`."
             echo "- Health: ${WORKER_BASE_URL}/healthz"
             echo "- Deep links: ${WORKER_BASE_URL}/dish/{id} · /combo/{id} · /order/{id} · /app"
