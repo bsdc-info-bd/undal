@@ -140,4 +140,28 @@ section.hero .pill{margin-bottom:14px}
 @media(hover:hover){.faq-item summary:hover{color:var(--brand)}.button.ghost:hover,a.button.ghost:hover{background:#eaf2e9;color:var(--brand)}}
 @media(max-width:640px){section.hero{border-radius:24px;padding:22px}.split{grid-template-columns:1fr;gap:0}.split>.card{margin-bottom:20px}.facts>div{grid-template-columns:1fr;gap:2px}.actions{gap:10px}.actions .button,.actions a.button{flex:1 1 100%}.step-number{width:30px;height:30px;border-radius:10px}}
 
+/* --- the tracking page: the bill, printed in the app's own ink -------------- */
+section.receipt{max-width:780px;margin:0 auto 20px;background:#14261b;color:#eef3ec;border-radius:26px;
+padding:clamp(20px,4vw,34px);box-shadow:0 18px 44px #14261b26}
+section.receipt .receipt-hero{text-align:center;margin:0 0 20px}
+.receipt-tick{width:58px;height:58px;margin:0 auto 14px;border-radius:50%;background:#165b3b;color:#eaf7ef;
+font-size:1.6rem;line-height:58px;box-shadow:0 0 0 10px #165b3b26}
+.receipt-hero h2{margin:0 0 6px;color:#fff;font-size:clamp(1.25rem,3.4vw,1.7rem);letter-spacing:-.03em}
+.receipt-hero p{margin:0;font-size:.9rem;color:#b9cbbd}
+.receipt-hero .receipt-sent{margin-top:8px;font-size:.78rem;color:#93a897}
+.receipt-rows{border-top:1px solid #ffffff1f;padding-top:6px}
+.receipt-waiting{margin:14px 0;color:#b9cbbd;font-size:.9rem}
+.receipt-row{display:flex;gap:14px;align-items:baseline;padding:9px 0;border-bottom:1px dashed #ffffff1f;font-size:.92rem}
+.receipt-row .what{min-width:0;overflow-wrap:anywhere}
+.receipt-row .what small{display:block;color:#93a897;font-size:.76rem;margin-top:2px}
+.receipt-row .amount{margin-left:auto;white-space:nowrap;font-variant-numeric:tabular-nums;font-weight:600}
+.receipt-row.muted{color:#b9cbbd}
+.receipt-row.save .amount{color:#7fd39b}
+.receipt-total{display:flex;gap:14px;align-items:baseline;justify-content:space-between;border-top:2px solid #ffffff3d;
+margin-top:10px;padding-top:14px;font-weight:800;font-size:1.02rem;letter-spacing:-.01em}
+.receipt-total .amount{font-size:1.35rem;font-variant-numeric:tabular-nums;white-space:nowrap}
+.receipt-note{margin:14px 0 0;font-size:.78rem;line-height:1.6;color:#93a897;font-style:italic;text-align:center}
+@media(max-width:640px){section.receipt{border-radius:20px;padding:20px 18px}.receipt-tick{width:50px;height:50px;
+line-height:50px;font-size:1.4rem}.receipt-total{font-size:.95rem}.receipt-total .amount{font-size:1.15rem}}
+
 ${MAP_STYLE}`;

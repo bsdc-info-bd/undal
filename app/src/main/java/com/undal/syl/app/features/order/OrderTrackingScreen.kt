@@ -39,7 +39,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.collectAsState
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -86,7 +86,7 @@ fun OrderTrackingScreen(
     openChatInitially: Boolean = false,
     viewModel: OrderTrackingViewModel = hiltViewModel()
 ) {
-    val state by viewModel.state.collectAsState()
+    val state by viewModel.state.collectAsStateWithLifecycle()
     val context = LocalContext.current
 
     LaunchedEffect(orderId) { viewModel.bind(orderId) }
@@ -149,12 +149,23 @@ fun OrderTrackingScreen(
             return@UndalScaffold
         }
 
+        // The order has been sent but the kitchen has not picked it up yet: this
+        // is the moment the customer is checking what they just ordered, so the
+        // confirmation and its bill lead the screen. Once the kitchen accepts,
+        // the live status card is the important thing again and this steps aside.
+        val showPlacementCard = state.displayStatus == OrderStatus.PLACED && !state.isCancelled
+
         Column(
             modifier = Modifier
                 .fillMaxSize()
                 .verticalScroll(rememberScrollState())
                 .padding(horizontal = UndalDimens.screenPadding)
         ) {
+            if (showPlacementCard) {
+                Spacer(Modifier.height(UndalDimens.sm))
+                UndalOrderConfirmationCard(detail = detail)
+            }
+
             if (state.notice != null) {
                 Spacer(Modifier.height(UndalDimens.sm))
                 UndalAlertBanner(
@@ -214,9 +225,14 @@ fun OrderTrackingScreen(
                 }
             }
 
-            Spacer(Modifier.height(UndalDimens.sm))
+            // The placement card above prints the same bill row by row, so it is
+            // not printed twice on one screen — the page repeats the *status*,
+            // never the receipt.
+            if (!showPlacementCard) {
+                Spacer(Modifier.height(UndalDimens.sm))
 
-            ReceiptCard(detail)
+                ReceiptCard(detail)
+            }
 
             Spacer(Modifier.height(UndalDimens.sm))
 
@@ -562,11 +578,19 @@ private fun DeliveryCard(detail: OrderRepo.OrderDetail) {
         )
         Spacer(Modifier.height(UndalDimens.xs))
         Text(detail.addressDesc, style = MaterialTheme.typography.bodyMedium)
-        Text(
-            text = "Rider note: ${detail.addressNote}",
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant
-        )
+        if (detail.addressNote.isNotBlank()) {
+            Text(
+                text = "Rider note: ${detail.addressNote}",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        } else {
+            Text(
+                text = "No rider note — add one if your gate is hard to find.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
         Spacer(Modifier.height(UndalDimens.sm))
         UndalLocationMap(
             latitude = detail.addressLat,

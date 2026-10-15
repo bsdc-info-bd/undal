@@ -37,7 +37,10 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberSwipeToDismissBoxState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.collectAsState
+import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.liveRegion
+import androidx.compose.ui.semantics.semantics
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -87,7 +90,7 @@ fun CartScreen(
     onOpenOrder: (String) -> Unit,
     viewModel: CartViewModel = hiltViewModel()
 ) {
-    val state by viewModel.state.collectAsState()
+    val state by viewModel.state.collectAsStateWithLifecycle()
     var couponInput by remember { mutableStateOf("") }
     var showClearConfirm by remember { mutableStateOf(false) }
 
@@ -112,6 +115,20 @@ fun CartScreen(
                             Text("Total", style = MaterialTheme.typography.titleMedium)
                             Spacer(Modifier.weight(1f))
                             Text(state.totalLabel, style = MaterialTheme.typography.titleLarge)
+                        }
+                        // The first blocker is repeated here, beside the button it is
+                        // blocking. The full list is further down the page inside the
+                        // bill, and a customer looking at a greyed-out button should
+                        // not have to scroll to find out why it is greyed out.
+                        val firstBlocker = state.blockers.firstOrNull()
+                        if (firstBlocker != null) {
+                            Spacer(Modifier.height(UndalDimens.xs))
+                            Text(
+                                text = firstBlocker,
+                                style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.colorScheme.error,
+                                modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite }
+                            )
                         }
                         Spacer(Modifier.height(UndalDimens.sm))
                         UndalPrimaryButton(
@@ -303,13 +320,17 @@ fun CartScreen(
                 if (state.couponMessage != null) {
                     Spacer(Modifier.height(UndalDimens.xs))
                     Text(
-                        text = state.couponMessage.orEmpty(),
+                        // The message says which it is, rather than leaving colour
+                        // alone to carry the difference between "applied" and
+                        // "refused" — colour is not information for every eye.
+                        text = (if (state.couponIsError) "✕ " else "✓ ") + state.couponMessage.orEmpty(),
                         style = MaterialTheme.typography.bodySmall,
                         color = if (state.couponIsError) {
                             MaterialTheme.colorScheme.error
                         } else {
                             MaterialTheme.colorScheme.primary
-                        }
+                        },
+                        modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite }
                     )
                 }
             }
@@ -376,12 +397,14 @@ fun CartScreen(
                 if (address != null) {
                     Spacer(Modifier.height(UndalDimens.xs))
                     Text(address.desc, style = MaterialTheme.typography.bodyMedium)
-                    Spacer(Modifier.height(UndalDimens.xs))
-                    Text(
-                        text = "Rider note: ${address.note}",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
+                    if (address.note.isNotBlank()) {
+                        Spacer(Modifier.height(UndalDimens.xs))
+                        Text(
+                            text = "Rider note: ${address.note}",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
                     Spacer(Modifier.height(UndalDimens.sm))
                     UndalLocationMap(
                         latitude = address.lat,

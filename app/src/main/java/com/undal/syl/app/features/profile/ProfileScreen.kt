@@ -34,7 +34,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.collectAsState
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -82,7 +82,7 @@ fun ProfileScreen(
     onOpenInbox: () -> Unit,
     viewModel: ProfileViewModel = hiltViewModel()
 ) {
-    val state by viewModel.state.collectAsState()
+    val state by viewModel.state.collectAsStateWithLifecycle()
     var draftName by remember(state.name) { mutableStateOf(state.name) }
     var draftPhone by remember(state.phone) { mutableStateOf(state.phone) }
     var currentPassword by remember { mutableStateOf("") }
@@ -314,7 +314,9 @@ fun ProfileScreen(
                 if (state.address != null) {
                     UndalKeyValueRow("Title", state.address?.title.orEmpty())
                     UndalKeyValueRow("Landmark", state.address?.desc.orEmpty())
-                    UndalKeyValueRow("Rider note", state.address?.note.orEmpty())
+                    if (!state.address?.note.isNullOrBlank()) {
+                        UndalKeyValueRow("Rider note", state.address?.note.orEmpty())
+                    }
                     Spacer(Modifier.height(UndalDimens.xs))
                     Text(
                         text = state.addressPinLabel,

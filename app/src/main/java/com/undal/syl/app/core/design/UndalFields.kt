@@ -30,6 +30,11 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.semantics.liveRegion
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
@@ -96,7 +101,19 @@ fun UndalTextField(
                 onNext = { onImeAction?.invoke() }
             ),
             supportingText = when {
-                error != null -> { { Text(error, color = MaterialTheme.colorScheme.error) } }
+                error != null -> {
+                    {
+                        // Announced, not just drawn: a validation message that only
+                        // exists as pixels is invisible to TalkBack, and the customer
+                        // is left pressing Save with no idea what is wrong.
+                        Text(
+                            text = error,
+                            color = MaterialTheme.colorScheme.error,
+                            modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite }
+                        )
+                    }
+                }
+
                 helper != null -> { { Text(helper) } }
                 else -> null
             },
@@ -146,7 +163,16 @@ fun UndalPasswordField(
                 onNext = { onImeAction?.invoke() }
             ),
             supportingText = when {
-                error != null -> { { Text(error, color = MaterialTheme.colorScheme.error) } }
+                error != null -> {
+                    {
+                        Text(
+                            text = error,
+                            color = MaterialTheme.colorScheme.error,
+                            modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite }
+                        )
+                    }
+                }
+
                 helper != null -> { { Text(helper) } }
                 else -> null
             }
@@ -233,7 +259,14 @@ fun UndalKeyValueRow(
         Text(
             text = value,
             style = if (emphasise) MaterialTheme.typography.titleMedium else MaterialTheme.typography.bodyLarge,
-            color = MaterialTheme.colorScheme.onSurface
+            color = MaterialTheme.colorScheme.onSurface,
+            textAlign = TextAlign.End,
+            maxLines = 2,
+            overflow = TextOverflow.Ellipsis,
+            // Both halves take their share of the row: a long value (a full address,
+            // a dish name with its description) used to have no width limit at all
+            // and simply pushed the label off the screen.
+            modifier = Modifier.weight(1f)
         )
     }
 }

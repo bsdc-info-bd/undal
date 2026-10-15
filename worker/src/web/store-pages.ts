@@ -986,11 +986,37 @@ export async function handleTrackPage(orderId: string): Promise<Response> {
   });
 }
 
+/**
+ * `GET /order/{id}` — one order, live.
+ *
+ * The page prints the same bill the app prints, because this is where a
+ * customer who ordered in a browser ends up: server-rendered markup with a tick
+ * and the receipt, filled in by the poll below. While the kitchen has not
+ * accepted the order the tick and the sentence are shown; after that they step
+ * aside and the bill, the timeline and the total stay.
+ *
+ * The order id in the URL is the whole key, so everything on this page is the
+ * customer's own order and nothing else — never their name, their phone number
+ * or their address.
+ */
 export async function handleOrderTracking(orderId: string): Promise<Response> {
   return renderPage({
     title: "Order status — Undal HomeKitchen",
     description: "Live status of an Undal HomeKitchen order.",
-    body: `<section class="card">
+    body: `<section class="receipt" id="undal-receipt">
+  <div class="receipt-hero" id="undal-receipt-hero" hidden>
+    <span class="receipt-tick" aria-hidden="true">✓</span>
+    <h2>Order placed. We’re on it.</h2>
+    <p>The kitchen has been alerted on its own phone and is looking at your order now.</p>
+    <p class="receipt-sent" id="undal-receipt-sent"></p>
+  </div>
+  <div class="receipt-rows" id="undal-receipt-rows">
+    <p class="receipt-waiting">Reading your bill…</p>
+  </div>
+  <div class="receipt-total"><span>Cash to the rider</span><span class="amount" id="undal-order-total">—</span></div>
+  <p class="receipt-note">Cash on delivery only — no card, no wallet, no online payment. Keep the cash ready for the rider.</p>
+</section>
+<section class="card">
   <span class="pill" id="undal-status-pill">Loading…</span>
   <h2 style="margin-top:10px" id="undal-order-title">Order</h2>
   <ul class="steps" id="undal-steps">
@@ -1001,7 +1027,6 @@ export async function handleOrderTracking(orderId: string): Promise<Response> {
     <li data-status="delivered"><span class="dot"></span><span>Delivered — thank you</span></li>
   </ul>
   <div id="undal-note"></div>
-  <div class="row"><span>Cash to pay the rider</span><span class="total" id="undal-order-total">—</span></div>
   <p class="smallprint" id="undal-updated"></p>
   <a class="button secondary" href="/store">Order something else</a>
   <a class="button secondary" href="/download">Install the app for live pushes</a>
@@ -1017,6 +1042,98 @@ export async function handleOrderTracking(orderId: string): Promise<Response> {
     delivered: ["Delivered", "Delivered and paid. Thank you for ordering from Undal."],
     cancelled: ["Cancelled", "The kitchen cancelled this order. Their reason is below."]
   };
+
+  // Taka, written the way the app writes it: the symbol, then the amount with
+  // the paisa showing only when there are paisa. Written with a plain
+  // toLocaleString and an explicit locale so a browser set to Bangla digits
+  // does not print this bill in a different script from the app's.
+  function taka(paisa) {
+    var amount = Number(paisa) || 0;
+    return (amount / 100).toLocaleString("en-US", {
+      minimumFractionDigits: amount % 100 ? 2 : 0,
+      maximumFractionDigits: 2
+    }).replace(/^/, "৳ ");
+  }
+
+  // The kitchen's clock, not the visitor's. Dhaka keeps one time all year — no
+  // daylight saving — so the offset is a constant and the arithmetic is done in
+  // UTC: a customer reading this page from Dubai and one reading it in Sylhet
+  // see the same minute.
+  var DHAKA_OFFSET_MS = 6 * 60 * 60 * 1000;
+  function dhakaClock(value) {
+    var at = new Date(value);
+    if (isNaN(at.getTime())) return "";
+    var shifted = new Date(at.getTime() + DHAKA_OFFSET_MS);
+    var hours = shifted.getUTCHours();
+    var minutes = shifted.getUTCMinutes();
+    var suffix = hours < 12 ? "am" : "pm";
+    var hour12 = hours % 12 === 0 ? 12 : hours % 12;
+    return hour12 + ":" + (minutes < 10 ? "0" : "") + minutes + " " + suffix;
+  }
+
+  // Every string that reaches innerHTML comes from the database, so it is
+  // escaped here: a dish named with an angle bracket must be a dish, not markup.
+  function escapeText(text) {
+    return String(text).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  }
+
+  function receiptRow(what, amount, detail, extraClass) {
+    return '<div class="receipt-row ' + (extraClass || "") + '">' +
+      '<span class="what">' + escapeText(what) +
+      (detail ? '<small>' + escapeText(detail) + "</small>" : "") +
+      '</span><span class="amount">' + escapeText(amount) + "</span></div>";
+  }
+
+  function km(value) {
+    var distance = Number(value) || 0;
+    return (distance === Math.round(distance) ? String(Math.round(distance)) : distance.toFixed(1)) + " km";
+  }
+
+  function paintReceipt(order) {
+    var items = order.items || [];
+    var rows = "";
+    for (var index = 0; index < items.length; index++) {
+      var line = items[index];
+      rows += receiptRow(
+        line.qty + " × " + line.name,
+        taka(line.lineTotalPaisa),
+        line.qty > 1 ? taka(line.unitPaisa) + " each" : "",
+        ""
+      );
+    }
+    if (items.length === 0) {
+      rows += '<p class="receipt-waiting">The dishes on this order are on the kitchen\u2019s copy of the bill.</p>';
+    }
+    rows += receiptRow(
+      "Delivery · " + km(order.distanceKm),
+      order.deliveryPaisa > 0 ? taka(order.deliveryPaisa) : "Free",
+      "",
+      ""
+    );
+    rows += receiptRow("Food subtotal", taka(order.subtotalPaisa), "", "muted");
+    if (order.discountPaisa > 0) {
+      rows += receiptRow(
+        order.couponCode ? "Coupon " + order.couponCode : "Discount",
+        "− " + taka(order.discountPaisa),
+        "",
+        "save"
+      );
+    }
+    document.getElementById("undal-receipt-rows").innerHTML = rows;
+    document.getElementById("undal-order-total").textContent = taka(order.totalPaisa);
+
+    // The tick belongs to the minute the order was sent. Once the kitchen has
+    // accepted it, "we're on it" is no longer the news — the status is.
+    var hero = document.getElementById("undal-receipt-hero");
+    if (order.status === "placed") {
+      hero.removeAttribute("hidden");
+    } else {
+      hero.setAttribute("hidden", "hidden");
+    }
+    var sent = document.getElementById("undal-receipt-sent");
+    var sentAt = dhakaClock(order.createdAt);
+    sent.textContent = sentAt ? "Sent at " + sentAt + ", Dhaka time" : "";
+  }
 
   function paint(order) {
     var pair = labels[order.status] || ["Updated", "The order status changed."];
@@ -1036,24 +1153,58 @@ export async function handleOrderTracking(orderId: string): Promise<Response> {
     var noteHost = document.getElementById("undal-note");
     if (order.status === "cancelled") {
       noteHost.innerHTML = '<div class="notice error"><strong>Cancelled:</strong> ' +
-        String(order.cancelNote || "no reason written").replace(/</g, "&lt;") + "</div>";
+        escapeText(order.cancelNote || "no reason written") + "</div>";
     } else if (order.note) {
-      noteHost.innerHTML = '<div class="notice">Kitchen note: ' + String(order.note).replace(/</g, "&lt;") + "</div>";
+      noteHost.innerHTML = '<div class="notice">Kitchen note: ' + escapeText(order.note) + "</div>";
     } else {
       noteHost.innerHTML = '<p class="muted">' + pair[1] + "</p>";
     }
-    document.getElementById("undal-order-total").textContent =
-      (order.totalPaisa / 100).toLocaleString("en-US", { minimumFractionDigits: order.totalPaisa % 100 ? 2 : 0, maximumFractionDigits: 2 }).replace(/^/, "৳ ");
-    document.getElementById("undal-updated").textContent = order.updatedAt ? "Last update: " + order.updatedAt : "";
+    paintReceipt(order);
+    var updatedAt = dhakaClock(order.updatedAt);
+    document.getElementById("undal-updated").textContent = updatedAt ? "Updated " + updatedAt + ", Dhaka time" : "";
     if (order.status === "delivered" || order.status === "cancelled") {
       window.clearInterval(window._undalPoll);
     }
   }
 
+  // A link that no longer resolves must say so. Left alone, a wrong, stale or
+  // deleted order id would sit here reading "reading your bill" for as long as
+  // the tab stayed open, which reads as a broken kitchen rather than a bad link.
+  var stopped = false;
+  function stopPolling() {
+    if (stopped) return;
+    stopped = true;
+    window.clearInterval(window._undalPoll);
+  }
+
+  function notFound() {
+    stopPolling();
+    document.getElementById("undal-receipt-rows").innerHTML =
+      '<p class="receipt-waiting">We could not find an order with that id. Check the link the kitchen sent, or open the tracking page and paste the id again.</p>';
+    document.getElementById("undal-receipt-hero").setAttribute("hidden", "hidden");
+    document.getElementById("undal-order-total").textContent = "—";
+    document.getElementById("undal-order-title").textContent = "Order";
+    document.getElementById("undal-status-pill").textContent = "Not found";
+    document.getElementById("undal-status-pill").className = "pill closed";
+    document.getElementById("undal-updated").textContent = "";
+  }
+
   function poll() {
     fetch("/api/store/order/" + encodeURIComponent(orderId))
-      .then(function (response) { return response.json(); })
-      .then(function (payload) { if (payload && payload.ok) paint(payload.order); })
+      .then(function (response) {
+        // 400 and 404 are the server's last word on that id; anything else —
+        // a dropped signal, a cold isolate — is worth another try in 20 seconds.
+        if (response.status === 400 || response.status === 404) {
+          notFound();
+          return null;
+        }
+        return response.json();
+      })
+      .then(function (payload) {
+        if (!payload) return;
+        if (payload.ok) paint(payload.order);
+        else notFound();
+      })
       .catch(function () { /* the next poll tries again */ });
   }
   poll();
