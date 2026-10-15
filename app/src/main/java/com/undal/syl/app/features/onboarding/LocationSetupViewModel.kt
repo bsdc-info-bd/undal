@@ -7,6 +7,7 @@ import com.google.firebase.auth.FirebaseAuth
 import com.undal.syl.app.core.maps.UndalLocation
 import com.undal.syl.app.core.maps.UndalLocationController
 import com.undal.syl.app.core.session.OnboardingProgress
+import com.undal.syl.app.core.util.UndalDigits
 import com.undal.syl.app.core.util.UndalResult
 import com.undal.syl.app.core.util.Validators
 import com.undal.syl.app.data.repo.AuthRepo
@@ -196,9 +197,16 @@ class LocationSetupViewModel @Inject constructor(
         _state.value = _state.value.copy(note = value, noteError = null, banner = null)
     }
 
-    /** Digits only, eleven of them: what the rules store as 01XXXXXXXXX. */
+    /**
+     * Digits only, eleven of them, in ASCII: what the rules store as 01XXXXXXXXX.
+     *
+     * A number typed on a Bangla keyboard arrives as ০১৭…, which `isDigit()` also
+     * calls digits — and which Firestore's `^01[3-9][0-9]{8}$` does not. The
+     * conversion is here rather than at the save, so what the customer sees in the
+     * field is exactly what is stored.
+     */
     fun onPhoneChange(value: String) {
-        val digits = value.filter { it.isDigit() }.take(11)
+        val digits = UndalDigits.toAscii(value).filter { it in '0'..'9' }.take(11)
         _state.value = _state.value.copy(phone = digits, phoneError = null, banner = null)
     }
 

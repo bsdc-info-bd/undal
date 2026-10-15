@@ -245,10 +245,21 @@ fun CartScreen(
                         Box(modifier = Modifier.weight(1f)) {
                             UndalTextField(
                                 value = couponInput,
-                                onValueChange = { couponInput = it.uppercase().take(24) },
+                                onValueChange = {
+                                    // Codes are upper-case A–Z, 0–9, - and _: a
+                                    // space pasted from a WhatsApp message is not
+                                    // part of the code, and neither is the ৳ sign.
+                                    couponInput = it.uppercase()
+                                        .filter { ch -> ch.isLetterOrDigit() || ch == '-' || ch == '_' }
+                                        .take(24)
+                                },
                                 label = "Code",
                                 hint = "UNDAL50",
-                                enabled = !state.couponChecking
+                                enabled = !state.couponChecking,
+                                imeAction = ImeAction.Done,
+                                onImeAction = {
+                                    if (couponInput.isNotBlank()) viewModel.applyCoupon(couponInput)
+                                }
                             )
                         }
                         Spacer(Modifier.width(UndalDimens.sm))

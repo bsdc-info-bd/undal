@@ -50,7 +50,7 @@ object Validators {
      * Returns null when it cannot be a Bangladeshi mobile number.
      */
     fun normalizeBdMobile(raw: String): String? {
-        val digits = raw.filter { it.isDigit() }
+        val digits = UndalDigits.toAscii(raw).filter { it in '0'..'9' }
         val local = when {
             digits.length == 14 && digits.startsWith("880") -> digits.substring(3)
             digits.length == 13 && digits.startsWith("880") -> digits.substring(2)
@@ -61,9 +61,16 @@ object Validators {
         return local.takeIf { BD_MOBILE.matches(it) }
     }
 
-    /** Bangladesh mobile numbers: 11 digits starting 013–019. */
+    /**
+     * Bangladesh mobile numbers: 11 digits starting 013–019.
+     *
+     * ০১৭১২৩৪৫৬৭৮ is the same number as 01712345678 — the Bangla number row is
+     * what a Bangla keyboard offers, and telling a customer their own number is
+     * "not 11 digits" because they typed it in the script they read is a bug, not
+     * validation.
+     */
     fun bdMobile(raw: String): String? {
-        val value = raw.filter { it.isDigit() }
+        val value = UndalDigits.toAscii(raw).filter { it in '0'..'9' }
         return when {
             value.isEmpty() -> "Please enter your mobile number."
             !BD_MOBILE.matches(value) -> "Use the 11-digit number, like 01712345678."
@@ -142,6 +149,32 @@ object Validators {
             !COUPON_CODE.matches(value) -> "Coupon codes use letters, numbers, - and _ only."
             else -> null
         }
+    }
+
+    private val CLOCK = Regex("^([01]?\\d|2[0-3]):([0-5]\\d)$")
+
+    /**
+     * A time the kitchen typed: `09:00`, `9:00`, `9.30`, `0930`, `৯:০০`.
+     *
+     * Returns the canonical `HH:MM` — what the schedule stores, what the
+     * storefront prints and what the Worker's opening cron compares against. The
+     * opening hours are the one field where a five-minute mistake is the
+     * difference between "Open" and a closed shop on the web, so the value is
+     * normalised once here instead of being patched in three places later.
+     */
+    fun clockTime(raw: String): String? {
+        val cleaned = UndalDigits.cleanClock(raw)
+        if (cleaned.isEmpty()) return null
+        if (!CLOCK.matches(cleaned)) return null
+        val (hours, minutes) = cleaned.split(":")
+        return hours.padStart(2, '0') + ":" + minutes
+    }
+
+    /** The same rule as a field error, for a schedule row. */
+    fun clockTimeError(label: String, raw: String): String? = when {
+        raw.isBlank() -> "Please add the $label time."
+        clockTime(raw) == null -> "Use 24-hour time, like 09:00 or 21:30."
+        else -> null
     }
 
     fun rating(value: Int): String? =

@@ -17,6 +17,7 @@ import com.undal.syl.app.core.model.MenuSort
 import com.undal.syl.app.core.model.Subcategory
 import com.undal.syl.app.core.model.VendorCoupon
 import com.undal.syl.app.core.util.Money
+import com.undal.syl.app.core.util.UndalDigits
 import com.undal.syl.app.core.util.UndalResult
 import com.undal.syl.app.data.repo.MenuRepo
 import com.undal.syl.app.data.repo.VendorMenuRepo
@@ -58,7 +59,12 @@ class VendorMenuViewModel @Inject constructor(
         val active: Boolean = true,
         val iconUrl: String = ""
     ) {
-        val order: Int get() = orderText.trim().toIntOrNull() ?: 0
+        /**
+         * The position in the menu. ০ (Bangla zero) and 0 are the same position,
+         * and an unreadable value falls back to the top rather than putting the
+         * section somewhere nobody asked for.
+         */
+        val order: Int get() = UndalDigits.toIntOrNull(orderText)?.coerceIn(0, 999) ?: 0
         /**
          * The name is judged by the floor the rules enforce (three characters), so
          * a short one is refused here with a sentence instead of by the database

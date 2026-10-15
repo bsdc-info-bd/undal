@@ -130,8 +130,11 @@ fun PolicyScreen(onBack: () -> Unit) {
                                 "so a status change reaches your screen in under a second.",
                             "Photos live in Cloudinary, with the file link stored alongside the record that " +
                                 "uses it.",
-                            "Map tiles are standard OpenStreetMap tiles. No Google Maps API key is used " +
-                                "anywhere in this app, and no location data is sent to Google."
+                            "Maps are drawn from standard OpenStreetMap tiles inside the app, and its " +
+                                "pinning is the only map the app has: no map embed, no Google Maps API key " +
+                                "anywhere, and no location data sent to Google. Opening your pin in another " +
+                                "map app is your choice, made one tap at a time, and nothing leaves this " +
+                                "phone until you make it."
                         )
                     )
                 }

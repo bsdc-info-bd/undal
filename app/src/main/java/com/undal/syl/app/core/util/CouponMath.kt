@@ -171,9 +171,16 @@ object CouponMath {
 
     private val HH_MM = Regex("^([01]?\\d|2[0-3]):([0-5]\\d)$")
 
-    /** "HH:MM" → minutes since midnight, or null when it is not a clock time. */
+    /**
+     * "HH:MM" → minutes since midnight, or null when it is not a clock time.
+     *
+     * The digits may be in any script — the kitchen's phone writes ০৯:০০ for what
+     * the schedule means as 09:00 — and a single-digit hour ("9:30") is a time a
+     * person typed, not a mistake to refuse.
+     */
     fun parseMinutesOfDay(value: Any?): Int? {
-        val text = (value as? String)?.trim() ?: return null
+        val raw = (value as? String)?.trim() ?: return null
+        val text = UndalDigits.toAscii(raw)
         val match = HH_MM.matchEntire(text) ?: return null
         return match.groupValues[1].toInt() * 60 + match.groupValues[2].toInt()
     }
@@ -200,9 +207,16 @@ object CouponMath {
         if (start == null && end == null) return true
         if (start != null && end == null) return minutes >= start
         if (start == null && end != null) return minutes < end
-        if (start == end) return true
-        if (end!! > start!!) return minutes >= start && minutes < end
-        return minutes >= start || minutes < end
+        if (start != null && start == end) return true
+        if (start != null && end != null) {
+            return if (end > start) {
+                minutes >= start && minutes < end
+            } else {
+                // A window that ends before it starts crosses midnight.
+                minutes >= start || minutes < end
+            }
+        }
+        return true
     }
 
     // --------------------------------------------------------------- the money

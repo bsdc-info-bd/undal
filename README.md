@@ -225,7 +225,7 @@ has to be run on the real kitchen phone.
 | Cloudflare Workers free | 100k requests/day, KV 1 GB, cron triggers included | one Worker, two crons |
 | GitHub Actions free | 2 000 minutes/month for private repos, unlimited for public | a full Android build is ~4–6 minutes |
 | OpenStreetMap tiles | free, attribution kept | osmdroid with a unique user agent |
-| Google Maps | free embed view | no API key, display only |
+| Maps | osmdroid + OpenStreetMap tiles | in-process, no API key, works offline from the tile cache |
 
 ---
 

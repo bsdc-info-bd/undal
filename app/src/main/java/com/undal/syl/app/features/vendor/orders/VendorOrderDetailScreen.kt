@@ -70,6 +70,7 @@ import com.undal.syl.app.core.util.Money
 import com.undal.syl.app.core.util.OrderStateMachine
 import com.undal.syl.app.core.util.OrderStatus
 import com.undal.syl.app.core.util.TimeDhaka
+import com.undal.syl.app.core.util.UndalDigits
 import com.undal.syl.app.features.vendor.VendorAgePill
 import com.undal.syl.app.features.vendor.VendorChip
 import com.undal.syl.app.features.vendor.VendorSection
@@ -295,7 +296,7 @@ fun VendorOrderDetailScreen(
                         UndalKeyValueRow("Subtotal", Money.format(order.subtotalPaisa))
                         UndalKeyValueRow(
                             "Delivery",
-                            "${Money.format(order.deliveryPaisa)} · ${order.distanceKm.let { "%.1f".format(it) }} km"
+                            "${Money.format(order.deliveryPaisa)} · ${UndalDigits.format(order.distanceKm, 1)} km"
                         )
                         if (order.discountPaisa > 0L) {
                             UndalKeyValueRow("Discount", "− ${Money.format(order.discountPaisa)}")
@@ -569,7 +570,7 @@ fun VendorOrderDetailScreen(
                         Spacer(Modifier.height(UndalDimens.xs))
                         UndalTextField(
                             value = state.customPrepText,
-                            onValueChange = viewModel::onCustomPrepChange,
+                            onValueChange = { viewModel.onCustomPrepChange(UndalDigits.digitsOnly(it, 3)) },
                             label = "Or type your own minutes",
                             hint = "35",
                             keyboardType = androidx.compose.ui.text.input.KeyboardType.Number
@@ -662,10 +663,12 @@ fun VendorOrderDetailScreen(
                         Spacer(Modifier.height(UndalDimens.sm))
                         UndalTextField(
                             value = state.collectedText,
-                            onValueChange = viewModel::onCollectedChange,
+                            onValueChange = { viewModel.onCollectedChange(UndalDigits.cleanDecimal(it)) },
                             label = "Cash collected (taka)",
                             hint = Money.formatPlain(order.totalAmountPaisa),
-                            keyboardType = androidx.compose.ui.text.input.KeyboardType.Number
+                            // The customer may hand over ৳305.50; a keypad without a
+                            // dot would make that collectable amount unrecordable.
+                            keyboardType = androidx.compose.ui.text.input.KeyboardType.Decimal
                         )
                         Spacer(Modifier.height(UndalDimens.xs))
                         Row(

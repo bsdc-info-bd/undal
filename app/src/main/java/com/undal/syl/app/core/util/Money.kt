@@ -62,7 +62,9 @@ object Money {
 
     /** Parses vendor input ("250", "250.50", "৳ 250") into paisa, or null if invalid. */
     fun parseTakaToPaisa(raw: String): Long? {
-        val cleaned = raw.replace("৳", "").replace(",", "").trim()
+        // Bengali, Devanagari and Arabic-Indic digits all mean the same number:
+        // ১৮০ is 180. BigDecimal cannot read them, so they are converted first.
+        val cleaned = UndalDigits.toAscii(raw).replace("৳", "").replace(",", "").trim()
         if (cleaned.isEmpty()) return null
         val decimal = cleaned.toBigDecimalOrNull() ?: return null
         if (decimal.signum() < 0) return null

@@ -58,6 +58,7 @@ import com.undal.syl.app.core.maps.UndalRadiusPreview
 import com.undal.syl.app.core.theme.UndalDimens
 import com.undal.syl.app.core.theme.undalSemantics
 import com.undal.syl.app.core.util.Money
+import com.undal.syl.app.core.util.UndalDigits
 import com.undal.syl.app.features.vendor.VendorSection
 import com.undal.syl.app.features.vendor.menu.VendorPhotoRow
 import com.undal.syl.app.features.vendor.storeShareText
@@ -203,26 +204,26 @@ fun VendorStoreScreen(
                         Row(horizontalArrangement = Arrangement.spacedBy(UndalDimens.xs)) {
                             UndalTextField(
                                 value = state.perKmText,
-                                onValueChange = viewModel::onPerKm,
+                                onValueChange = { viewModel.onPerKm(UndalDigits.cleanDecimal(it)) },
                                 label = "Per km (taka)",
                                 hint = "20",
-                                keyboardType = KeyboardType.Number,
+                                keyboardType = KeyboardType.Decimal,
                                 singleLine = true,
                                 modifier = Modifier.weight(1f)
                             )
                             UndalTextField(
                                 value = state.minOrderText,
-                                onValueChange = viewModel::onMinOrder,
+                                onValueChange = { viewModel.onMinOrder(UndalDigits.cleanDecimal(it)) },
                                 label = "Minimum basket (taka)",
                                 hint = "150",
-                                keyboardType = KeyboardType.Number,
+                                keyboardType = KeyboardType.Decimal,
                                 singleLine = true,
                                 modifier = Modifier.weight(1f)
                             )
                         }
                         Spacer(Modifier.height(UndalDimens.sm))
                         Text(
-                            text = "Delivery radius: ${"%.0f".format(state.radiusKm)} km",
+                            text = "Delivery radius: ${UndalDigits.formatWhole(state.radiusKm)} km",
                             style = MaterialTheme.typography.titleSmall
                         )
                         Slider(
@@ -255,10 +256,12 @@ fun VendorStoreScreen(
                         Spacer(Modifier.height(UndalDimens.sm))
                         UndalTextField(
                             value = state.feeDistanceText,
-                            onValueChange = viewModel::onFeeDistance,
+                            onValueChange = { viewModel.onFeeDistance(UndalDigits.cleanDecimal(it, maxDecimals = 1)) },
                             label = "Fee calculator — type a distance in km",
                             hint = "4.5",
-                            keyboardType = KeyboardType.Number,
+                            // A distance is a decimal: the kilometres the fee is
+                            // rounded up from, never a whole number by assumption.
+                            keyboardType = KeyboardType.Decimal,
                             singleLine = true
                         )
                         Spacer(Modifier.height(UndalDimens.xs))
@@ -320,7 +323,7 @@ fun VendorStoreScreen(
                         )
                         Spacer(Modifier.height(UndalDimens.xs))
                         Text(
-                            text = "Pin: ${"%.5f".format(state.pinLat)}, ${"%.5f".format(state.pinLng)}" +
+                            text = "Pin: ${UndalDigits.format(state.pinLat, 5)}, ${UndalDigits.format(state.pinLng, 5)}" +
                                 if (state.store.hasPublishedPin) {
                                     " · published"
                                 } else {

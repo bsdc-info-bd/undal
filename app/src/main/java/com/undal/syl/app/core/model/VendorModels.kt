@@ -5,6 +5,7 @@ import com.undal.syl.app.core.util.Money
 import com.undal.syl.app.core.util.OrderStateMachine
 import com.undal.syl.app.core.util.OrderStatus
 import com.undal.syl.app.core.util.TimeDhaka
+import com.undal.syl.app.core.util.UndalDigits
 
 /**
  * The kitchen's view of an order (PART G · V-025 … V-048).
@@ -224,7 +225,7 @@ data class VendorOrder(
         lines.forEach { line -> append(line.qty).append(" × ").append(line.name).append('\n') }
         append("Total ").append(Money.format(totalAmountPaisa)).append(" · cash on delivery\n")
         if (addressLine.isNotBlank()) append(addressLine).append('\n')
-        if (distanceKm > 0.0) append("${"%.1f".format(distanceKm)} km from the kitchen\n")
+        if (distanceKm > 0.0) append(UndalDigits.format(distanceKm, 1) + " km from the kitchen\n")
         append("Placed ").append(TimeDhaka.formatInstant(java.time.Instant.ofEpochMilli(createdAtMillis)))
     }
 
