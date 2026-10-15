@@ -1,8 +1,10 @@
 # The audit ledger
 
-One hundred real defects, found by reading the app and the Worker the way a
-customer and a cook use them — typing in Bangla, on a ৳12,000 phone, on a street
-where the signal drops — and fixed one at a time.
+One hundred real defects is the target. Each one is found by reading the app and
+the Worker the way a customer and a cook use them — typing in Bangla, on a
+৳12,000 phone, on a street where the signal drops — and closed one at a time.
+Where the count stands is in the table below, and it is never rounded up: an
+entry appears here when its fix is in the repository and a gate can prove it.
 
 This file is the record of that work: what was wrong, where it was, what
 changed, and what proves it. It is written as the work lands, not after it, so
