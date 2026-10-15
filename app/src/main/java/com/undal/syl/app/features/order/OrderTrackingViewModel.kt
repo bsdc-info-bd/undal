@@ -124,7 +124,15 @@ class OrderTrackingViewModel @Inject constructor(
     init {
         viewModelScope.launch(guard) {
             while (isActive) {
-                delay(1_000)
+                // Two speeds, on purpose. While the kitchen or the rider still has
+                // this order, the prep countdown and the "waiting 4 min" badges are
+                // the reason the screen exists, and a one-second tick is what makes
+                // them true. Once it is delivered or cancelled, the only thing left
+                // moving is a chat that is usually closed — so the clock slows to a
+                // quarter of a minute rather than waking the phone 86,400 times a
+                // day for an order that is over.
+                val finished = _state.value.isDelivered || _state.value.isCancelled
+                delay(if (finished) 15_000L else 1_000L)
                 tickFlow.value = System.currentTimeMillis()
             }
         }

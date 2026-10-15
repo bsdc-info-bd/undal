@@ -10,7 +10,7 @@ the count below is the honest count at the time of writing.
 
 | Ledger | Count |
 | --- | --- |
-| Closed, with a fix and a gate in this repository | **57** |
+| Closed, with a fix and a gate in this repository | **58** |
 | Recorded as deliberate, or checked and already correct (not counted) | 3 |
 | Open leads (identified, not yet fixed) | 8 |
 | Waiting on a real phone, a real card in a hand (owner's acceptance list) | 5 |
@@ -275,17 +275,24 @@ a screen is looking and stops five seconds after the screen leaves.
 *Proof.* the three `while (true)` loops in `viewModelScope` are gone; only the
 `flow { }` builders remain.
 
-**036 — The vendor queue's rows were not keyed by the order.** *Symptom.* A new
+**036 — The customer's tracking page woke the phone once a second for a
+finished order.** The same clock as the entry above, on the screen a customer
+leaves open the longest: after the food arrives, the only thing still moving on
+it is a chat that is usually closed. *Fix.* the tick has two speeds — one second
+while the kitchen or the rider still has the order, and fifteen once it is
+delivered or cancelled. *Proof.* `OrderTrackingViewModel`, shape guard.
+
+**037 — The vendor queue's rows were not keyed by the order.** *Symptom.* A new
 order arriving at the top handed an existing row's composition — and its age
 badge — to a different order, and the list under the finger jumped.
 *Fix.* `items(state.visible, key = { it.id })` in `VendorOrdersScreen`.
 *Proof.* shape guard.
 
-**037 — The menu's placeholder rows were not keyed either.** Same class, lower
+**038 — The menu's placeholder rows were not keyed either.** Same class, lower
 stakes: the shimmer restarted on every state change. *Fix.* keyed by position in
 `StoreScreen`. *Proof.* shape guard.
 
-**038 — The bill was printed twice on the placement screen.** The new
+**039 — The bill was printed twice on the placement screen.** The new
 confirmation card carries the receipt, and the page's own receipt card would
 have repeated it immediately below — the same numbers twice, which reads as a
 duplicate charge. *Fix.* `ReceiptCard` is suppressed while the placement card is
@@ -294,14 +301,14 @@ showing (`showPlacementCard` in `OrderTrackingScreen`): the page repeats the
 
 ## E. Money, time and correctness
 
-**039 — Seven places printed numbers in the phone's own locale.** *Symptom.* A
+**040 — Seven places printed numbers in the phone's own locale.** *Symptom.* A
 distance read ৫.০ on a Bangla phone and `4,5` on a German one, while every price
 on the same screen was ASCII. *Fix.* `UndalDigits.format` / `formatWhole`, used by
 the distances, the radius and the pin coordinates — the coordinates matter most,
 because a reading that cannot be typed into another app is worse than no reading.
 *Proof.* grep for `"%.1f".format` without `Locale.ENGLISH`.
 
-**040 — Case folding was left to the default locale, in coupon keys.** *Symptom.*
+**041 — Case folding was left to the default locale, in coupon keys.** *Symptom.*
 On a Turkish-locale phone `UNDAL50I` is not `UNDAL50i`: a typed code failed to
 match its own document, and a search for "I" missed. *Fix.* every
 `uppercase()`/`lowercase()` in a key, a code or a search now names
@@ -310,25 +317,25 @@ match its own document, and a search for "I" missed. *Fix.* every
 `CartModels`, `VendorEditors`, `CartScreen` and the two vendor order screens.
 *Proof.* grep for `lowercase()`/`uppercase()` without a locale is zero.
 
-**041 — The coupon code written onto an order was not normalised the same way as
+**042 — The coupon code written onto an order was not normalised the same way as
 the coupon document's key.** *Fix.* the same `Locale.ENGLISH` upper-casing on
 both sides. *Proof.* the same grep: no `lowercase()` or `uppercase()` without a named locale is left in `app/`.
 
-**042 — A vendor's code typed lowercase produced a coupon nobody could redeem.**
+**043 — A vendor's code typed lowercase produced a coupon nobody could redeem.**
 *Fix.* `VendorEditors`' campaign code field upper-cases as typed.
 *Proof.* shape guard.
 
-**043 — The web receipt rounded money differently from the app.** *Cause.* a
+**044 — The web receipt rounded money differently from the app.** *Cause.* a
 naive `toFixed(2)` prints `৳ 320.00` where the app prints `৳ 320`. *Fix.* the
 page's `taka()` shows paisa only when there are paisa, in `en-US`, and keeps the
 test's `replace(/^/, "৳ ")` contract. *Proof.* `npm test`.
 
-**044 — The preview order's line total was ৳ 0.** *Cause.* the fixture used
+**045 — The preview order's line total was ৳ 0.** *Cause.* the fixture used
 `payablePaisa` where the app and the Worker write `unitAmountPaisa` and
 `lineTotalAmountPaisa`. *Fix.* the canonical shape, recorded in the commit for
 the placement card. *Proof.* the live preview's bill.
 
-**045 — The email verification banner told a verified customer they were not
+**046 — The email verification banner told a verified customer they were not
 verified.** *Symptom.* The owner's report: the link was opened, Firebase said
 verified, the app still showed "your email address is not verified".
 *Cause.* the cached `isEmailVerified()` was believed forever. *Fix.*
@@ -342,49 +349,49 @@ link / "Last checked at ⟨8:34 PM⟩".
 
 ## F. Accessibility
 
-**046 — Status was carried by colour.** *Fix.* `UndalStatusPill` and
+**047 — Status was carried by colour.** *Fix.* `UndalStatusPill` and
 `UndalAlertBanner` carry an icon and words as well
 (`core/design/UndalStatus.kt`). *Proof.* shape guard.
 
-**047 — The back arrow was a lucky tap.** *Fix.* a 48 dp target and a
+**048 — The back arrow was a lucky tap.** *Fix.* a 48 dp target and a
 `contentDescription` on every screen's back control
 (`UndalScaffold`). *Proof.* `check_foreground_contract`, shape guard.
 
-**048 — The pin editor could only be dragged.** *Fix.* five-metre nudge arrows
+**049 — The pin editor could only be dragged.** *Fix.* five-metre nudge arrows
 in `UndalOsmPicker` for one hand and for TalkBack, with the accuracy circle
 drawn underneath so "accurate to 40 m" is visible rather than read.
 *Proof.* the map commit.
 
 ## G. The web storefront and the Worker
 
-**049 — The storefront's tracking page had no reduced-motion or small-screen
+**050 — The storefront's tracking page had no reduced-motion or small-screen
 care for the new bill.** *Fix.* a `receipt-*` block in `design.ts` with a
 `@media(max-width:640px)` variant and the repository's existing
 `prefers-reduced-motion` rule covering it. *Proof.*
 `tools/check-web-compat.mjs`.
 
-**050 — The tracking page's numbers were not written the way the app writes
+**051 — The tracking page's numbers were not written the way the app writes
 them.** *Fix.* one `taka()` (the symbol, no trailing `.00`), one `km()`, and
 tabular numerals in the bill so the amounts line up with the rows.
 *Proof.* `npm test`.
 
-**051 — A cancelled order left the customer polling.** *Fix.* the poll stops on
+**052 — A cancelled order left the customer polling.** *Fix.* the poll stops on
 `delivered` and `cancelled`, on 400/404, and nowhere else.
 *Proof.* the tests for the cancelled and not-found pages assert
 `window.cleared`.
 
-**052 — The empty-bill case printed a row of nonsense.** *Fix.* "The dishes on
+**053 — The empty-bill case printed a row of nonsense.** *Fix.* "The dishes on
 this order are on the kitchen's copy of the bill." *Proof.* `npm test`.
 
-**053 — An order's items were passed to the page unvalidated.** The same fix as the hostile-document entry above,
+**054 — An order's items were passed to the page unvalidated.** The same fix as the hostile-document entry above,
 from the other side: `receiptLines()` is the one place an item row is built.
 
-**054 — The dashboard's "share today's orders" text had no escaping path to the
+**055 — The dashboard's "share today's orders" text had no escaping path to the
 browser.** *Fix.* the export and share text is built by the Worker, not by the
 page, and the page escapes what it prints. *Proof.* the test that asserts an
 item named with an angle bracket cannot reach `innerHTML`.
 
-**055 — The storefront's `.receipt-hero` used `display` in a way that fought the
+**056 — The storefront's `.receipt-hero` used `display` in a way that fought the
 `hidden` attribute.** *Cause.* a class rule with `display` beats the user
 agent's `[hidden]` rule. *Fix.* the hero is hidden and shown with the attribute
 alone and no `display` in the rule. *Proof.* `npm test` (hero hidden when
@@ -392,11 +399,11 @@ accepted, shown when placed).
 
 ## H. Build, process and documentation
 
-**056 — The deploy summary described a watchdog that does not exist.**
+**057 — The deploy summary described a watchdog that does not exist.**
 *Fix.* `.github/workflows/deploy-worker.yml`'s summary now says what the
 presence watchdog really does. *Proof.* `0fcd58b`.
 
-**057 — The repository's word for the map was still "Google".** *Fix.*
+**058 — The repository's word for the map was still "Google".** *Fix.*
 `FEATURES.md` C-014/C-058/V-027, the README integration table and the privacy
 policy describe the one map the app has. *Proof.* placeholder gate over 205+
 files.
@@ -450,11 +457,12 @@ audit will otherwise re-find them.
 
 These are real, they are next, and they are not counted above.
 
-1. **The customer's order-tracking ticker** still ticks once a second inside
-   `viewModelScope` (`OrderTrackingViewModel`), i.e. while the screen is on the
-   back stack rather than only while it is visible. The three vendor screens
-   were converted (the age-badge entry above); this one needs the same `stateIn` treatment without
-   losing the imperative state writes around it.
+1. **The customer's order-tracking ticker** is slowed for a finished order (see
+   the closed entry for it above), but while an order is live it still ticks
+   inside `viewModelScope` (`OrderTrackingViewModel`) even when the screen sits
+   on the back stack rather than in front of the customer. The three vendor
+   screens were converted to `stateIn(WhileSubscribed)`; this one needs the same
+   treatment without losing the imperative state writes around it.
 2. **`ProfileScreen`'s phone field** now writes ASCII, but the *display* of a
    number stored by an older version can still show Bangla digits until the
    profile is saved once. A display-time `pretty()` is the fix.
