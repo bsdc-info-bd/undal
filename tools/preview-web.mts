@@ -107,6 +107,24 @@ const couponDocs: CouponDocument[] = [
     usedCount: 7,
   },
   {
+    // Dated out on purpose, two days ago.
+    //
+    // `buildCouponBoard` drops it, so no banner advertises it — but the document
+    // is still in Firestore, which is exactly what a customer meets when they type
+    // a code somebody gave them last week. This is the seed behind the reported
+    // "the web says Expired but it is active": the refusal has to name the date,
+    // and the kitchen's own list has to say the same thing.
+    code: "PAST10",
+    type: "percent",
+    value: 10,
+    description: "Last week's code, still switched on",
+    active: true,
+    autoApply: true,
+    showOnWeb: true,
+    minSubtotalAmountPaisa: 0,
+    expiresAt: new Date(now - 2 * 24 * 60 * 60 * 1000).toISOString(),
+  },
+  {
     code: "FREESHIP",
     type: "freedelivery",
     value: 0,

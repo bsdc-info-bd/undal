@@ -38,13 +38,26 @@ class InboxViewModel @Inject constructor(
 
     private val _state = MutableStateFlow(State())
     val state: StateFlow<State> = _state.asStateFlow()
+    /**
+     * Nothing this ViewModel does may end the process.
+     *
+     * An exception that escapes a `viewModelScope` job is uncaught, and Android's
+     * answer to an uncaught exception is to kill the app — which the person
+     * experiences as the app vanishing a few seconds after it opened, then the
+     * crash guard reopening it, then the home screen. Every coroutine here carries
+     * this handler, so a failed read becomes one sentence where the screen already
+     * shows messages.
+     */
+    private val guard = com.undal.syl.app.core.util.UndalGuards.viewModel("reading your notifications") { message ->
+        _state.value = _state.value.copy(notice = message, busy = false)
+    }
 
     init {
         val uid = session.uid
         if (uid == null) {
             _state.value = State(loading = false, notice = "Sign in to see your notifications.")
         } else {
-            viewModelScope.launch {
+            viewModelScope.launch(guard) {
                 repo.observe(uid).collect { items ->
                     _state.value = _state.value.copy(loading = false, items = items)
                 }
@@ -55,7 +68,7 @@ class InboxViewModel @Inject constructor(
     /** Opens an item: marks it read, and reports the order it points at, if any. */
     fun open(item: NotifInboxRepo.InboxItem, onOpenOrder: (String) -> Unit) {
         val uid = session.uid ?: return
-        viewModelScope.launch {
+        viewModelScope.launch(guard) {
             repo.markRead(uid, item.id)
             val orderId = item.orderId
             if (!orderId.isNullOrBlank() && item.type.startsWith("order")) {
@@ -67,7 +80,7 @@ class InboxViewModel @Inject constructor(
     fun markAllRead() {
         val uid = session.uid ?: return
         _state.value = _state.value.copy(busy = true)
-        viewModelScope.launch {
+        viewModelScope.launch(guard) {
             val result = repo.markAllRead(uid)
             _state.value = _state.value.copy(
                 busy = false,

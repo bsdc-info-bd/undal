@@ -900,6 +900,17 @@ fun CouponEditorSheet(
                 )
             }
         )
+        // Said here, at the field, rather than only when Save is tapped: a coupon
+        // dated into the past is the mistake behind "the web says Expired but it
+        // is switched on", and the owner can only avoid it if the sheet objects
+        // while the date is still on screen.
+        if (draft.expiryError != null) {
+            Text(
+                text = draft.expiryError.orEmpty(),
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.error
+            )
+        }
         Spacer(Modifier.height(UndalDimens.xs))
         UndalTextField(
             value = draft.description,

@@ -36,7 +36,7 @@ Legend: `[x]` shipped and wired · `[ ]` still to ship.
 - [x] C-011 · Runtime permission flow with deny → app settings deep link
 - [x] C-012 · GPS auto-capture with accuracy indicator
 - [x] C-013 · Drag-pin fine adjustment on the osmdroid picker
-- [x] C-014 · Google embed confirmation view of the pinned point
+- [x] C-014 · Google embed view of the pinned point, one tap away — the draggable street map opens the screen, because the embed is served by Google to a WebView and can arrive blank
 - [x] C-015 · Address title as a required field
 - [x] C-016 · Address description as a required field
 - [x] C-017 · Delivery note as a required field
@@ -74,7 +74,7 @@ Legend: `[x]` shipped and wired · `[ ]` still to ship.
 - [x] C-049 · Inline quantity editing
 - [x] C-050 · Swipe to remove with undo
 - [x] C-051 · Clear cart
-- [x] C-052 · Coupon apply through one shared rule (percent, fixed, free delivery, cap, daily window, chosen days, expiry, usage limit) with precise error copy — and the best automatic coupon applied to the basket with no code typed
+- [x] C-052 · Coupon apply through one shared rule (percent, fixed, free delivery, cap, daily window, chosen days, expiry, usage limit) with precise error copy that names the fact — the date a code ended, the days it runs, the taka still short — and the best automatic coupon applied to the basket with no code typed
 - [x] C-053 · Subtotal line
 - [x] C-054 · Live km-based delivery fee with a distance caption
 - [x] C-055 · Discount line item
@@ -267,7 +267,7 @@ Legend: `[x]` shipped and wired · `[ ]` still to ship.
 
 ### The web storefront, the web account and search (P-046 … P-059)
 
-- [x] P-046 · Checkout map: an OpenStreetMap pin the customer drops and ticks before ordering
+- [x] P-046 · Checkout map: an OpenStreetMap pin the customer drops and ticks before ordering, with a labelled "Use my current location" button and the fix's accuracy said out loud
 - [x] P-047 · Live delivery fee and radius verdict measured from the ticked pin
 - [x] P-048 · Web sign-up against the same Firebase Authentication the app uses
 - [x] P-049 · Web password reset by email, sent by Firebase itself

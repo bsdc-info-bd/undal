@@ -185,9 +185,17 @@ function addForm(item: WebItem, options: { next?: "basket" | "store"; label?: st
  *
  * A coupon marked code-only still gets its banner, with the code and the words
  * "use this code": it is a made-to-be-seen offer, just not an automatic one.
+ *
+ * The board arrives from a cached menu snapshot, so it can outlive the offers on
+ * it by a minute or two — long enough to advertise a code that the checkout then
+ * refuses as expired. Every entry is therefore re-judged against *this* request's
+ * clock before it is printed: a banner is a promise, and the page must not make
+ * one the order will not keep.
  */
-function couponStrip(coupons: CouponBoardEntry[]): string {
-  const visible = coupons.filter((coupon) => coupon.showOnWeb);
+function couponStrip(coupons: CouponBoardEntry[], now = Date.now()): string {
+  const visible = coupons.filter(
+    (coupon) => coupon.showOnWeb && !(coupon.expiresAtMillis > 0 && coupon.expiresAtMillis <= now),
+  );
   if (visible.length === 0) return "";
   const cards = visible
     .slice(0, 3)

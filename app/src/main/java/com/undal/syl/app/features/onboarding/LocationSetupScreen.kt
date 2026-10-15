@@ -54,9 +54,14 @@ import com.undal.syl.app.core.theme.UndalDimens
  *
  * Order of the screen is the order of the thinking: where are you on the map,
  * what should this pin look like, can the rider find the door, and only then the
- * save button. Both map engines are offered — the Google embed for the familiar
- * look, osmdroid for the offline fallback — so a customer on a weak connection
- * never gets stuck at the last mandatory step of registration.
+ * save button.
+ *
+ * The osmdroid street map opens the screen and the keyless Google embed is one
+ * tap away, rather than the other way round. This is the last mandatory step of
+ * registration, so the engine that draws it has to be the one that always draws
+ * it: the street map is tiles in this process, while the embed is a page Google
+ * serves to a WebView and can refuse — a grey box here is a customer who cannot
+ * finish signing up.
  */
 @Composable
 fun LocationSetupScreen(
@@ -119,7 +124,23 @@ fun LocationSetupScreen(
                 )
                 Spacer(Modifier.height(UndalDimens.md))
 
-                if (state.showOsmFallback) {
+                // The draggable street map first: it is the engine that works in a
+                // WebView-free process, and it is the only one of the two a finger
+                // can move. The Google view is a labelled choice below it.
+                if (state.showGoogleEmbed) {
+                    UndalGoogleEmbedMap(
+                        latitude = state.lat,
+                        longitude = state.lng,
+                        title = "Your pin",
+                        onOpenOsmFallback = viewModel::toggleGoogleEmbed
+                    )
+                    Spacer(Modifier.height(UndalDimens.sm))
+                    UndalTextButton(
+                        text = "Back to the map I can drag",
+                        onClick = viewModel::toggleGoogleEmbed,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                } else {
                     UndalOsmPicker(
                         latitude = state.lat,
                         longitude = state.lng,
@@ -133,38 +154,15 @@ fun LocationSetupScreen(
                             }
                         }
                     )
-                } else {
-                    UndalGoogleEmbedMap(
-                        latitude = state.lat,
-                        longitude = state.lng,
-                        title = "Your pin",
-                        onOpenOsmFallback = viewModel::toggleOsmFallback
-                    )
                     Spacer(Modifier.height(UndalDimens.sm))
-                    Text(
-                        text = "Move the pin precisely with the offline map:",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    UndalSecondaryButton(
+                        text = "Show the Google map view",
+                        onClick = viewModel::toggleGoogleEmbed,
+                        icon = Icons.Filled.LocationOn
                     )
                 }
 
                 Spacer(Modifier.height(UndalDimens.sm))
-
-                if (!state.showOsmFallback) {
-                    UndalSecondaryButton(
-                        text = "Adjust the pin by hand",
-                        onClick = viewModel::toggleOsmFallback,
-                        icon = Icons.Filled.LocationOn
-                    )
-                    Spacer(Modifier.height(UndalDimens.sm))
-                } else {
-                    UndalTextButton(
-                        text = "Switch back to the Google view",
-                        onClick = viewModel::toggleOsmFallback,
-                        modifier = Modifier.fillMaxWidth()
-                    )
-                    Spacer(Modifier.height(UndalDimens.xs))
-                }
 
                 UndalPrimaryButton(
                     text = if (state.locating) "Finding your location…" else "Use my current location",

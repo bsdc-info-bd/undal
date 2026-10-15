@@ -15,6 +15,8 @@ object Validators {
     private const val MIN_PASSWORD_LENGTH = 6
     private const val MAX_NAME_LENGTH = 80
     private const val MIN_ADDRESS_TEXT = 3
+    /** The rules' `nonBlankString()` floor, shared by every name in the menu. */
+    const val MIN_MENU_NAME = 3
 
     /** The rules cap `address.desc` and `address.note` at 300 characters each. */
     private const val MAX_ADDRESS_TEXT = 300
@@ -82,15 +84,41 @@ object Validators {
         else -> null
     }
 
+    /**
+     * Length the way the database counts it.
+     *
+     * Firestore's `string.size()` — what `nonBlankString()` in the rules compares
+     * against — counts Unicode code points, while Kotlin's `String.length` counts
+     * UTF-16 units. They disagree on anything outside the BMP, so an editor that
+     * measured `length` could accept a value the rules then refused, and a rule
+     * refusal reaches the screen as "Missing or insufficient permissions" instead
+     * of "that name is too short". Counting the same thing the rules count is what
+     * keeps the sentence in the editor true.
+     */
+    private fun textLength(value: String): Int = value.codePointCount(0, value.length)
+
     fun requiredText(label: String, raw: String, minimum: Int = MIN_ADDRESS_TEXT, maximum: Int = 0): String? {
         val value = raw.trim()
+        val length = textLength(value)
         return when {
             value.isEmpty() -> "Please add the $label."
-            value.length < minimum -> "The $label needs at least $minimum characters."
-            maximum > 0 && value.length > maximum -> "Please keep the $label under $maximum characters."
+            length < minimum -> "The $label needs at least $minimum characters."
+            maximum > 0 && length > maximum -> "Please keep the $label under $maximum characters."
             else -> null
         }
     }
+
+    /**
+     * Any name the kitchen writes into the menu: a category, a subcategory, a
+     * dish, a combo, a campaign title.
+     *
+     * All five are guarded in the rules by the same `nonBlankString()`, which is
+     * `size() >= 3` — so three characters is not a taste choice made here, it is
+     * the database's own floor, and an editor that accepts two produces a save
+     * that is refused with no explanation. Two characters is not rare in Bangla
+     * either: "চা" is tea.
+     */
+    fun menuName(label: String, raw: String): String? = requiredText(label, raw, minimum = MIN_MENU_NAME)
 
     /**
      * The address fields the security rules store.

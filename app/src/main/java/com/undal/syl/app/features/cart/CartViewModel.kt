@@ -106,6 +106,19 @@ class CartViewModel @Inject constructor(
 
     private val _state = MutableStateFlow(State())
     val state: StateFlow<State> = _state.asStateFlow()
+    /**
+     * Nothing this ViewModel does may end the process.
+     *
+     * An exception that escapes a `viewModelScope` job is uncaught, and Android's
+     * answer to an uncaught exception is to kill the app — which the person
+     * experiences as the app vanishing a few seconds after it opened, then the
+     * crash guard reopening it, then the home screen. Every coroutine here carries
+     * this handler, so a failed read becomes one sentence where the screen already
+     * shows messages.
+     */
+    private val guard = com.undal.syl.app.core.util.UndalGuards.viewModel("reading your basket") { message ->
+        _state.value = _state.value.copy(message = message)
+    }
 
     private val addressFlow = MutableStateFlow<UndalLocation?>(null)
     private val noteFlow = MutableStateFlow("")
@@ -132,8 +145,8 @@ class CartViewModel @Inject constructor(
     )
 
     init {
-        viewModelScope.launch { refreshAddress() }
-        viewModelScope.launch {
+        viewModelScope.launch(guard) { refreshAddress() }
+        viewModelScope.launch(guard) {
             val inputs = combine(
                 storeRepo.observeStore(),
                 menuRepo.observeMenu(),
@@ -146,7 +159,7 @@ class CartViewModel @Inject constructor(
             combine(inputs, autoOfferFlow) { current, offer -> buildState(current, offer) }
                 .collect { next -> _state.value = next }
         }
-        viewModelScope.launch {
+        viewModelScope.launch(guard) {
             // Re-price the automatic coupon when the basket or the ride changes —
             // not on every keystroke, and never because the discount itself moved
             // (that would be a loop: the offer changes the very number watched).
@@ -173,7 +186,7 @@ class CartViewModel @Inject constructor(
     }
 
     fun refreshAddress() {
-        viewModelScope.launch { addressFlow.value = authRepo.loadProfileLocation() }
+        viewModelScope.launch(guard) { addressFlow.value = authRepo.loadProfileLocation() }
     }
 
     private suspend fun buildState(inputs: Inputs, autoOffer: CouponRepo.Offer?): State {
@@ -311,11 +324,11 @@ class CartViewModel @Inject constructor(
     }
 
     fun increment(line: CartLine) {
-        viewModelScope.launch { cartRepo.setQuantity(line.id, line.note, line.quantity + 1) }
+        viewModelScope.launch(guard) { cartRepo.setQuantity(line.id, line.note, line.quantity + 1) }
     }
 
     fun decrement(line: CartLine) {
-        viewModelScope.launch {
+        viewModelScope.launch(guard) {
             if (line.quantity <= 1) {
                 _state.value = _state.value.copy(lastRemoved = line)
             }
@@ -324,7 +337,7 @@ class CartViewModel @Inject constructor(
     }
 
     fun remove(line: CartLine) {
-        viewModelScope.launch {
+        viewModelScope.launch(guard) {
             _state.value = _state.value.copy(lastRemoved = line)
             cartRepo.remove(line.id, line.note)
         }
@@ -332,7 +345,7 @@ class CartViewModel @Inject constructor(
 
     fun undoRemove() {
         val line = _state.value.lastRemoved ?: return
-        viewModelScope.launch {
+        viewModelScope.launch(guard) {
             cartRepo.add(line)
             _state.value = _state.value.copy(lastRemoved = null)
         }
@@ -343,7 +356,7 @@ class CartViewModel @Inject constructor(
     }
 
     fun clearCart() {
-        viewModelScope.launch {
+        viewModelScope.launch(guard) {
             appliedCoupon = null
             autoOfferFlow.value = null
             cartRepo.clear()
@@ -367,7 +380,7 @@ class CartViewModel @Inject constructor(
             return
         }
         _state.value = current.copy(couponChecking = true, couponMessage = null)
-        viewModelScope.launch {
+        viewModelScope.launch(guard) {
             when (val outcome = couponRepo.validate(code, current.subtotalPaisa, current.deliveryPaisa)) {
                 is CouponRepo.Outcome.Valid -> {
                     appliedCoupon = outcome.coupon
@@ -398,7 +411,7 @@ class CartViewModel @Inject constructor(
     }
 
     fun removeCoupon() {
-        viewModelScope.launch {
+        viewModelScope.launch(guard) {
             appliedCoupon = null
             cartRepo.clearCoupon()
             // Removing a typed code lets the kitchen's own offer come back.
@@ -434,7 +447,7 @@ class CartViewModel @Inject constructor(
         }
 
         _state.value = current.copy(placing = true, message = null)
-        viewModelScope.launch {
+        viewModelScope.launch(guard) {
             val draft = OrderRepo.OrderDraft(
                 store = current.store,
                 address = address,

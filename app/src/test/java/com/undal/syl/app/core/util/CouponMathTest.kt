@@ -38,6 +38,13 @@ class CouponMathTest {
      */
     private val now = 1_800_000_000_000L
 
+    /**
+     * The coupon the timestamp shapes are judged against: 20 % off, no minimum, no
+     * cap, no window, no weekday set — so the only thing that can change the
+     * verdict is the expiry being tested.
+     */
+    private val PERCENT_20 = "type=percent;value=20"
+
     // ------------------------------------------------------------------ tables
 
     /**
@@ -245,6 +252,66 @@ class CouponMathTest {
         assertEquals(1_700_000_000_000L, CouponMath.expiryMillis(mapOf("seconds" to 1_700_000_000L)))
         assertEquals(1_700_000_000_000L, CouponMath.expiryMillis(1_700_000_000_000L))
         assertEquals(1_700_000_000_000L, CouponMath.expiryMillis("2023-11-14T22:13:20Z"))
+        // The two shapes only the phone ever sees: the SDK's own Timestamp, out of
+        // `document.data` or `snapshot.getTimestamp()`, and a plain Date. Before
+        // these were handled the `else` branch answered 0 — "never expires" — for
+        // the one shape the app always receives, so the phone accepted a code the
+        // Worker refused as expired.
+        assertEquals(
+            1_700_000_000_000L,
+            CouponMath.expiryMillis(com.google.firebase.Timestamp(1_700_000_000L, 0))
+        )
+        assertEquals(
+            1_700_000_000_000L,
+            CouponMath.expiryMillis(com.google.firebase.Timestamp(java.util.Date(1_700_000_000_000L)))
+        )
+        assertEquals(1_700_000_000_000L, CouponMath.expiryMillis(java.util.Date(1_700_000_000_000L)))
+        assertEquals(0L, CouponMath.expiryMillis("not a date at all"))
+    }
+
+    /**
+     * The bug this table exists for, end to end: a coupon whose expiry arrived as
+     * a real Firestore Timestamp must be judged exactly like the same instant
+     * arriving as a number or an ISO string. One document, one verdict, on every
+     * surface — the phone, the Worker and the storefront script.
+     */
+    @Test
+    fun anExpiryReadFromATimestampRefusesTheSameCouponAnExpiryReadFromANumberDoes() {
+        val expiredAt = now - 60_000L
+        val shapes = listOf(
+            "a Timestamp" to com.google.firebase.Timestamp(java.util.Date(expiredAt)),
+            "a Date" to java.util.Date(expiredAt),
+            "millis" to expiredAt,
+            "an ISO string" to java.time.Instant.ofEpochMilli(expiredAt).toString(),
+            "seconds and nanos" to mapOf("seconds" to expiredAt / 1_000L)
+        )
+        shapes.forEach { (name, shape) ->
+            assertEquals(name, expiredAt, CouponMath.expiryMillis(shape))
+            val verdict = CouponMath.evaluate(
+                couponOf(PERCENT_20).copy(expiresAtMillis = CouponMath.expiryMillis(shape)),
+                CouponMath.Context(subtotalPaisa = 50_000L, deliveryPaisa = 5_000L, clock = clockOf(""))
+            )
+            assertFalse("$name: an expired coupon must not be eligible", verdict.eligible)
+            assertEquals("$name: the refusal must say why", "expired", verdict.reason)
+        }
+
+        // And the mirror image: the same five shapes one hour in the future are all
+        // live, so the fix cannot have simply started refusing everything.
+        val liveAt = now + 3_600_000L
+        listOf(
+            com.google.firebase.Timestamp(java.util.Date(liveAt)),
+            java.util.Date(liveAt),
+            liveAt,
+            java.time.Instant.ofEpochMilli(liveAt).toString(),
+            mapOf("seconds" to liveAt / 1_000L)
+        ).forEach { shape ->
+            val verdict = CouponMath.evaluate(
+                couponOf(PERCENT_20).copy(expiresAtMillis = CouponMath.expiryMillis(shape)),
+                CouponMath.Context(subtotalPaisa = 50_000L, deliveryPaisa = 5_000L, clock = clockOf(""))
+            )
+            assertTrue("a coupon expiring in an hour is still live", verdict.eligible)
+            assertEquals(10_000L, verdict.discountPaisa)
+        }
     }
 
     // ------------------------------------------------------------------ the spec

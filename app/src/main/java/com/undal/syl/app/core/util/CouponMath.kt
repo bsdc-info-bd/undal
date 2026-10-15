@@ -141,10 +141,28 @@ object CouponMath {
 
     /**
      * Whatever Firestore handed back for a timestamp → epoch millis.
-     * Accepts a number, an ISO-8601 string or a `{seconds, nanos}` map.
+     *
+     * Every shape the one field `coupons.expiresAt` can arrive in, on every
+     * surface that judges it:
+     *   · a `com.google.firebase.Timestamp` — what the Android SDK puts in
+     *     `document.data`, and what `snapshot.getTimestamp()` returns;
+     *   · a plain `java.util.Date`;
+     *   · a number of millis — the board row's `expiresAtMillis`;
+     *   · an ISO-8601 string — what Firestore REST returns for `timestampValue`,
+     *     which is what the Worker and the storefront script see;
+     *   · a `{seconds, nanos}` map — a timestamp that crossed a JSON boundary.
+     *
+     * The `Timestamp` branch is the whole reason this function is written out
+     * long. Without it the `else` below answered `0`, and `0` means "this coupon
+     * never expires" — so the phone accepted a code the kitchen had already dated
+     * out, while the Worker reading the *same document* over REST refused it as
+     * expired. One field, two verdicts, and the customer finds out at the
+     * checkout with the word "Expired" on a promotion they were told was live.
      */
     fun expiryMillis(value: Any?): Long = when (value) {
         null -> 0L
+        is com.google.firebase.Timestamp -> value.toDate().time
+        is java.util.Date -> value.time
         is Number -> value.toLong()
         is String -> runCatching { Instant.parse(value).toEpochMilli() }.getOrDefault(0L)
         is Map<*, *> -> (value["seconds"] as? Number)?.toLong()?.times(1_000L) ?: 0L

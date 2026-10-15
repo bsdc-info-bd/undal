@@ -722,10 +722,25 @@ private fun OffersTab(
                                         // The headline is written by the shared coupon rule, so
                                         // what the kitchen reads here is what a customer reads on
                                         // the web store banner.
-                                        text = "${coupon.headline} · ${coupon.usedLabel}" +
-                                            if (coupon.expired) " · expired" else "",
+                                        text = "${coupon.headline} · ${coupon.usedLabel}",
                                         style = MaterialTheme.typography.bodySmall,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                    // The switch says what the owner asked for; this line says
+                                    // what a customer will actually get, with the date in it. A
+                                    // coupon that is switched on and dated out is the one state
+                                    // the switch alone cannot show, and it is the state that ends
+                                    // in an argument at the checkout.
+                                    Text(
+                                        text = coupon.stateLabel,
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = if (coupon.onButDead) {
+                                            MaterialTheme.colorScheme.error
+                                        } else if (coupon.active) {
+                                            MaterialTheme.colorScheme.primary
+                                        } else {
+                                            MaterialTheme.colorScheme.onSurfaceVariant
+                                        }
                                     )
                                     if (coupon.conditionLabel.isNotBlank()) {
                                         Text(

@@ -91,6 +91,19 @@ class VendorDashboardViewModel @Inject constructor(
 
     private val _state = MutableStateFlow(State())
     val state: StateFlow<State> = _state.asStateFlow()
+    /**
+     * Nothing this ViewModel does may end the process.
+     *
+     * An exception that escapes a `viewModelScope` job is uncaught, and Android's
+     * answer to an uncaught exception is to kill the app — which the person
+     * experiences as the app vanishing a few seconds after it opened, then the
+     * crash guard reopening it, then the home screen. Every coroutine here carries
+     * this handler, so a failed read becomes one sentence where the screen already
+     * shows messages.
+     */
+    private val guard = com.undal.syl.app.core.util.UndalGuards.viewModel("reading the kitchen's dashboard") { message ->
+        _state.value = _state.value.copy(infoMessage = message, busy = false)
+    }
 
     /** Bumped by pull-to-refresh: restarting the listener forces a server read (V-022). */
     private val refreshKey = MutableStateFlow(0)
@@ -101,7 +114,7 @@ class VendorDashboardViewModel @Inject constructor(
     val now: StateFlow<Long> = _now.asStateFlow()
 
     init {
-        viewModelScope.launch {
+        viewModelScope.launch(guard) {
             while (true) {
                 _now.value = System.currentTimeMillis()
                 delay(1_000L)
@@ -115,7 +128,7 @@ class VendorDashboardViewModel @Inject constructor(
     }
 
     fun refresh(context: Context) {
-        viewModelScope.launch {
+        viewModelScope.launch(guard) {
             val health = sessionKeeper.verifySession()
             val token = registrar.currentToken()
             _state.value = _state.value.copy(
@@ -137,7 +150,7 @@ class VendorDashboardViewModel @Inject constructor(
     }
 
     private fun observeStore() {
-        viewModelScope.launch {
+        viewModelScope.launch(guard) {
             storeRepo.observeStore().collect { store ->
                 _state.value = _state.value.copy(
                     store = store,
@@ -148,7 +161,7 @@ class VendorDashboardViewModel @Inject constructor(
     }
 
     private fun observeToday() {
-        viewModelScope.launch {
+        viewModelScope.launch(guard) {
             refreshKey.flatMapLatest { vendorOrderRepo.observeToday() }.collect { feed ->
                 val open = feed.orders.filter { it.isOpen }
                 _state.value = _state.value.copy(
@@ -173,7 +186,7 @@ class VendorDashboardViewModel @Inject constructor(
             }
         }
         // The kitchen's own alert history mirrors the phone's ringing (V-109).
-        viewModelScope.launch {
+        viewModelScope.launch(guard) {
             refreshKey.flatMapLatest { vendorOrderRepo.observeToday() }.collect { feed ->
                 feed.orders.filter { it.status == OrderStatus.PLACED }
                     .forEach { order -> vendorOrderRepo.recordAlertIfNew(order) }
@@ -182,7 +195,7 @@ class VendorDashboardViewModel @Inject constructor(
     }
 
     private fun observeWeek() {
-        viewModelScope.launch {
+        viewModelScope.launch(guard) {
             refreshKey.flatMapLatest { vendorOrderRepo.observeWeek() }.collect { feed ->
                 _state.value = _state.value.copy(week = VendorOrder.weekSeries(feed.orders))
             }
@@ -190,7 +203,7 @@ class VendorDashboardViewModel @Inject constructor(
     }
 
     private fun observeHeartbeat() {
-        viewModelScope.launch {
+        viewModelScope.launch(guard) {
             heartbeat.observe().collect { presence ->
                 val lastSeen = presence?.lastSeen ?: 0L
                 _state.value = _state.value.copy(
@@ -211,7 +224,7 @@ class VendorDashboardViewModel @Inject constructor(
      * Read once per dashboard open and kept live while it is on screen.
      */
     private fun observePresenceHistory() {
-        viewModelScope.launch {
+        viewModelScope.launch(guard) {
             presenceRepo.observeDays(PRESENCE_DAYS).collect { days ->
                 _state.value = _state.value.copy(presenceDays = days, presenceLoaded = true)
             }
@@ -232,7 +245,7 @@ class VendorDashboardViewModel @Inject constructor(
     fun setOpen(context: Context, open: Boolean) {
         if (_state.value.busy) return
         _state.value = _state.value.copy(busy = true)
-        viewModelScope.launch {
+        viewModelScope.launch(guard) {
             val note = _state.value.note.trim().ifBlank {
                 if (open) "The kitchen is taking orders now." else "The kitchen is closed for now."
             }
@@ -301,7 +314,7 @@ class VendorDashboardViewModel @Inject constructor(
 
     /** Signs out and stops every device-side process that belongs to the kitchen. */
     fun signOut(context: Context) {
-        viewModelScope.launch {
+        viewModelScope.launch(guard) {
             auth.currentUser?.uid?.let { uid -> registrar.unregister(uid) }
             PresenceHeartbeat.stopService(context)
             PresenceHeartbeatWorker.cancel(context)

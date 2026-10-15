@@ -572,18 +572,38 @@ class OrderRepo @Inject constructor(
     /**
      * The shared rule's refusal, said the way the customer needs to hear it —
      * "remove it or add more", never a bare "invalid coupon".
+     *
+     * A refusal that names its fact is one the customer can act on: the date a
+     * code ended, the days it runs, the taka still needed. Without the date,
+     * "expired" on a promotion the kitchen swears is live is an argument, not an
+     * answer — and it is the same sentence the web checkout writes, from
+     * `couponSentence` in the Worker.
      */
     private fun couponRefusal(reason: String, coupon: CouponMath.Coupon, subtotalPaisa: Long): String =
         when (reason) {
             "switched off" -> "was switched off. Remove it to continue."
             "not set up correctly" -> "is not set up correctly — please tell the kitchen."
-            "expired" -> "expired. Remove it to continue."
+            "expired" -> {
+                val ended = expiryDate(coupon.expiresAtMillis)
+                if (ended.isBlank()) "expired. Remove it to continue."
+                else "expired on $ended. Remove it to continue."
+            }
             "not today" -> "only works on ${coupon.daysOfWeek.joinToString(", ")}. Remove it to continue."
             "outside its hours" -> "only works between ${coupon.startsAt} and ${coupon.endsAt}."
-            "used up" -> "has just been used its last time. Sorry about that."
+            "used up" ->
+                if (coupon.usageLimit > 0L) "has been used its full ${coupon.usageLimit} times. Sorry about that."
+                else "has just been used its last time. Sorry about that."
             "basket too small" -> "needs ${Money.format(coupon.minSubtotalAmountPaisa)} of food — add " +
                 "${Money.format(coupon.minSubtotalAmountPaisa - subtotalPaisa)} more, or remove it."
             else -> "does not change this total."
+        }
+
+    /** "16 Oct 2026" in Dhaka, or "" when the coupon carries no expiry to name. */
+    private fun expiryDate(expiresAtMillis: Long): String =
+        if (expiresAtMillis <= 0L) {
+            ""
+        } else {
+            TimeDhaka.formatDate(TimeDhaka.fromInstant(java.time.Instant.ofEpochMilli(expiresAtMillis)).toLocalDate())
         }
 
     private companion object {

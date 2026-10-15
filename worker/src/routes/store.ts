@@ -35,6 +35,8 @@ import {
 } from "../web/cart";
 import {
   couponClock,
+  couponDays,
+  couponExpiryLabel,
   couponHeadline,
   couponTypeOf,
   evaluateCoupon,
@@ -745,26 +747,53 @@ export async function handleStoreOrder(env: Env, request: Request): Promise<Resp
   );
 }
 
-/** The sentence a refused coupon gets: which code, and what is true about it. */
-function couponSentence(code: string, coupon: Record<string, unknown>, reason: string, format: (paisa: number) => string): string {
+/**
+ * The sentence a refused coupon gets: which code, and what is true about it.
+ *
+ * Exported for `worker/test/coupons.test.ts`: this is the sentence a customer
+ * reads when a promotion does not apply, and "CODE has expired" with no date is
+ * what made an owner insist the coupon was active while the checkout refused it.
+ *
+ * These are the same sentences the app's `CouponRepo.describe` writes, word for
+ * word where a fact is being stated — the date it ended, the days it runs, the
+ * hours, the shortfall, the count. A customer who is refused on the web and then
+ * tries the app must not get two different explanations of one rule, because the
+ * second one reads as the first one lying.
+ *
+ * Every fact comes from the live document, never from the refusal word alone:
+ * "has expired" with no date is a dead end, and a dead end at the checkout is
+ * where a customer gives up.
+ */
+export function couponSentence(code: string, coupon: Record<string, unknown>, reason: string, format: (paisa: number) => string): string {
   const minimum = num(coupon.minSubtotalAmountPaisa);
   switch (reason) {
-    case "expired":
-      return `${code} has expired.`;
-    case "used up":
-      return `${code} has been used its last time.`;
+    case "expired": {
+      const ended = couponExpiryLabel(coupon.expiresAt ?? coupon.expiresAtMillis);
+      return ended ? `${code} expired on ${ended}.` : `${code} has expired.`;
+    }
+    case "used up": {
+      const limit = num(coupon.usageLimit);
+      return limit >= 1
+        ? `${code} has been used its full ${limit} times.`
+        : `${code} has been used its last time.`;
+    }
     case "switched off":
       return `${code} is switched off right now.`;
     case "basket too small":
-      return `${code} needs ${format(minimum)} of food.`;
+      return `${code} needs a food subtotal of ${format(minimum)}.`;
     case "not set up correctly":
       return `${code} is not set up correctly — please tell the kitchen.`;
-    case "outside its hours":
-      return `${code} is only live between its set hours.`;
-    case "not today":
-      return `${code} is not running today.`;
+    case "outside its hours": {
+      const from = str(coupon.startsAt);
+      const to = str(coupon.endsAt);
+      return from && to ? `${code} works between ${from} and ${to}.` : `${code} is only live between its set hours.`;
+    }
+    case "not today": {
+      const days = couponDays(coupon.daysOfWeek);
+      return days.length > 0 ? `${code} only works on ${days.join(", ")}.` : `${code} is not running today.`;
+    }
     default:
-      return `${code} does not change this total.`;
+      return `${code} would not change this order's total.`;
   }
 }
 

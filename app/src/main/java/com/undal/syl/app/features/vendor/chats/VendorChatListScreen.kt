@@ -70,6 +70,17 @@ fun VendorChatListScreen(
                 )
             }
 
+            // A failed read has to be said, because an empty list is also what a
+            // kitchen with no conversations looks like — and "no threads" is the
+            // wrong sentence when the truth is "the signal went".
+            if (state.notice != null) {
+                UndalAlertBanner(
+                    text = state.notice.orEmpty(),
+                    icon = Icons.Filled.Info,
+                    modifier = Modifier.fillMaxWidth()
+                )
+            }
+
             if (state.rows.isEmpty() && !state.loading) {
                 VendorEmptyState(
                     icon = Icons.Filled.Email,

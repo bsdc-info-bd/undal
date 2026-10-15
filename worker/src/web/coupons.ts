@@ -42,6 +42,15 @@ export interface CouponDocument {
   usedCount?: number;
   /** Firestore timestamp (ISO string through the REST API) or epoch millis. */
   expiresAt?: unknown;
+  /**
+   * The same instant, already normalised to epoch millis — the shape a board
+   * entry carries, because a cached board holds no Firestore types at all.
+   *
+   * Both names are read, everywhere an expiry is judged. Reading only `expiresAt`
+   * silently answered "this coupon never expires" for anything built from the
+   * board, which is how a dated-out promotion keeps looking live.
+   */
+  expiresAtMillis?: unknown;
   /** "HH:MM" Asia/Dhaka, inclusive start of the daily window. */
   startsAt?: string;
   /** "HH:MM" Asia/Dhaka, exclusive end. A window that ends before it starts crosses midnight. */
@@ -134,6 +143,29 @@ export function couponExpiryMillis(value: unknown): number {
     if (Number.isFinite(seconds)) return seconds * 1000;
   }
   return 0;
+}
+
+const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+
+/**
+ * "16 Oct 2026", in Asia/Dhaka — the label the app prints for the same instant
+ * (`TimeDhaka.formatDate`, pattern `d MMM yyyy`), so a customer refused on the
+ * web and a customer refused in the app read one sentence rather than two.
+ *
+ * Dhaka is UTC+6 all year round, so this is arithmetic and a month table rather
+ * than a locale lookup: no `Intl`, no timezone database, nothing that could
+ * differ between a Worker isolate, a browser and a phone.
+ *
+ * An empty string means "there is no date to name" — a coupon with no expiry —
+ * and the caller then falls back to a sentence that does not invent one.
+ */
+export function couponExpiryLabel(value: unknown, offsetMinutes = 360): string {
+  const millis = couponExpiryMillis(value);
+  if (!(millis > 0)) return "";
+  const shifted = new Date(millis + offsetMinutes * 60_000);
+  const month = MONTHS[shifted.getUTCMonth()] ?? "";
+  if (!month) return "";
+  return `${shifted.getUTCDate()} ${month} ${shifted.getUTCFullYear()}`;
 }
 
 export function couponTypeOf(value: unknown): CouponType | null {
@@ -236,7 +268,7 @@ export function evaluateCoupon(raw: CouponDocument, context: CouponContext): Cou
     return { eligible: false, reason: "not set up correctly", discountPaisa: 0 };
   }
 
-  const expiry = couponExpiryMillis(raw.expiresAt);
+  const expiry = couponExpiryMillis(raw.expiresAt ?? raw.expiresAtMillis);
   if (expiry > 0 && expiry <= context.now) {
     return { eligible: false, reason: "expired", discountPaisa: 0 };
   }
@@ -295,7 +327,7 @@ export function pickBestCoupon(coupons: CouponDocument[], context: CouponContext
     if (!code) continue;
     const verdict = evaluateCoupon(raw, context);
     if (!verdict.eligible) continue;
-    const expiry = couponExpiryMillis(raw.expiresAt);
+    const expiry = couponExpiryMillis(raw.expiresAt ?? raw.expiresAtMillis);
     const beats =
       best === null ||
       verdict.discountPaisa > best.discountPaisa ||
@@ -384,7 +416,7 @@ export function toBoardEntry(raw: CouponDocument): CouponBoardEntry | null {
       ? Math.max(0, Math.trunc(Number(raw.minSubtotalAmountPaisa)))
       : 0,
     maxDiscountPaisa: Number.isFinite(Number(raw.maxDiscountPaisa)) ? Math.max(0, Math.trunc(Number(raw.maxDiscountPaisa))) : 0,
-    expiresAtMillis: couponExpiryMillis(raw.expiresAt),
+    expiresAtMillis: couponExpiryMillis(raw.expiresAt ?? raw.expiresAtMillis),
     startsAt: typeof raw.startsAt === "string" ? raw.startsAt : "",
     endsAt: typeof raw.endsAt === "string" ? raw.endsAt : "",
     daysOfWeek: couponDays(raw.daysOfWeek),
@@ -414,7 +446,7 @@ export function buildCouponBoard(coupons: CouponDocument[], now = Date.now()): C
   for (const raw of coupons) {
     if (raw.active !== true) continue;
     if (raw.autoApply === false && raw.showOnWeb === false) continue;
-    const expiry = couponExpiryMillis(raw.expiresAt);
+    const expiry = couponExpiryMillis(raw.expiresAt ?? raw.expiresAtMillis);
     if (expiry > 0 && expiry <= now) continue;
     const usageLimit = Number(raw.usageLimit ?? 0);
     const usedCount = Number(raw.usedCount ?? 0);

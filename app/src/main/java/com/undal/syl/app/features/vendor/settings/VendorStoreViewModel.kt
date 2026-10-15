@@ -67,6 +67,19 @@ class VendorStoreViewModel @Inject constructor(
 
     private val _state = MutableStateFlow(State())
     val state: StateFlow<State> = _state.asStateFlow()
+    /**
+     * Nothing this ViewModel does may end the process.
+     *
+     * An exception that escapes a `viewModelScope` job is uncaught, and Android's
+     * answer to an uncaught exception is to kill the app — which the person
+     * experiences as the app vanishing a few seconds after it opened, then the
+     * crash guard reopening it, then the home screen. Every coroutine here carries
+     * this handler, so a failed read becomes one sentence where the screen already
+     * shows messages.
+     */
+    private val guard = com.undal.syl.app.core.util.UndalGuards.viewModel("reading the store settings") { message ->
+        _state.value = _state.value.copy(message = message, busy = false)
+    }
 
     private var player: MediaPlayer? = null
 
@@ -75,7 +88,7 @@ class VendorStoreViewModel @Inject constructor(
     private var logoUrl: String = ""
 
     init {
-        viewModelScope.launch {
+        viewModelScope.launch(guard) {
             storeRepo.observeStore().collect { store ->
                 val editing = _state.value.dirty || _state.value.busy
                 val state = _state.value
@@ -101,7 +114,7 @@ class VendorStoreViewModel @Inject constructor(
                 }
             }
         }
-        viewModelScope.launch {
+        viewModelScope.launch(guard) {
             val health = sessionKeeper.verifySession()
             _state.value = _state.value.copy(vendorClaim = health.vendorClaim)
         }
@@ -135,7 +148,7 @@ class VendorStoreViewModel @Inject constructor(
 
     fun onPinPicked(lat: Double, lng: Double) {
         _state.value = _state.value.copy(pinLat = lat, pinLng = lng, dirty = true)
-        viewModelScope.launch {
+        viewModelScope.launch(guard) {
             val label = locationController.describe(lat, lng)
             _state.value = _state.value.copy(pinLabel = label)
         }
@@ -144,7 +157,7 @@ class VendorStoreViewModel @Inject constructor(
     /** Grab-my-GPS: the owner's own phone is the most accurate pin available. */
     fun useCurrentLocation(context: Context) {
         _state.value = _state.value.copy(locating = true)
-        viewModelScope.launch {
+        viewModelScope.launch(guard) {
             val result = locationController.currentFix(context)
             _state.value = when (result) {
                 is UndalResult.Success -> _state.value.copy(
@@ -192,7 +205,7 @@ class VendorStoreViewModel @Inject constructor(
 
     private fun upload(uri: Uri, label: String, assign: (String) -> Unit) {
         _state.value = _state.value.copy(uploadProgress = 0f)
-        viewModelScope.launch {
+        viewModelScope.launch(guard) {
             when (val result = vendorStoreRepo.uploadImage(uri) { fraction ->
                 _state.value = _state.value.copy(uploadProgress = fraction)
             }) {
@@ -223,7 +236,7 @@ class VendorStoreViewModel @Inject constructor(
         }
         val minOrder = Money.parseTakaToPaisa(_state.value.minOrderText) ?: 0L
         _state.value = _state.value.copy(busy = true)
-        viewModelScope.launch {
+        viewModelScope.launch(guard) {
             val result = vendorStoreRepo.setDelivery(perKm, _state.value.radiusKm, minOrder)
             _state.value = _state.value.copy(
                 busy = false,
@@ -245,7 +258,7 @@ class VendorStoreViewModel @Inject constructor(
             return
         }
         _state.value = _state.value.copy(busy = true)
-        viewModelScope.launch {
+        viewModelScope.launch(guard) {
             val result = vendorStoreRepo.setPin(
                 lat = _state.value.pinLat,
                 lng = _state.value.pinLng,
@@ -264,7 +277,7 @@ class VendorStoreViewModel @Inject constructor(
 
     fun saveProfile() {
         _state.value = _state.value.copy(busy = true)
-        viewModelScope.launch {
+        viewModelScope.launch(guard) {
             val result = vendorStoreRepo.setProfile(
                 storeName = _state.value.nameText,
                 bannerUrl = bannerUrl.ifBlank { _state.value.store.bannerUrl },
@@ -329,7 +342,7 @@ class VendorStoreViewModel @Inject constructor(
             cleanupProgress = "Starting cleanup…",
             cleanupNotice = null
         )
-        viewModelScope.launch {
+        viewModelScope.launch(guard) {
             var orders = 0
             var notifications = 0
             var before: String? = null
@@ -420,7 +433,7 @@ class VendorStoreViewModel @Inject constructor(
     fun checkCleanupPath() {
         if (_state.value.busy || _state.value.checkingCleanup) return
         _state.value = _state.value.copy(checkingCleanup = true, busy = true, cleanupNotice = null)
-        viewModelScope.launch {
+        viewModelScope.launch(guard) {
             try {
                 val diagnosis = workerApi.cleanupDiagnosis()
                 val failed = diagnosis.checks.filterNot { it.ok }

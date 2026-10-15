@@ -77,6 +77,19 @@ class StoreViewModel @Inject constructor(
 
     private val _state = MutableStateFlow(State())
     val state: StateFlow<State> = _state.asStateFlow()
+    /**
+     * Nothing this ViewModel does may end the process.
+     *
+     * An exception that escapes a `viewModelScope` job is uncaught, and Android's
+     * answer to an uncaught exception is to kill the app — which the person
+     * experiences as the app vanishing a few seconds after it opened, then the
+     * crash guard reopening it, then the home screen. Every coroutine here carries
+     * this handler, so a failed read becomes one sentence where the screen already
+     * shows messages.
+     */
+    private val guard = com.undal.syl.app.core.util.UndalGuards.viewModel("reading the menu") { message ->
+        _state.value = _state.value.copy(errorMessage = message)
+    }
 
     private val addressFlow = MutableStateFlow<UndalLocation?>(null)
     private val filterFlow = MutableStateFlow(Filter())
@@ -90,12 +103,12 @@ class StoreViewModel @Inject constructor(
     )
 
     init {
-        viewModelScope.launch {
+        viewModelScope.launch(guard) {
             refreshAddress()
         }
         // Quantities per dish drive the stepper on every card, so the grid shows
         // exactly how many of this dish are already in the cart.
-        viewModelScope.launch {
+        viewModelScope.launch(guard) {
             cartRepo.cart.collect { cart ->
                 quantitiesFlow.value = buildMap {
                     cart.lines.forEach { line ->
@@ -104,7 +117,7 @@ class StoreViewModel @Inject constructor(
                 }
             }
         }
-        viewModelScope.launch {
+        viewModelScope.launch(guard) {
             val filterAndQuantities = combine(filterFlow, quantitiesFlow) { filter, quantities ->
                 filter to quantities
             }
@@ -165,7 +178,7 @@ class StoreViewModel @Inject constructor(
 
     /** Re-reads the pinned address; call this whenever the customer returns. */
     fun refreshAddress() {
-        viewModelScope.launch {
+        viewModelScope.launch(guard) {
             addressFlow.value = authRepo.loadProfileLocation()
         }
     }
@@ -200,7 +213,7 @@ class StoreViewModel @Inject constructor(
 
     /** Quick add straight from the grid, with the dish's own note left empty. */
     fun quickAdd(itemId: String) {
-        viewModelScope.launch {
+        viewModelScope.launch(guard) {
             val item = _state.value.menu.dish(itemId)
             if (item != null) {
                 if (!item.available) {
@@ -239,7 +252,7 @@ class StoreViewModel @Inject constructor(
     }
 
     fun quickRemove(itemId: String) {
-        viewModelScope.launch {
+        viewModelScope.launch(guard) {
             val cart = cartRepo.current()
             val line = cart.lines.firstOrNull { it.id == itemId } ?: return@launch
             cartRepo.setQuantity(line.id, line.note, line.quantity - 1)

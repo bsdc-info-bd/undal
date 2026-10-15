@@ -37,6 +37,19 @@ class VendorOrdersViewModel @Inject constructor(
 
     private val _state = MutableStateFlow(State())
     val state: StateFlow<State> = _state.asStateFlow()
+    /**
+     * Nothing this ViewModel does may end the process.
+     *
+     * An exception that escapes a `viewModelScope` job is uncaught, and Android's
+     * answer to an uncaught exception is to kill the app — which the person
+     * experiences as the app vanishing a few seconds after it opened, then the
+     * crash guard reopening it, then the home screen. Every coroutine here carries
+     * this handler, so a failed read becomes one sentence where the screen already
+     * shows messages.
+     */
+    private val guard = com.undal.syl.app.core.util.UndalGuards.viewModel("reading the kitchen's orders") { message ->
+        _state.value = _state.value.copy(message = message)
+    }
 
     private val refreshKey = MutableStateFlow(0)
     private var week: List<VendorOrder> = emptyList()
@@ -45,13 +58,13 @@ class VendorOrdersViewModel @Inject constructor(
     val now: StateFlow<Long> = _now.asStateFlow()
 
     init {
-        viewModelScope.launch {
+        viewModelScope.launch(guard) {
             while (true) {
                 _now.value = System.currentTimeMillis()
                 delay(1_000L)
             }
         }
-        viewModelScope.launch {
+        viewModelScope.launch(guard) {
             refreshKey.flatMapLatest { vendorOrderRepo.observeWeek() }.collect { feed ->
                 week = feed.orders
                 _state.value = _state.value.copy(

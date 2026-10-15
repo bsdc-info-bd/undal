@@ -66,8 +66,18 @@ object UndalErrors {
     fun firestore(error: Throwable, operation: String = ""): String {
         val sentence = when (error) {
             is FirebaseFirestoreException -> when (error.code) {
+                // A rule refusal arrives with no explanation at all — Firestore
+                // answers "Missing or insufficient permissions" and nothing else —
+                // so this sentence has to carry the two things that actually cause
+                // one: a field the rules require and the app did not satisfy, or an
+                // account that is not the kitchen's. Naming both turns a dead end
+                // into something the owner can check in a minute.
                 FirebaseFirestoreException.Code.PERMISSION_DENIED ->
-                    "The kitchen has not published this yet, or your account cannot read it."
+                    "The database refused that. On a kitchen edit it means one field did not match the " +
+                        "rules it is checked against — a name shorter than three characters, a price above " +
+                        "৳ 10,000, a combo with fewer than two dishes, a campaign that ends before it " +
+                        "starts — or that this account is not carrying the kitchen's vendor sign-in. " +
+                        "On a read it means this account cannot see that collection."
                 FirebaseFirestoreException.Code.UNAUTHENTICATED ->
                     "Your sign-in has expired. Please sign in again."
                 FirebaseFirestoreException.Code.UNAVAILABLE ->

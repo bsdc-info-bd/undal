@@ -205,6 +205,12 @@ Every rung of that ladder — the data-only payload, the OAuth2 minting, the top
 fallback, the re-alert windows, the alarm channel, the looping player, the
 full-screen intent, the OEM exemption screens and the boot receiver — is written
 up with its code, its file path and the reason it exists in
+**`docs/CRASH-DISCIPLINE.md`** is the same argument for the app itself: an
+exception that escapes a `viewModelScope` is uncaught, Android's answer to an
+uncaught exception is a dead process, and the customer's experience is an app
+that reopens itself and then closes. Every coroutine in the app carries a handler
+from `UndalGuards`, so a failed read becomes one sentence on the screen.
+
 **`docs/ALERT-RELIABILITY.md`**, together with the device acceptance matrix that
 has to be run on the real kitchen phone.
 
@@ -251,6 +257,7 @@ undal/
 ├── README.md                       this runbook
 ├── FEATURES.md                     the counted 256-feature checklist
 ├── docs/ALERT-RELIABILITY.md       the alert ladder: payload, channels, manifest, acceptance
+├── docs/CRASH-DISCIPLINE.md        why no ViewModel coroutine may end the process
 ├── assets/sound/                   the official Undal order sound
 ├── app/                            the Android app (customer + kitchen)
 ├── firebase/                       rules, indexes, firebase.json
@@ -387,6 +394,28 @@ own JVM test vectors through both JavaScript copies, and
 coupon document before it writes an order, so a browser that lies about a
 discount changes nothing: the price the kitchen sees is the price the server
 computed.
+
+**One expiry, four shapes.** `coupons.expiresAt` is written by the app as a
+Firestore timestamp, and each surface meets it differently: the Worker gets an
+ISO string over REST, the phone gets a `Timestamp` object from the SDK, and a
+cached offer board carries it already normalised as `expiresAtMillis`. Every
+reader accepts all four — `couponExpiryMillis` in the Worker,
+`CouponMath.expiryMillis` in the app, pinned by `worker/test/coupons.test.ts` and
+`CouponMathTest`. A reader that knows only one shape answers "no expiry" for the
+others, and "no expiry" reads as "live forever": that is how a phone came to
+accept a code the website refused as expired, with the owner certain the coupon
+was switched on.
+
+**A refusal names its fact.** "EID20 has expired" is a dead end at the checkout;
+"EID20 expired on 14 Oct 2026" is an answer, and it is the same sentence in
+Dhaka time on both surfaces — the Worker's `couponSentence` and the app's
+`CouponRepo.describe`. The kitchen's own coupon list says it too, with a state
+line under the switch (*Live · ends 16 Oct 2026*, *Expired on 13 Oct 2026 · not
+running*, *All 40 uses spent · not running*), because a toggle shows what the
+owner asked for and not what a customer will get. The editor refuses to save a
+date that has already passed, and the offer strip re-judges every banner against
+the clock of the request that is rendering it, so a cached board cannot advertise
+an offer the order is about to refuse.
 
 Orders pay cash on delivery. There is no card, no wallet and no payment gateway
 anywhere in this repository.

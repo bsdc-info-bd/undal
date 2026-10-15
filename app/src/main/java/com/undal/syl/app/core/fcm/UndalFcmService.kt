@@ -45,7 +45,20 @@ class UndalFcmService : FirebaseMessagingService() {
     @Inject lateinit var inboxRepo: NotifInboxRepo
     @Inject lateinit var progress: com.undal.syl.app.core.session.OnboardingProgress
 
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    /**
+     * Every coroutine this service starts, under one handler.
+     *
+     * A push arrives in a process nobody is looking at, and usually in a process
+     * the push itself started. An exception escaping this scope is uncaught, so
+     * the answer is a dead process — the app killed while it was doing the one
+     * thing it was woken for, with the kitchen's phone silent and no reason on any
+     * screen. The handler is on the *scope*, not on each launch, so the six
+     * launches below inherit it and the seventh one will too.
+     */
+    private val scope = CoroutineScope(
+        SupervisorJob() + Dispatchers.IO +
+            com.undal.syl.app.core.util.UndalGuards.service("handling a push")
+    )
 
     override fun onNewToken(token: String) {
         // The token changed under us (restore, reinstall, security event): the

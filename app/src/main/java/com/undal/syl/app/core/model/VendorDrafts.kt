@@ -3,6 +3,7 @@ package com.undal.syl.app.core.model
 import com.google.firebase.Timestamp
 import com.undal.syl.app.core.util.CouponMath
 import com.undal.syl.app.core.util.Money
+import com.undal.syl.app.core.util.Validators
 
 /**
  * What the kitchen types into the editor screens (V-049 … V-070).
@@ -51,12 +52,14 @@ data class MenuDraft(
             .distinct()
             .take(8)
 
-    val nameError: String?
-        get() = when {
-            name.trim().isEmpty() -> "Give the dish a name."
-            name.trim().length < 2 -> "That name is too short."
-            else -> null
-        }
+    /**
+     * The dish name, judged by the same floor the security rules enforce — three
+     * characters, because `nonBlankString()` in `firebase/firestore.rules` is
+     * `size() >= 3`. Accepting two here meant the save was refused by the database
+     * with nothing but "Missing or insufficient permissions", which reads as a
+     * broken menu editor rather than a short name.
+     */
+    val nameError: String? get() = Validators.menuName("dish name", name)
 
     val priceError: String?
         get() = when {
@@ -167,8 +170,8 @@ data class ComboDraft(
         get() = if (savingsPaisa > 0L) "Customers save ${Money.format(savingsPaisa)}" else "No saving yet"
 
     val error: String?
-        get() = when {
-            name.trim().length < 2 -> "Name the combo."
+        get() = Validators.menuName("combo name", name)
+            ?: when {
             refs.size < 2 -> "A combo needs at least two dishes."
             refs.any { it.qty < 1 } -> "Every dish in a combo needs a quantity."
             pricePaisa == null -> "Set the combo price."
@@ -224,8 +227,8 @@ data class CampaignDraft(
         }
 
     val error: String?
-        get() = when {
-            title.trim().isEmpty() -> "Give the campaign a title."
+        get() = Validators.menuName("campaign title", title)
+            ?: when {
             type == "percent" && (value ?: 0L) !in 1..90 -> "A percentage must be between 1 and 90."
             type == "fixed" && (value ?: 0L) <= 0L -> "A fixed discount must be more than zero."
             startAtMillis == null -> "Pick the day it starts."
@@ -317,6 +320,22 @@ data class CouponDraft(
             else -> null
         }
 
+    /**
+     * A date that has already passed is refused here, in the editor, rather than
+     * at somebody's checkout.
+     *
+     * This is the mistake behind "the coupon is active but the web says Expired":
+     * the switch is on, the code reads as live in the list, and every customer who
+     * types it is refused. The owner cannot see that from a toggle — but they can
+     * see it from a sentence written at the moment they pick the date.
+     *
+     * An empty expiry is not an error. A promotion with no end date is a decision.
+     */
+    val expiryError: String?
+        get() = expiresAtMillis?.takeIf { it <= System.currentTimeMillis() }?.let {
+            "That date has already passed — pick today or later, or leave the expiry empty for no end date."
+        }
+
     /** "HH:MM" or blank, both ends. A window that ends before it starts is fine. */
     val windowError: String?
         get() = when {
@@ -376,7 +395,23 @@ data class CouponDraft(
     val usageLimit: Long get() = usageLimitText.trim().toLongOrNull()?.coerceIn(0L, 100_000L) ?: 0L
 
     val isValid: Boolean
-        get() = codeError == null && valueError == null && maxDiscountError == null && windowError == null
+        get() = firstError == null
+
+    /**
+     * The first thing wrong with this draft, in the order the fields appear on the
+     * sheet — and the only way the save button may refuse.
+     *
+     * Every caller used to chain two of the five errors by hand
+     * (`codeError ?: valueError`), so a draft whose *window* or *expiry* was wrong
+     * produced no sentence at all: the button did nothing and the owner had no idea
+     * why. One list, in one place, means a refusal always says what to fix.
+     */
+    val firstError: String?
+        get() = codeError
+            ?: valueError
+            ?: maxDiscountError
+            ?: windowError
+            ?: expiryError
 
     /**
      * The document the customer's phone, the Worker and the web store all read.
@@ -493,6 +528,34 @@ data class VendorCoupon(
     val expired: Boolean
         get() = expiresAtMillis != null && expiresAtMillis < System.currentTimeMillis()
 
+    /** Switched on, and its usage allowance already spent. */
+    val usedUp: Boolean
+        get() = usageLimit > 0L && usedCount >= usageLimit
+
+    /**
+     * Switched on but able to give nobody anything — the state the toggle cannot
+     * show. This is the confusion worth designing out: the kitchen sees the switch
+     * in the on position, tells a customer the code, and the checkout refuses it.
+     */
+    val onButDead: Boolean
+        get() = active && (expired || usedUp)
+
+    /**
+     * The one line that answers "is this coupon doing anything right now?", with
+     * the date in it. A switch says what the owner *asked for*; this says what a
+     * customer will actually get.
+     */
+    val stateLabel: String
+        get() = when {
+            !active -> "Switched off · nobody gets it"
+            expired ->
+                if (expiryLabel.isBlank()) "Expired · not running"
+                else "Expired on $expiryLabel · not running"
+            usedUp -> "All $usageLimit uses spent · not running"
+            expiryLabel.isBlank() -> "Live · no end date"
+            else -> "Live · ends $expiryLabel"
+        }
+
     val expiryLabel: String
         get() = expiresAtMillis
             ?.let { com.undal.syl.app.core.util.TimeDhaka.formatDate(
@@ -510,7 +573,12 @@ data class VendorCoupon(
             minSubtotalAmountPaisa = (map["minSubtotalAmountPaisa"] as? Number)?.toLong() ?: 0L,
             usageLimit = (map["usageLimit"] as? Number)?.toLong() ?: 0L,
             usedCount = (map["usedCount"] as? Number)?.toLong() ?: 0L,
-            expiresAtMillis = (map["expiresAt"] as? Timestamp)?.toDate()?.time,
+            // Every shape the field can arrive in, through the shared rule's own
+            // reader: a Timestamp from the SDK, a Date, millis, an ISO string or a
+            // `{seconds, nanos}` map. Reading only `as? Timestamp` answered `null`
+            // — "no expiry" — for the other four.
+            expiresAtMillis = CouponMath.expiryMillis(map["expiresAt"] ?: map["expiresAtMillis"])
+                .takeIf { it > 0L },
             description = (map["description"] as? String).orEmpty(),
             maxDiscountPaisa = (map["maxDiscountPaisa"] as? Number)?.toLong() ?: 0L,
             startsAt = (map["startsAt"] as? String).orEmpty(),
