@@ -10,7 +10,7 @@ laptop step, no CLI step, no paid service anywhere in the stack.
 
 > Status of the build plan: **Response 1 of 5** is complete — foundation,
 > security rules, Worker, pipelines and the counted feature list.
-> `FEATURES.md` tracks the 256 features and ticks each one only when it is
+> `FEATURES.md` tracks the 257 features and ticks each one only when it is
 > really implemented.
 
 ---
@@ -255,7 +255,7 @@ first build of the project cannot fail on a bleeding-edge version skew.
 ```
 undal/
 ├── README.md                       this runbook
-├── FEATURES.md                     the counted 256-feature checklist
+├── FEATURES.md                     the counted 257-feature checklist
 ├── docs/ALERT-RELIABILITY.md       the alert ladder: payload, channels, manifest, acceptance
 ├── docs/CRASH-DISCIPLINE.md        why no ViewModel coroutine may end the process
 ├── assets/sound/                   the official Undal order sound

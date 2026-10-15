@@ -6,22 +6,22 @@ backend** — never when it is merely planned or sketched.
 
 | Block | Range | Count |
 | --- | --- | --- |
-| Customer portal | C-001 … C-080 | 80 |
+| Customer portal | C-001 … C-081 | 81 |
 | Vendor portal | V-001 … V-110 | 110 |
 | Platform · web · deep links · CI | P-001 … P-066 | 66 |
-| **Total** | | **256** |
+| **Total** | | **257** |
 
-**Progress: 256 / 256 implemented (100 %)** — every block is ticked: the
-customer portal (C-001 … C-080), the vendor portal (V-001 … V-110) and the
+**Progress: 257 / 257 implemented (100 %)** — every block is ticked: the
+customer portal (C-001 … C-081), the vendor portal (V-001 … V-110) and the
 platform, web, deep-link and release block (P-001 … P-066). Nothing here is
 "planned": each line is code in this repository, verified by
-`grep -c '^- \[x\]' FEATURES.md` (256) and by the acceptance table in README §11.
+`grep -c '^- \[x\]' FEATURES.md` (257) and by the acceptance table in README §11.
 
 Legend: `[x]` shipped and wired · `[ ]` still to ship.
 
 ---
 
-## C · Customer portal (80)
+## C · Customer portal (81)
 
 - [x] C-001 · Branded splash with animated logo (core-splashscreen)
 - [x] C-002 · Role auto-router from auth state plus Firestore role document
@@ -103,6 +103,7 @@ Legend: `[x]` shipped and wired · `[ ]` still to ship.
 - [x] C-078 · In-app notification inbox with read state, images and order deep links
 - [x] C-079 · Profile: edit name, phone, photo (Cloudinary), re-pin address, change password
 - [x] C-080 · Logout and full account deletion (auth, user document, tokens) behind a confirmation sheet
+- [x] C-081 · Offer strip on the store screen: the kitchen's live coupons from the same public board the web store prints, each with its headline, its conditions, whether it applies itself or needs the code typed, and a tap that copies the code
 
 ## V · Vendor portal (110)
 

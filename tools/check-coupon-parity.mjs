@@ -207,6 +207,39 @@ check(
   `${COUPONS}: buildCouponBoard drops a coupon that is neither automatic nor advertised, and ` +
     `nothing else — absent switch fields mean shown, as they do in the console`,
 );
+const STORE_VIEW_MODEL = "app/src/main/java/com/undal/syl/app/features/store/StoreViewModel.kt";
+const STORE_SCREEN = "app/src/main/java/com/undal/syl/app/features/store/StoreScreen.kt";
+const COUPON_MATH = "app/src/main/java/com/undal/syl/app/core/util/CouponMath.kt";
+const COUPON_MATH_TEST = "app/src/test/java/com/undal/syl/app/core/util/CouponMathTest.kt";
+
+check(
+  "the app shows the same board the web prints",
+  /couponRepo\.board\(\)/.test(read(STORE_VIEW_MODEL)) &&
+    /offers: List<CouponRepo\.Coupon>/.test(read(STORE_VIEW_MODEL)) &&
+    /OfferStrip\(offers = state\.offers\)/.test(read(STORE_SCREEN)),
+  `${STORE_VIEW_MODEL} / ${STORE_SCREEN}: the basket has somewhere to enter a code, but without a strip on ` +
+    `the store screen a customer can only use a code they already knew — the web store has printed this ` +
+    `board as banners since V-078, and both surfaces read the one endpoint`,
+);
+check(
+  "an expiry is read under every name and every shape it arrives in",
+  (coupons.match(/couponExpiryMillis\(raw\.expiresAt \?\? raw\.expiresAtMillis\)/g) ?? []).length >= 3 &&
+    /is com\.google\.firebase\.Timestamp -> value\.toDate\(\)\.time/.test(read(COUPON_MATH)) &&
+    /CouponMath\.expiryMillis\(com\.google\.firebase\.Timestamp/.test(read(COUPON_MATH_TEST)),
+  `${COUPON_MATH} / ${COUPONS}: the kitchen writes one timestamp and four readers meet it differently — ` +
+    `a Timestamp object on the phone, an ISO string over REST, millis on a cached board. A reader that ` +
+    `knows one shape answers "no expiry" for the others, and "no expiry" reads as "live forever": that is ` +
+    `how a phone came to accept a code the website refused as expired`,
+);
+check(
+  "a banner is not printed for an offer the checkout would refuse",
+  /coupon\.expiresAtMillis > 0 && coupon\.expiresAtMillis <= now/.test(storePages) &&
+    /couponSentence/.test(storeRoutes) && /expired on \$\{ended\}/.test(storeRoutes),
+  `${STORE_PAGES} / ${STORE_ROUTES}: the board is cached, so it can outlive the offers on it — the strip ` +
+    `re-judges each entry against the clock of the request rendering it, and the refusal names the date ` +
+    `rather than leaving the customer with a dead end`,
+);
+
 check(
   "the app has a Kotlin twin of the rule",
   read("app/src/main/java/com/undal/syl/app/core/util/CouponMath.kt").includes("fun discountPaisa(") &&
