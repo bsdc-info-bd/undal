@@ -103,7 +103,13 @@ class AuthSession @Inject constructor(
             publish()
             updated.currentUser?.let { readClaims(it) }
         }
-        val tokenListener = FirebaseAuth.IdTokenListener { user -> readClaims(user) }
+        // `IdTokenListener.onIdTokenChanged` is handed the *auth*, not the user
+        // — the same shape as `AuthStateListener`, and the reason this fires on
+        // the hourly refresh as well as on sign-in. Reading the user back off it
+        // keeps one `readClaims` for both listeners.
+        val tokenListener = FirebaseAuth.IdTokenListener { refreshed ->
+            refreshed.currentUser?.let { readClaims(it) }
+        }
         auth.addAuthStateListener(authListener)
         auth.addIdTokenListener(tokenListener)
         awaitClose {
