@@ -53,6 +53,16 @@ jobs:
         working-directory: worker
         run: npm ci --no-audit --no-fund
 
+      # The storefront's browser code is shipped from this repository, so the
+      # dialect gate and the money-rule gate run where the Worker is deployed
+      # too — not only where the APK is built.
+      - name: Storefront gates
+        run: |
+          node tools/check-web-compat.mjs
+          node tools/check-web-rules.mjs
+          node tools/check-coupon-parity.mjs
+          node tools/check-alert-ladder.mjs
+
       - name: Typecheck the worker
         working-directory: worker
         run: npm run typecheck

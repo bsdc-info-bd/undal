@@ -38,6 +38,22 @@ class LoginViewModel @Inject constructor(
     private val _state = MutableStateFlow(AuthFormState())
     val state: StateFlow<AuthFormState> = _state.asStateFlow()
 
+    /**
+     * Sign-in is the one place a crash is guaranteed to be reported as "the app
+     * does not work": the person has typed their details, tapped the button, and
+     * the very next thing the phone does is decide whether to keep the process
+     * alive. An exception escaping this scope is uncaught, and uncaught means the
+     * app closes and the launcher comes back — on a *new* device, where the token
+     * read and the first profile read are the first network calls it has ever
+     * made and the connection is often the weakest it will ever be.
+     *
+     * So the failure becomes the form's own banner, with the busy flag cleared:
+     * one sentence and a button that still works.
+     */
+    private val guard = com.undal.syl.app.core.util.UndalGuards.viewModel("signing you in") { message ->
+        _state.value = _state.value.copy(busy = false, banner = message, bannerIsError = true)
+    }
+
     fun onEmailChange(value: String) {
         _state.value = _state.value.copy(email = value, emailError = null, banner = null)
     }
@@ -56,7 +72,7 @@ class LoginViewModel @Inject constructor(
         }
 
         _state.value = current.copy(busy = true, banner = null)
-        viewModelScope.launch {
+        viewModelScope.launch(guard) {
             when (val result = authRepo.login(current.email, current.password)) {
                 is UndalResult.Success -> {
                     _state.value = _state.value.copy(busy = false)
@@ -78,7 +94,7 @@ class LoginViewModel @Inject constructor(
             return
         }
         _state.value = current.copy(busy = true, banner = null)
-        viewModelScope.launch {
+        viewModelScope.launch(guard) {
             when (val result = authRepo.sendPasswordReset(current.email)) {
                 is UndalResult.Success -> _state.value = _state.value.copy(
                     busy = false,
@@ -103,6 +119,11 @@ class RegisterViewModel @Inject constructor(
 
     private val _state = MutableStateFlow(AuthFormState())
     val state: StateFlow<AuthFormState> = _state.asStateFlow()
+
+    /** As in [LoginViewModel]: a failed sign-up is a banner, never a dead process. */
+    private val guard = com.undal.syl.app.core.util.UndalGuards.viewModel("creating your account") { message ->
+        _state.value = _state.value.copy(busy = false, banner = message, bannerIsError = true)
+    }
 
     fun onNameChange(value: String) {
         _state.value = _state.value.copy(name = value, nameError = null, banner = null)
@@ -145,7 +166,7 @@ class RegisterViewModel @Inject constructor(
         }
 
         _state.value = current.copy(busy = true, banner = null)
-        viewModelScope.launch {
+        viewModelScope.launch(guard) {
             when (val result = authRepo.register(
                 name = current.name,
                 email = current.email,

@@ -141,7 +141,10 @@ fun DiagnosticsScreen(
 
             DiagnosticsViewModel.Fix.TOKEN -> viewModel.reregister(context)
 
-            DiagnosticsViewModel.Fix.WATCH -> viewModel.startWatcher(context)
+            // Arming the watchdog is the same act as starting the watcher: the
+            // promise is one, so the one place that starts it arms both.
+            DiagnosticsViewModel.Fix.WATCH,
+            DiagnosticsViewModel.Fix.WATCHDOG -> viewModel.startWatcher(context)
 
             DiagnosticsViewModel.Fix.VOLUME -> viewModel.raiseAlarmVolume(context)
         }
@@ -162,10 +165,21 @@ fun DiagnosticsScreen(
 
             Spacer(Modifier.height(UndalDimens.md))
 
+            // A failed read is said first, and it suppresses the "every check
+            // passes" banner below: with no checks read at all, that banner would
+            // be the one lie this screen must never tell.
+            if (state.notice != null) {
+                UndalAlertBanner(
+                    text = state.notice.orEmpty(),
+                    icon = Icons.Filled.Warning
+                )
+                Spacer(Modifier.height(UndalDimens.sm))
+            }
+
             val failing = state.checks.filter { it.status != DiagnosticsViewModel.Status.OK }
             val ready = state.checks.filter { it.status == DiagnosticsViewModel.Status.OK }
 
-            if (failing.isEmpty()) {
+            if (failing.isEmpty() && state.notice == null) {
                 UndalAlertBanner(
                     text = "Every check passes. Scroll to the last card and ring this phone once — that is the " +
                         "only test that proves the whole chain.",
@@ -494,6 +508,7 @@ private fun fixLabel(fix: DiagnosticsViewModel.Fix): String = when (fix) {
     DiagnosticsViewModel.Fix.AUTOSTART -> "Open autostart settings"
     DiagnosticsViewModel.Fix.TOKEN -> "Register this device again"
     DiagnosticsViewModel.Fix.WATCH -> "Start the live watcher"
+    DiagnosticsViewModel.Fix.WATCHDOG -> "Arm the watchdog"
     DiagnosticsViewModel.Fix.VOLUME -> "Raise the alarm volume now"
 }
 

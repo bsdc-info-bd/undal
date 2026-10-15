@@ -152,6 +152,62 @@ export function extractConst(source, name, label = name) {
 }
 
 /**
+ * Pulls a `var NAME = …;` declaration out of a script, brace-balanced.
+ *
+ * The storefront's browser script builds a couple of values once, at the top of
+ * its IIFE, and the functions below them read those values from the enclosing
+ * scope. A function extracted on its own is therefore missing them — this is how
+ * that is supplied, from the shipping text, rather than by retyping the value
+ * here (which is exactly the drift this gate exists to prevent).
+ */
+export function extractVar(source, name, label = name) {
+  const start = new RegExp(`var\\s+${name}\\s*=`).exec(source);
+  if (!start) throw new Error(`${label}: var ${name} was not found`);
+  const end = matchBrace(source, start.index + start[0].length);
+  if (end === null) throw new Error(`${label}: var ${name} is not a complete declaration`);
+  return source.slice(start.index, end);
+}
+
+/**
+ * `window.undalX = function (…) {…};` — a function the page script exports.
+ *
+ * Rewritten to a plain declaration as it is pulled out, so the shipping text can
+ * be compiled in Node without a `window`: the body is untouched, only the
+ * assignment target changes.
+ */
+export function extractWindowFunction(source, name, label = name) {
+  const start = new RegExp(`window\\.${name}\\s*=\\s*function`).exec(source);
+  if (!start) throw new Error(`${label}: window.${name} was not found`);
+  const end = matchBrace(source, start.index + start[0].length);
+  if (end === null) throw new Error(`${label}: window.${name} is not a complete function`);
+  const declaration = source.slice(start.index, end);
+  // `window.undalX = function (…) {…};` → `var undalX = function (…) {…};`
+  return declaration.replace(/^window\.[A-Za-z0-9_]+\s*=\s*/, `var ${name} = `);
+}
+
+/** Index just past the balanced `;` of a declaration, or null. */
+function matchBrace(source, from) {
+  let depth = 0;
+  let quote = null;
+  for (let i = from; i < source.length; i += 1) {
+    const ch = source[i];
+    if (quote) {
+      if (ch === "\\") i += 1;
+      else if (ch === quote) quote = null;
+      continue;
+    }
+    if (ch === '"' || ch === "'" || ch === "`") {
+      quote = ch;
+      continue;
+    }
+    if (ch === "(" || ch === "{" || ch === "[") depth += 1;
+    else if (ch === ")" || ch === "}" || ch === "]") depth -= 1;
+    else if (ch === ";" && depth <= 0) return i + 1;
+  }
+  return null;
+}
+
+/**
  * The browser scripts live inside template literals in the Worker's source, so
  * a `\\u09F3` in the file is a `\u09F3` in the browser. Undoing that one step
  * lets the gate run the exact text the browser receives.
@@ -318,9 +374,11 @@ const mapClientSource = emittedBrowserJs(read(MAP_CLIENT));
 // too old for that says so instead of silently checking nothing.
 let money;
 let cart;
+let couponModule;
 try {
   money = await import(new URL("../worker/src/util/money.ts", import.meta.url));
   cart = await import(new URL("../worker/src/web/cart.ts", import.meta.url));
+  couponModule = await import(new URL("../worker/src/web/coupons.ts", import.meta.url));
 } catch (error) {
   console.error(
     "This gate imports the Worker's TypeScript directly, which needs Node 22.18 or newer " +
@@ -352,13 +410,38 @@ for (const name of [
   }
 }
 
+for (const name of ["couponDiscountPaisa", "evaluateCoupon", "parseMinutesOfDay", "withinDailyWindow"]) {
+  if (typeof couponModule[name] !== "function") {
+    throw new Error(`${name}() is gone from worker/src/web/coupons.ts — the coupon rule can no longer be checked`);
+  }
+}
+
 const browser = build(
-  ["money", "haversine", "usablePhone", "usableText", "usableName"],
+  [
+    "money",
+    "haversine",
+    "usablePhone",
+    "usableText",
+    "usableName",
+    "parseMinutes",
+    "withinWindow",
+    "discountOf",
+    "undalEvaluateCoupon",
+  ],
+  // The script's own letter test is read with the functions that use it, so the
+  // gate runs the shipping rule — including the fallback an older WebView needs.
+  extractVar(cartClientSource, "NAME_LETTER", CART_CLIENT),
   extractFunction(cartClientSource, "groupIndian", CART_CLIENT),
   extractFunction(cartClientSource, "money", CART_CLIENT),
   extractFunction(cartClientSource, "usablePhone", CART_CLIENT),
   extractFunction(cartClientSource, "usableText", CART_CLIENT),
   extractFunction(cartClientSource, "usableName", CART_CLIENT),
+  // The coupon copies the browser runs: the same three functions the storefront
+  // calls, read out of the shipping text.
+  extractFunction(cartClientSource, "parseMinutes", CART_CLIENT),
+  extractFunction(cartClientSource, "withinWindow", CART_CLIENT),
+  extractFunction(cartClientSource, "discountOf", CART_CLIENT),
+  extractWindowFunction(cartClientSource, "undalEvaluateCoupon", CART_CLIENT),
   extractFunction(mapClientSource, "haversine", MAP_CLIENT),
 );
 
@@ -553,7 +636,145 @@ const APP_ONLY = [
     pattern: /expected \$expected km but was \$actual km/,
     why: "that is the tolerance helper's text; the vectors it drives are checked above",
   },
+  {
+    what: "CouponMath.pickBest (the app's own choice of automatic coupon)",
+    pattern: /CouponMath\.pickBest\(|assertEquals\("SOON"|assertEquals\("EID20"|assertEquals\(5_000L, best\?\.discountPaisa\)/,
+    why:
+      "the Android cart picks its own best coupon from the board and the server re-prices every order " +
+      "before it is written, so the JS copies of that choice are proven by the Worker's own tests",
+  },
+  {
+    what: "CouponMath headline and condition line",
+    pattern: /CouponMath\.(headline|conditionLine)\(/,
+    why: "the wording is local to each surface: the app writes it in Kotlin, the page in its own script",
+  },
+  {
+    what: "the coupon spec harness's own assertions",
+    pattern:
+      /coupon\.(type|value|active|autoApply|daysOfWeek|startsAt|endsAt|expiresAtMillis|minSubtotalAmountPaisa|maxDiscountPaisa|usageLimit|usedCount)\b|clock\.(weekday|minutes|now)\b|clockOf\(|assertFalse\(couponOf|CouponMath\.Clock|CouponMath\.expiryMillis\(/,
+    why:
+      "these prove the test's own spec reader and the Asia/Dhaka clock (the Worker does that in couponClock()); " +
+      "the coupon rules themselves are the three families above",
+  },
 ];
+
+/**
+ * Coupon vectors, read out of CouponMathTest.kt.
+ *
+ * Three tables, three families: the money (`assertDiscount`), the eligibility
+ * verdicts (`assertCoupon`) and the daily windows (`assertWindow`). The same
+ * characters are replayed through the Worker's `coupons.ts` and through the
+ * storefront script, which is what makes "one rule, three copies" a fact rather
+ * than a comment.
+ */
+function discountVectors(source) {
+  const pattern =
+    /assertDiscount\(\s*"([a-z]+)"\s*,\s*(-?[\d_]+)\s*,\s*(-?[\d_]+)\s*,\s*(-?[\d_]+)\s*,\s*(-?[\d_]+)\s*,\s*(-?[\d_]+)\s*\)/g;
+  const vectors = [];
+  let match;
+  while ((match = pattern.exec(source)) !== null) {
+    vectors.push({
+      type: match[1],
+      value: number(match[2]),
+      cap: number(match[3]),
+      subtotal: number(match[4]),
+      delivery: number(match[5]),
+      expect: number(match[6]),
+    });
+  }
+  return vectors;
+}
+
+function couponVectors(source) {
+  const pattern =
+    /assertCoupon\(\s*"((?:[^"\\]|\\.)*)"\s*,\s*(-?[\d_]+)\s*,\s*(-?[\d_]+)\s*,\s*"((?:[^"\\]|\\.)*)"\s*,\s*(-?[\d_]+)\s*\)/g;
+  const vectors = [];
+  let match;
+  while ((match = pattern.exec(source)) !== null) {
+    vectors.push({
+      spec: match[1],
+      subtotal: number(match[2]),
+      delivery: number(match[3]),
+      reason: match[4],
+      expect: number(match[5]),
+    });
+  }
+  return vectors;
+}
+
+function windowVectors(source) {
+  const pattern = /assertWindow\(\s*"([^"]*)"\s*,\s*"([^"]*)"\s*,\s*([^,]+?)\s*,\s*(true|false)\s*\)/g;
+  const vectors = [];
+  let match;
+  while ((match = pattern.exec(source)) !== null) {
+    const expression = match[3].trim();
+    if (!/^[\d\s*+]+$/.test(expression)) {
+      throw new Error(`CouponMathTest.kt: "${expression}" is not a minute expression this gate can read`);
+    }
+    vectors.push({
+      from: match[1],
+      to: match[2],
+      minutes: Function(`return ${expression}`)(),
+      expect: match[4] === "true",
+    });
+  }
+  return vectors;
+}
+
+/** One `key=value` out of a coupon spec, or "". Mirrors the Kotlin `specValue`. */
+function specValue(spec, key) {
+  for (const part of spec.split(";")) {
+    const trimmed = part.trim();
+    if (!trimmed) continue;
+    if (trimmed.split("=")[0].trim() !== key) continue;
+    return trimmed.split("=").slice(1).join("=").trim();
+  }
+  return "";
+}
+
+/** The spec grammar, written twice on purpose: Kotlin builds it, this rebuilds it. */
+function couponFromSpec(spec, nowMillis) {
+  const expiry = specValue(spec, "exp");
+  return {
+    code: specValue(spec, "code") || "TEST",
+    type: specValue(spec, "type") || "percent",
+    value: Number(specValue(spec, "value") || 20),
+    active: specValue(spec, "active") !== "0",
+    minSubtotalAmountPaisa: Number(specValue(spec, "min") || 0),
+    maxDiscountPaisa: Number(specValue(spec, "cap") || 0),
+    usageLimit: Number(specValue(spec, "uses") || 0),
+    usedCount: Number(specValue(spec, "used") || 0),
+    startsAt: specValue(spec, "from"),
+    endsAt: specValue(spec, "to"),
+    daysOfWeek: specValue(spec, "days")
+      .split(",")
+      .map((day) => day.trim())
+      .filter(Boolean),
+    expiresAt:
+      expiry === "expired" ? nowMillis - 60_000 : expiry === "future" ? nowMillis + 3_600_000 : 0,
+    expiresAtMillis:
+      expiry === "expired" ? nowMillis - 60_000 : expiry === "future" ? nowMillis + 3_600_000 : 0,
+  };
+}
+
+/**
+ * The clock half of the spec.
+ *
+ * The Kotlin test pins the instant; this reads the wall clock, because the
+ * relative vectors ("expired" is a minute ago, "future" is an hour away) mean the
+ * same thing at any hour, and a vector table that only ran at 3 a.m. would be a
+ * table nobody trusted.
+ */
+function couponContextFromSpec(spec, subtotal, delivery, nowMillis) {
+  const at = specValue(spec, "at");
+  return {
+    subtotalPaisa: subtotal,
+    deliveryPaisa: delivery,
+    weekday: specValue(spec, "weekday") || "wed",
+    minutes: at ? couponModule.parseMinutesOfDay(at) : 12 * 60,
+    now: nowMillis,
+  };
+}
 
 /** The composed test at the end of DistanceTest: haversine → fee → whole taka. */
 function compositionVectors(source) {
@@ -578,6 +799,7 @@ function compositionVectors(source) {
 // ---------------------------------------------------------------------------
 
 const moneyTest = read("app/src/test/java/com/undal/syl/app/core/util/MoneyTest.kt");
+const couponTest = read("app/src/test/java/com/undal/syl/app/core/util/CouponMathTest.kt");
 const distanceTest = read("app/src/test/java/com/undal/syl/app/core/util/DistanceTest.kt");
 const validatorsTest = read("app/src/test/java/com/undal/syl/app/core/util/ValidatorsTest.kt");
 
@@ -735,6 +957,89 @@ summary.push(
   summary.push({ family: "distance → fee composition", vectors: vectors.length, sites: 1, checked });
 }
 
+// ---- the coupon rule: the app's vectors through both JavaScript copies ------
+
+const COUPON_NOW = Date.now();
+
+{
+  const vectors = discountVectors(couponTest);
+  summary.push(
+    run(
+      "coupons.discount",
+      vectors,
+      {
+        "worker coupons.ts · couponDiscountPaisa": (v) =>
+          couponModule.couponDiscountPaisa(v.subtotal, v.delivery, v.type, v.value, v.cap),
+        "browser cart-client.ts · discountOf": (v) =>
+          browser.discountOf({ type: v.type, value: v.value, maxDiscountPaisa: v.cap }, v.subtotal, v.delivery),
+      },
+      { minimum: 12 },
+    ),
+  );
+}
+
+{
+  // Both halves are compared: the money AND the sentence. A refusal that quotes
+  // "basket too small" on the phone and "expired" in the browser is a customer
+  // arguing with the kitchen about which rule they broke.
+  const vectors = couponVectors(couponTest);
+  if (vectors.length < 15) {
+    throw new Error(
+      `coupons.eligibility: read ${vectors.length} vectors from CouponMathTest.kt but 15 are expected — ` +
+        `were assertions deleted or renamed?`,
+    );
+  }
+  const sites = {
+    "worker coupons.ts · evaluateCoupon": (v) => {
+      const verdict = couponModule.evaluateCoupon(
+        couponFromSpec(v.spec, COUPON_NOW),
+        couponContextFromSpec(v.spec, v.subtotal, v.delivery, COUPON_NOW),
+      );
+      return { reason: verdict.eligible ? "" : verdict.reason, discount: verdict.discountPaisa };
+    },
+    "browser cart-client.ts · undalEvaluateCoupon": (v) => {
+      const verdict = browser.undalEvaluateCoupon(
+        couponFromSpec(v.spec, COUPON_NOW),
+        v.subtotal,
+        v.delivery,
+        couponContextFromSpec(v.spec, v.subtotal, v.delivery, COUPON_NOW),
+      );
+      return { reason: verdict.eligible ? "" : verdict.reason, discount: verdict.discountPaisa };
+    },
+  };
+  let checked = 0;
+  for (const vector of vectors) {
+    for (const [site, evaluate] of Object.entries(sites)) {
+      const got = evaluate(vector);
+      if (got.discount !== vector.expect || got.reason !== vector.reason) {
+        results.push({
+          family: "coupons.eligibility",
+          site,
+          actual: `"${got.reason}" · ${got.discount}`,
+          expected: `"${vector.reason}" · ${vector.expect}`,
+          ok: false,
+        });
+      }
+      checked += 1;
+    }
+  }
+  summary.push({ family: "coupons.eligibility", vectors: vectors.length, sites: Object.keys(sites).length, checked });
+}
+
+summary.push(
+  run(
+    "coupons.window",
+    windowVectors(couponTest).map((v) => ({ ...v, expect: `${v.expect}|${v.from}|${v.to}|${v.minutes}` })),
+    {
+      "worker coupons.ts · withinDailyWindow": (v) =>
+        `${couponModule.withinDailyWindow(v.from, v.to, v.minutes)}|${v.from}|${v.to}|${v.minutes}`,
+      "browser cart-client.ts · withinWindow": (v) =>
+        `${browser.withinWindow(v.from, v.to, v.minutes)}|${v.from}|${v.to}|${v.minutes}`,
+    },
+    { minimum: 10 },
+  ),
+);
+
 summary.push(
   run(
     "validators.normalizeBdMobile",
@@ -818,6 +1123,15 @@ const sharedExpressions = [
   /Validators\.addressTitle\(/,
   /Validators\.addressDescription\(/,
   /Validators\.deliveryNote\(/,
+  // The coupon tables: the vector helpers are the rows, and the assertions
+  // inside them read the coupon functions this gate replays.
+  /assertDiscount\(/,
+  /assertCoupon\(/,
+  /assertWindow\(/,
+  /CouponMath\.discountPaisa\(/,
+  /CouponMath\.evaluate\(/,
+  /CouponMath\.withinDailyWindow\(/,
+  /verdict\.(discountPaisa|reason|eligible)\b/,
   // The composed test at the end of DistanceTest asserts on its own local `fee`.
   /fee in [\d_]+L\.\.[\d_]+L/,
   /assertEquals\(0L, fee % 100\)/,
@@ -827,6 +1141,7 @@ const sources = [
   ["MoneyTest.kt", moneyTest],
   ["DistanceTest.kt", distanceTest],
   ["ValidatorsTest.kt", validatorsTest],
+  ["CouponMathTest.kt", couponTest],
 ];
 const unclassified = [];
 for (const [name, source] of sources) {

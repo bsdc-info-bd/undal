@@ -42,18 +42,34 @@ class VendorChatListViewModel @Inject constructor(
         val loading: Boolean = true,
         val rows: List<Row> = emptyList(),
         val fromCache: Boolean = false,
-        val tracked: Int = 0
+        val tracked: Int = 0,
+        /**
+         * One sentence when a read behind this list failed. The list is allowed to
+         * be empty — a kitchen with no conversations is normal — so a failure has
+         * to be said out loud rather than left to look like "nothing to read".
+         */
+        val notice: String? = null
     )
 
     private val _state = MutableStateFlow(State())
     val state: StateFlow<State> = _state.asStateFlow()
+
+    /**
+     * The chat list runs two collectors from `init`, before anybody has tapped
+     * anything. An exception out of either is uncaught, and uncaught means the
+     * process dies — the kitchen's phone closing itself with no orders on screen
+     * and no reason given. Both carry this handler instead.
+     */
+    private val guard = com.undal.syl.app.core.util.UndalGuards.viewModel("reading the kitchen's chats") { message ->
+        _state.value = _state.value.copy(loading = false, notice = message)
+    }
 
     private val previews = MutableStateFlow<Map<String, Preview>>(emptyMap())
     private val orders = MutableStateFlow<List<VendorOrder>>(emptyList())
     private val trackers = mutableMapOf<String, Job>()
 
     init {
-        viewModelScope.launch {
+        viewModelScope.launch(guard) {
             vendorOrderRepo.observeWeek().collect { feed ->
                 orders.value = feed.orders
                 _state.value = _state.value.copy(loading = false, fromCache = feed.fromCache)
@@ -61,7 +77,7 @@ class VendorChatListViewModel @Inject constructor(
                 rebuild()
             }
         }
-        viewModelScope.launch {
+        viewModelScope.launch(guard) {
             previews.collect { rebuild() }
         }
     }
@@ -82,7 +98,7 @@ class VendorChatListViewModel @Inject constructor(
 
     private fun track(orderId: String) {
         if (trackers.containsKey(orderId)) return
-        trackers[orderId] = viewModelScope.launch {
+        trackers[orderId] = viewModelScope.launch(guard) {
             combine(
                 chatRepo.observeMessages(orderId),
                 chatRepo.vendorLastReadFlow(orderId)

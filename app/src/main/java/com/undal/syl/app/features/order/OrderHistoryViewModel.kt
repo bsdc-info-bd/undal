@@ -53,6 +53,19 @@ class OrderHistoryViewModel @Inject constructor(
 
     private val _state = MutableStateFlow(State())
     val state: StateFlow<State> = _state.asStateFlow()
+    /**
+     * Nothing this ViewModel does may end the process.
+     *
+     * An exception that escapes a `viewModelScope` job is uncaught, and Android's
+     * answer to an uncaught exception is to kill the app — which the person
+     * experiences as the app vanishing a few seconds after it opened, then the
+     * crash guard reopening it, then the home screen. Every coroutine here carries
+     * this handler, so a failed read becomes one sentence where the screen already
+     * shows messages.
+     */
+    private val guard = com.undal.syl.app.core.util.UndalGuards.viewModel("reading your orders") { message ->
+        _state.value = _state.value.copy(notice = message)
+    }
 
     private val visibleFlow = MutableStateFlow(PAGE_SIZE)
     private val reorderingFlow = MutableStateFlow<String?>(null)
@@ -60,7 +73,7 @@ class OrderHistoryViewModel @Inject constructor(
     private val reorderedFlow = MutableStateFlow(0)
 
     init {
-        viewModelScope.launch {
+        viewModelScope.launch(guard) {
             combine(
                 orderRepo.observeMyOrders(MAX_WINDOW),
                 visibleFlow,
@@ -90,7 +103,7 @@ class OrderHistoryViewModel @Inject constructor(
     fun reorder(orderId: String) {
         if (reorderingFlow.value != null) return
         reorderingFlow.value = orderId
-        viewModelScope.launch {
+        viewModelScope.launch(guard) {
             val snapshot = menuRepo.observeMenu().first()
             if (!snapshot.loaded) {
                 noticeFlow.value = "The menu has not loaded yet. Check your connection and try again."

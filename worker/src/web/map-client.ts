@@ -105,6 +105,7 @@ export const MAP_SCRIPT = `
    *   onPin(point, info)   called while the map settles; info carries the address
    *   onConfirm(point, info)  called once, when the customer ticks the pin
    *   confirmLabel text for the tick button
+   *   locateLabel  text for the labelled "use my location" button under the map
    */
   function undalMap(options) {
     var host = document.getElementById(options.mount);
@@ -122,6 +123,8 @@ export const MAP_SCRIPT = `
     var geocodeTimer = null;
     var frame = null;
     var dragging = null;
+    var locating = false;
+    var locateLabel = options.locateLabel || "Use my current location";
 
     host.innerHTML = "";
     host.classList.add("undal-map-host");
@@ -173,12 +176,23 @@ export const MAP_SCRIPT = `
     tick.className = "button undal-map-tick";
     tick.textContent = options.confirmLabel || "Tick this pin as my address";
 
+    // The locate control exists twice on purpose. The glyph in the corner is for
+    // the customer who already knows what it does; this one is for everybody
+    // else, because a symbol with no words is an option nobody finds — and
+    // "the web has no way to get my location" is what that reads as. Same
+    // function, one of them labelled.
+    var locateButton = document.createElement("button");
+    locateButton.type = "button";
+    locateButton.className = "button ghost undal-map-locate";
+    locateButton.textContent = options.locateLabel || "Use my current location";
+
     frame_.appendChild(tiles);
     frame_.appendChild(overlay);
     frame_.appendChild(pin);
     frame_.appendChild(controls);
     host.appendChild(frame_);
     host.appendChild(readout);
+    host.appendChild(locateButton);
     host.appendChild(tick);
 
     function width() { return frame_.clientWidth || 320; }
@@ -305,18 +319,49 @@ export const MAP_SCRIPT = `
         .catch(function () { /* no name is not an error: the pin still works */ });
     }
 
+    /**
+     * One GPS fix, with the outcome said out loud either way.
+     *
+     * A fix is never the address: it lands where the phone is, which in Sylhet is
+     * routinely the wrong side of a lane. So the map moves to it, the pin stays
+     * unticked, and the customer is told to move the map and then tick it — the
+     * tick is what makes the point an address.
+     */
     function locate() {
+      if (locating) return;
       if (!navigator.geolocation) {
-        readout.textContent = "This browser cannot read your location. Drag the map to your door instead.";
+        readout.textContent = "This browser cannot read your location. Drag the map to your door instead \u2014 the pin works either way.";
         return;
       }
-      readout.textContent = "Reading your position\\u2026";
+      locating = true;
+      locateButton.disabled = true;
+      locateButton.textContent = "Reading your position\u2026";
+      readout.textContent = "Reading your position\u2026";
       navigator.geolocation.getCurrentPosition(function (fix) {
+        locating = false;
+        locateButton.disabled = false;
+        locateButton.textContent = locateLabel;
+        var metres = Math.round(fix.coords.accuracy || 0);
         setPin(fix.coords.latitude, fix.coords.longitude, Math.max(zoom, 16));
+        readout.textContent = (metres > 0
+          ? "Found you, about " + metres + " m accuracy. "
+          : "Found you. ") +
+          "Move the map until the pin is on your door, then tick it.";
       }, function (error) {
-        readout.textContent = "Location refused (" + error.message + "). Drag the map to your door instead.";
-      }, { enableHighAccuracy: true, timeout: 12000, maximumAge: 60000 });
+        locating = false;
+        locateButton.disabled = false;
+        locateButton.textContent = locateLabel;
+        // PERMISSION_DENIED and POSITION_UNAVAILABLE both arrive as a number and a
+        // message that varies by browser; the customer gets one sentence either
+        // way, and the way forward is the same: drag the map.
+        var why = error && error.code === 1 ? "Location permission is off for this site"
+          : error && error.code === 3 ? "The phone took too long to get a fix"
+          : "Could not read your location";
+        readout.textContent = why + ". Drag the map to your door instead \u2014 the pin works either way.";
+      }, { enableHighAccuracy: true, timeout: 15000, maximumAge: 30000 });
     }
+
+    locateButton.addEventListener("click", function () { locate(); });
 
     tick.addEventListener("click", function () {
       confirmed = true;
@@ -419,6 +464,8 @@ touch-action:none;cursor:grab;outline-offset:-3px}
 font-size:1.25rem;font-weight:700;line-height:1;cursor:pointer;box-shadow:0 4px 14px #20392c14}
 .undal-map-button:active{transform:scale(.96)}
 .undal-map-readout{font-size:.85rem;color:var(--muted);margin:10px 2px;line-height:1.5}
+.undal-map-locate{margin:0 0 8px;width:100%;min-height:44px}
+.undal-map-locate:disabled{opacity:.6}
 .undal-map-tick{margin:0;width:100%}
 .undal-map-tick.ticked{background:#10432c}
 .undal-map-attribution{font-size:.72rem;color:var(--muted);margin:6px 2px 0}

@@ -415,6 +415,14 @@ service cloud.firestore {
     // ======================================================================
     // counters/orders — the shortId generator (atomic +1 inside checkout)
     // ======================================================================
+    // One document per Dhaka date: five-minute online/offline samples and the
+    // day's outage windows, written by the Worker's presence sweep and read by
+    // the kitchen's dashboard for its uptime analytics. Customers never read it.
+    match /presenceDays/{dateKey} {
+      allow read: if isVendor();
+      allow write: if false;
+    }
+
     match /counters/{counterId} {
       allow read: if signedIn();
       allow create: if signedIn()

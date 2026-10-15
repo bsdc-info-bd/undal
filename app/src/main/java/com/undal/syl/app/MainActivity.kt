@@ -40,6 +40,12 @@ class MainActivity : ComponentActivity() {
 
     private var deepLink by mutableStateOf<String?>(null)
 
+    /**
+     * Set when this activity was launched by the crash guard after a crash, so
+     * the root can say what happened instead of pretending nothing did.
+     */
+    private var recoveredFromCrash by mutableStateOf(false)
+
     override fun onCreate(savedInstanceState: Bundle?) {
         installSplashScreen()
         enableEdgeToEdge()
@@ -47,17 +53,26 @@ class MainActivity : ComponentActivity() {
 
         AlarmChannels.ensureChannels(this)
         deepLink = extractDeepLink(intent)
+        recoveredFromCrash = com.undal.syl.app.core.util.UndalCrashGuard.isRecoveryLaunch(intent)
         showOverLockScreen()
 
         setContent {
             UndalTheme {
-                UndalRoot(initialDeepLink = deepLink)
+                UndalRoot(initialDeepLink = deepLink, recoveredFromCrash = recoveredFromCrash)
             }
         }
 
         // "The app is open" is the first frame on the glass, not the first line of
         // code: this is where the cold-start trace from UndalApp ends (P-025).
         Choreographer.getInstance().postFrameCallback { telemetry.endAppStart() }
+
+        // The app got through its opening. Telling the crash guard so is what
+        // stops a crash an hour later from being counted against the startup
+        // budget that a broken cold start would have used.
+        window.decorView.postDelayed(
+            { com.undal.syl.app.core.util.UndalCrashGuard.markSuccessfulStart(this) },
+            com.undal.syl.app.core.util.CrashRecoveryPolicy.SUCCESSFUL_START_MILLIS
+        )
     }
 
     override fun onNewIntent(intent: Intent) {
@@ -74,16 +89,34 @@ class MainActivity : ComponentActivity() {
     }
 
     /**
-     * A full-screen-intent launch (or a deep link that carries an order) may reach
-     * a locked phone. `setShowWhenLocked` plus a keyguard dismissal request makes
-     * the order visible immediately; Android still shows the lock screen for
-     * anything that is not an alarm-class alert, which is the correct behaviour
-     * for a customer status update.
+     * A ringing order may reach a locked phone, and then it has to be *on* that
+     * phone rather than behind it.
+     *
+     * It used to do this for every launch, which meant a customer's Undal drew
+     * itself over their lock screen and turned their screen on whenever the
+     * activity was recreated — a notification arriving while the phone was locked
+     * in a pocket was enough. The lock screen is only ever bypassed now for the
+     * one thing that justifies it: an order this phone is ringing for.
      */
     private fun showOverLockScreen() {
+        // Two ways to know an order is what woke this phone. The controller is
+        // the truth when the alert service is in this process already; the deep
+        // link is the truth when a full-screen intent started a *fresh* process,
+        // where the controller has not been written to yet — which is exactly the
+        // killed-app case the alert ladder exists for, and the one where the lock
+        // screen most has to get out of the way.
+        val ringing = OrderAlertController.ringing.value != null ||
+            deepLink?.startsWith("vendor/order/") == true
+        if (!ringing) {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
+                runCatching { setShowWhenLocked(false) }
+                runCatching { setTurnScreenOn(false) }
+            }
+            return
+        }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
-            setShowWhenLocked(true)
-            setTurnScreenOn(true)
+            runCatching { setShowWhenLocked(true) }
+            runCatching { setTurnScreenOn(true) }
         } else {
             @Suppress("DEPRECATION")
             window.addFlags(
@@ -92,7 +125,7 @@ class MainActivity : ComponentActivity() {
             )
         }
         val keyguard = getSystemService(Context.KEYGUARD_SERVICE) as? KeyguardManager
-        if (keyguard?.isKeyguardLocked == true && OrderAlertController.ringing.value != null) {
+        if (keyguard?.isKeyguardLocked == true) {
             runCatching { keyguard.requestDismissKeyguard(this, null) }
         }
     }
@@ -115,6 +148,13 @@ class MainActivity : ComponentActivity() {
 
     companion object {
         const val EXTRA_DEEP_LINK = "undal.deepLink"
+
+        /**
+         * Set by [com.undal.syl.app.core.util.UndalCrashGuard] when this launch is
+         * the app reopening after a guarded crash. The activity reads it once and
+         * shows the sentence; it is never written by anything else.
+         */
+        const val EXTRA_RECOVERED = "undal.recovered"
 
         /**
          * Builds the intent every notification, alert action and QR code uses.

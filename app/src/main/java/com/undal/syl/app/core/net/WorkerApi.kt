@@ -93,6 +93,36 @@ class WorkerApi @Inject constructor(
             }
     }
 
+    /**
+     * The public coupon board (`GET /api/store/coupons`).
+     *
+     * The same list the web storefront renders and the same list the Worker
+     * prices orders against, so a customer sees the identical discount in the
+     * app, in the browser and on the receipt. Public and cached for a minute: a
+     * promotion is not a secret, an outage should not break a basket, and a code
+     * that is applied by itself has to be readable before anyone signs in.
+     *
+     * Never throws — an empty board is a valid answer, and the checkout then
+     * prices the basket with no coupon rather than failing.
+     */
+    suspend fun storeCoupons(): Result<JSONObject> = runCatching {
+        val request = Request.Builder()
+            .url("$baseUrl/api/store/coupons")
+            .header("accept", "application/json")
+            .get()
+            .build()
+        client.newBuilder()
+            .callTimeout(12, TimeUnit.SECONDS)
+            .build()
+            .newCall(request)
+            .execute()
+            .use { response ->
+                val body = response.body?.string().orEmpty()
+                if (!response.isSuccessful) error("Coupon board answered HTTP ${response.code}")
+                JSONObject(body)
+            }
+    }
+
     data class CleanupBatch(
         val before: String,
         val orders: Int,

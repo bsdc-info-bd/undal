@@ -562,13 +562,71 @@ answered on any other kitchen device (rung 8). Dismissing the notification does
 not stop it — it is `setOngoing(true)` and `setAutoCancel(false)` — and neither
 does a duplicate push, which only refreshes the text.
 
+### The ring watches itself
+
+A `MediaPlayer` can stop without telling anybody: the audio server restarts, a
+ROM reclaims the session, the decoder gives up on the file, a descriptor is
+withdrawn. The order is still unanswered, the notification is still on the lock
+screen — and the kitchen is silent, which is the worst of the three states,
+because it *looks* handled. Nothing about that failure is detectable from
+outside the process, so the service checks on itself:
+
+```kotlin
+private val soundWatchdog: Runnable = object : Runnable {
+    override fun run() {
+        if (waiting.isEmpty()) return
+        keepRinging()                                   // is anything actually making noise?
+        handler.postDelayed(this, SOUND_CHECK_MILLIS)    // ten seconds
+    }
+}
+
+private fun keepRinging() {
+    if (waiting.isEmpty()) return
+    val playing = player?.isPlaying == true
+    if (ringtone == null && !playing) {
+        player?.let { dead -> runCatching { dead.release() } }   // a dead player still
+        player = null                                            // holds an audio session
+        if (soundFailures < MAX_BUNDLED_ATTEMPTS) startSound()
+        else if (now - lastFallbackAtMillis >= SOUND_CHECK_MILLIS) playSystemRinger()
+    }
+    if ((player?.isPlaying == true || ringtone != null) && vibrator == null) startVibration()
+}
+```
+
+`keepRinging()` is called when the head of the queue changes and every ten
+seconds while anything is waiting. A player that is playing — or the fallback
+ringtone the replay loop owns — is left completely alone: nothing here may
+stutter a healthy tone, because that would be audible.
+
+**Two, then the fallback.** The failure budget exists so that a device that
+genuinely cannot decode the file goes quiet instead of going *busy*: the first
+failure is usually transient (an audio server restarting), the second is usually
+the device telling the truth. After [MAX_BUNDLED_ATTEMPTS] the phone's own alarm
+tone takes over, and that is retried no faster than once per tick. A rebuild loop
+on the main thread would turn "no order sound" into "no app".
+
+**Ten seconds** is the point where a silent phone is still a phone somebody will
+pick up, and the check costs two field reads. The attempt counter is reset when a
+fresh ring starts, so one bad night does not push the next order straight to the
+fallback.
+
+**What this cannot fix, honestly:** a phone muted at the hardware level, Do Not
+Disturb with the kitchen's own exception missing, or an alarm stream that the OS
+refuses to route all mute the ring regardless of who is running. Those are the
+rows in the device acceptance matrix below (rung 11), and the diagnostics screen
+says which of them is in the way instead of pretending the phone is armed.
+
 The queue survives the process:
 
 - `waiting` is a `LinkedHashMap`, so with two orders the head stays the oldest
   unanswered one and the second is queued rather than substituted;
 - the queue is written to `SharedPreferences("order_alert_queue")` after
   foreground promotion and restored on a sticky restart, for the same signed-in
-  uid only and within 15 minutes of the last save;
+  uid only and within 15 minutes of the last save. A null-intent restart is a
+  real ring, not a broken one: `onStartCommand` restores the queue and every
+  restored order goes through the same `beginAlert` — foreground, player,
+  vibration, notification, live watcher and watchdog — so a phone whose process
+  was killed mid-ring comes back *ringing*, not merely notified;
 - `ring()` is idempotent per order id, which matters because three routes
   (device token, topic, re-alert sweep) can deliver the same order;
 - `silence(orderId)` corrects the saved queue even when the service is not
@@ -725,6 +783,63 @@ Queue restoration after a reboot is not guaranteed — Android decides whether t
 restart a sticky service — and the saved queue has a 15-minute expiry precisely so
 a phone that was off overnight does not wake up ringing for an order the kitchen
 already handled.
+
+### The watchdog: when Android kills the app anyway
+
+`stopWithTask="false"` and `START_STICKY` cover the polite half of Android. The
+other half is a battery cleaner, a low-memory kill, or an owner who swiped Undal
+off the recents list — and the kitchen then looks armed while it is not:
+
+| file | what it is |
+| --- | --- |
+| `core/background/AlertWatchdog.kt` | an `AlarmManager` alarm the *system* holds for Undal |
+| `core/background/AlertWatchdogReceiver.kt` | what the alarm wakes up: rebuilt services, or a warning |
+
+```kotlin
+// AlertWatchdog
+fun arm(context: Context, delayMillis: Long = WATCHDOG_MILLIS)   // 9 min
+fun cancel(context: Context)                                     // any sign-out
+fun isArmed(context: Context): Boolean                           // the diagnostics row
+const val SWIPE_GRACE_MILLIS = 2 * 60 * 1000L                     // armed from onTaskRemoved
+
+// AlertWatchdogReceiver
+if (!AlertWatchdog.isKitchenDevice()) { AlertWatchdog.cancel(app); return }
+AlarmChannels.ensureChannels(app)
+PresenceHeartbeat.startService(app)
+KitchenWatchService.start(app)
+AlertWatchdog.arm(app)   // the chain continues whether or not this pass worked
+```
+
+**Why an alarm and not a service.** A service dies with the process; an alarm is
+held by the system, addressed to the package, and delivered by handing the app a
+fresh process. It is the only one of the two that survives the kill this section
+is about.
+
+**Why nine minutes.** The Worker's rule is that ten minutes of silence pauses an
+open kitchen, so a watchdog on a slower cadence would be watching from behind.
+Nine minutes is also the shortest interval Android still delivers to a Dozing
+phone (a woken app gets one precise alarm per nine minutes) — asking for less
+would buy nothing and cost battery.
+
+**What the owner experiences.** The phone is swiped away or killed; within nine
+minutes it has rebuilt its own order watcher and heartbeat, without anybody
+touching it. If the pause the Worker applied was shorter than thirty minutes the
+store reopens itself and a push says so; if it was longer, or outside the
+kitchen's hours, the owner is asked to confirm instead — see `crons/presence.ts`.
+
+**When it cannot work.** A ROM that refuses `setExactAndAllowWhileIdle`, or an
+exact-alarm permission the owner never granted, leaves the alarm inexact: it
+still fires, just not to the minute. If Android refuses the foreground-service
+start when the alarm fires, the receiver posts a visible *"Undal could not
+restart its alerts"* notification rather than failing silently, and the alarm is
+re-armed anyway. The diagnostics screen reports all of this in words —
+`AlertWatchdog.describe()` — with its own repair action, so a phone that is
+quietly unarmed says so on the screen the owner already checks.
+
+**On a customer phone** the alarm is never kept: the receiver checks the vendor
+claim on delivery and cancels itself, and every sign-out path
+(`UndalRootViewModel`, `VendorDashboardViewModel`, `ProfileViewModel`) stops the
+watcher, the alert and the watchdog together.
 
 ---
 

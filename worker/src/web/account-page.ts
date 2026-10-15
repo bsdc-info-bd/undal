@@ -17,6 +17,8 @@
 import type { Env } from "../env";
 import { escapeHtml } from "../util/http";
 import { CART_SCRIPT, PROFILE_STORAGE_KEY, SESSION_STORAGE_KEY } from "./cart-client";
+import type { CouponBoardEntry } from "./coupons";
+import { readCookieCart, readCookieSession, type CookieCart } from "./forms";
 import { MAP_SCRIPT } from "./map-client";
 import { renderPage } from "./layout";
 import { canonicalUrl, faqJsonLd, jsonLdScript, organizationJsonLd } from "./seo";
@@ -48,6 +50,10 @@ function shell(options: {
   path: string;
   store?: WebStoreConfig | null;
   jsonLd?: unknown[];
+  /** The kitchen's automatic coupons: the basket applies the best one by itself. */
+  coupons?: CouponBoardEntry[];
+  /** The basket a customer built without a script, from its cookie. */
+  serverCart?: CookieCart | null;
 }): Response {
   return renderPage({
     title: options.title,
@@ -69,6 +75,8 @@ window.UNDAL_STORE = ${JSON.stringify({
       lng: options.store?.storeLng ?? 0,
       name: options.store?.storeName ?? "",
     }).replace(/</g, "\\u003c")};
+window.UNDAL_COUPONS = ${JSON.stringify(options.coupons ?? []).replace(/</g, "\\u003c")};
+window.UNDAL_SERVER_CART = ${JSON.stringify(options.serverCart ?? null).replace(/</g, "\\u003c")};
 ${CART_SCRIPT}
 ${options.script ?? ""}
 </script>`,
@@ -104,55 +112,91 @@ export async function handleLoginPage(env: Env, request: Request): Promise<Respo
     );
   }
   const store = (await webMenu(env).then((menu) => menu.store).catch(() => null)) ?? null;
+  const menu = await webMenu(env).catch(() => null);
+  const carts = readCookieCart(request);
+
+  // What a form post came back with, and what it had in its fields: a phone with
+  // no script gets an answer on the page it lands on, with its own typing kept.
+  const url = new URL(request.url);
+  const notice = (url.searchParams.get("notice") ?? "").slice(0, 240);
+  const noticeKind = url.searchParams.get("kind") === "ok" ? "ok" : "error";
+  const values = {
+    email: (url.searchParams.get("v_email") ?? "").slice(0, 160),
+    name: (url.searchParams.get("v_name") ?? "").slice(0, 80),
+    phone: (url.searchParams.get("v_phone") ?? "").slice(0, 24),
+  };
+  const noticeBlock = notice
+    ? `<div class="notice ${noticeKind}" role="status">${escapeHtml(notice)}</div>`
+    : "";
+  const cookieSession = readCookieSession(request);
+  const signedInLine = cookieSession
+    ? `<div class="notice ok">This browser is signed in as ${escapeHtml(cookieSession.email || "your Undal account")}. <a href="/account">Open your account</a>.</div>`
+    : "";
 
   const body = `
+${noticeBlock}
+${signedInLine}
 <section class="card">
   <span class="eyebrow">One account, two doors</span>
   <h2>Your Undal account</h2>
   <p class="muted">The same email and password works in the Undal app and here. An account is optional —
   a guest can order without one — but it is what keeps your name, your number and your pinned address
   from being typed again, and what puts a web order into the history the app shows.</p>
-  <div class="tabs" role="tablist" aria-label="Account">
+  <div class="tabs js" style="display:none" role="tablist" aria-label="Account">
     <button type="button" role="tab" id="tab-signin" aria-controls="panel-signin" aria-selected="true" class="active" data-panel="signin">Sign in</button>
     <button type="button" role="tab" id="tab-signup" aria-controls="panel-signup" aria-selected="false" data-panel="signup">Create an account</button>
     <button type="button" role="tab" id="tab-reset" aria-controls="panel-reset" aria-selected="false" data-panel="reset">Forgotten password</button>
   </div>
 
   <div id="panel-signin" role="tabpanel" aria-labelledby="tab-signin" data-panel="signin">
-    <label for="signin-email">Email address</label>
-    <input id="signin-email" type="email" autocomplete="email" inputmode="email" placeholder="you@example.com">
+    <h3>Sign in</h3>
+    <form method="post" action="/login">
+      <input type="hidden" name="mode" value="signin">
+      <input type="hidden" name="next" value="/account">
+      <label for="signin-email">Email address</label>
+    <input id="signin-email" name="email" type="email" autocomplete="email" inputmode="email" placeholder="you@example.com" value="${escapeHtml(values.email)}">
     <label for="signin-password">Password</label>
-    <input id="signin-password" type="password" autocomplete="current-password" placeholder="Your Undal password">
-    <div id="signin-result" aria-live="polite"></div>
-    <button class="button" id="signin-button" type="button">Sign in</button>
+    <input id="signin-password" name="password" type="password" autocomplete="current-password" placeholder="Your Undal password">
+      <div id="signin-result" aria-live="polite"></div>
+      <button class="button" id="signin-button" type="submit">Sign in</button>
+    </form>
     <a class="button secondary" href="/checkout">Continue as a guest</a>
   </div>
 
-  <div id="panel-signup" role="tabpanel" aria-labelledby="tab-signup" data-panel="signup" hidden>
-    <label for="signup-name">Full name</label>
-    <input id="signup-name" autocomplete="name" placeholder="Rahim Uddin">
+  <div id="panel-signup" role="tabpanel" aria-labelledby="tab-signup" data-panel="signup">
+    <h3>Create an account</h3>
+    <form method="post" action="/login">
+      <input type="hidden" name="mode" value="signup">
+      <input type="hidden" name="next" value="/checkout">
+      <label for="signup-name">Full name</label>
+    <input id="signup-name" name="name" autocomplete="name" placeholder="Rahim Uddin" value="${escapeHtml(values.name)}">
     <p class="field-note">Letters, three or more — this is the name the kitchen calls out.</p>
     <label for="signup-phone">Mobile number</label>
-    <input id="signup-phone" inputmode="numeric" autocomplete="tel" placeholder="01712345678">
+    <input id="signup-phone" name="phone" inputmode="numeric" autocomplete="tel" placeholder="01712345678" value="${escapeHtml(values.phone)}">
     <p class="field-note">A Bangladeshi mobile. The rider calls it; it is never shown to anybody else.</p>
     <label for="signup-email">Email address</label>
-    <input id="signup-email" type="email" autocomplete="email" inputmode="email" placeholder="you@example.com">
+    <input id="signup-email" name="email" type="email" autocomplete="email" inputmode="email" placeholder="you@example.com" value="${escapeHtml(values.email)}">
     <label for="signup-password">Password</label>
-    <input id="signup-password" type="password" autocomplete="new-password" placeholder="At least six characters">
+    <input id="signup-password" name="password" type="password" autocomplete="new-password" placeholder="At least six characters">
     <div class="password-meter" aria-hidden="true"><span id="signup-meter"></span></div>
     <p class="field-note" id="signup-strength">Six characters at least, and not only numbers.</p>
     <label for="signup-confirm">Type the password again</label>
-    <input id="signup-confirm" type="password" autocomplete="new-password" placeholder="The same password">
-    <div id="signup-result" aria-live="polite"></div>
-    <button class="button" id="signup-button" type="button">Create my Undal account</button>
+    <input id="signup-confirm" name="confirm" type="password" autocomplete="new-password" placeholder="The same password">
+      <div id="signup-result" aria-live="polite"></div>
+      <button class="button" id="signup-button" type="submit">Create my Undal account</button>
+    </form>
     <p class="smallprint">Your password goes once, over HTTPS, to Firebase Authentication. This site never stores it and never asks for it twice.</p>
   </div>
 
-  <div id="panel-reset" role="tabpanel" aria-labelledby="tab-reset" data-panel="reset" hidden>
-    <label for="reset-email">The email address on your Undal account</label>
-    <input id="reset-email" type="email" autocomplete="email" inputmode="email" placeholder="you@example.com">
-    <div id="reset-result" aria-live="polite"></div>
-    <button class="button" id="reset-button" type="button">Email me a reset link</button>
+  <div id="panel-reset" role="tabpanel" aria-labelledby="tab-reset" data-panel="reset">
+    <h3>Forgotten password</h3>
+    <form method="post" action="/login">
+      <input type="hidden" name="mode" value="reset">
+      <label for="reset-email">The email address on your Undal account</label>
+    <input id="reset-email" name="email" type="email" autocomplete="email" inputmode="email" placeholder="you@example.com" value="${escapeHtml(values.email)}">
+      <div id="reset-result" aria-live="polite"></div>
+      <button class="button" id="reset-button" type="submit">Email me a reset link</button>
+    </form>
     <p class="smallprint">The link comes from Firebase and expires in about an hour. If the address has no account, nothing arrives and nothing is revealed about it.</p>
   </div>
 
@@ -172,10 +216,9 @@ export async function handleLoginPage(env: Env, request: Request): Promise<Respo
 (function () {
   var SESSION = ${JSON.stringify(SESSION_STORAGE_KEY)};
   var PROFILE = ${JSON.stringify(PROFILE_STORAGE_KEY)};
-  var tabs = document.querySelectorAll(".tabs [role=tab]");
-  var panels = document.querySelectorAll("[role=tabpanel]");
 
   function select(name) {
+    if (!name) name = "signin";
     for (var i = 0; i < tabs.length; i++) {
       var active = tabs[i].getAttribute("data-panel") === name;
       tabs[i].setAttribute("aria-selected", active ? "true" : "false");
@@ -186,18 +229,39 @@ export async function handleLoginPage(env: Env, request: Request): Promise<Respo
       else panels[j].setAttribute("hidden", "");
     }
   }
-  for (var i = 0; i < tabs.length; i++) {
-    tabs[i].addEventListener("click", function () { select(this.getAttribute("data-panel")); });
+  // The tabs are a convenience on top of three panels that read perfectly well
+  // without a script: with no JavaScript every form below is simply on the page,
+  // in order, and each of them posts.
+  try {
+    var tabs = document.querySelectorAll(".tabs [role=tab]");
+    for (var i = 0; i < tabs.length; i++) {
+      tabs[i].addEventListener("click", function () { select(this.getAttribute("data-panel")); });
+      tabs[i].addEventListener("keydown", function (event) {
+        if (event.key === "Enter" || event.key === " ") { event.preventDefault(); select(this.getAttribute("data-panel")); }
+      });
+    }
+    if (window.location.hash === "#create") select("signup");
+    if (window.location.hash === "#reset") select("reset");
+    // A form that came back with an error reopens the tab it was posted from.
+    var wanted = /[?&]tab=([a-z]+)/.exec(window.location.search || "");
+    if (wanted) select(wanted[1]);
+  } catch (tabError) {
+    // No tabs, no problem: every panel below is on the page and submittable.
   }
-  if (window.location.hash === "#create") select("signup");
-  if (window.location.hash === "#reset") select("reset");
 
+  /** A field's text, or "" — one missing box must never stop the other two forms. */
+  function field(id) {
+    var box = document.getElementById(id);
+    return box && typeof box.value === "string" ? box.value.trim() : "";
+  }
   function say(host, text, kind) {
     var notice = document.createElement("div");
     notice.className = "notice " + (kind || "");
     notice.setAttribute("role", kind === "error" ? "alert" : "status");
     notice.textContent = text;
-    host.replaceChildren(notice);
+    // Emptying a node without replaceChildren, which an older WebView misses.
+    while (host.firstChild) host.removeChild(host.firstChild);
+    host.appendChild(notice);
   }
   function busy(button, on, label) {
     button.disabled = !!on;
@@ -219,10 +283,15 @@ export async function handleLoginPage(env: Env, request: Request): Promise<Respo
 
   // ---- sign in -------------------------------------------------------------
   var signIn = document.getElementById("signin-button");
-  signIn.addEventListener("click", function () {
+  // The form element is the mechanism and fetch is the upgrade: the button sits
+  // inside a real form that posts to /login, so the tap signs in even if this
+  // whole block never runs; it is intercepted only to keep the answer on page.
+  var signInForm = signIn ? signIn.form : null;
+  if (signInForm) signInForm.addEventListener("submit", function (event) {
+    event.preventDefault();
     var host = document.getElementById("signin-result");
-    var email = document.getElementById("signin-email").value.trim();
-    var password = document.getElementById("signin-password").value;
+    var email = field("signin-email");
+    var password = field("signin-password");
     if (email.length < 5 || password.length < 6) {
       say(host, "Enter the email address and password you use in the Undal app.", "error");
       return;
@@ -267,7 +336,8 @@ export async function handleLoginPage(env: Env, request: Request): Promise<Respo
   var meter = document.getElementById("signup-meter");
   var strengthNote = document.getElementById("signup-strength");
   var words = ["Too short", "Six characters at least, and not only numbers.", "That works.", "Strong.", "Very strong."];
-  document.getElementById("signup-password").addEventListener("input", function () {
+  var signupPassword = document.getElementById("signup-password");
+  if (signupPassword) signupPassword.addEventListener("input", function () {
     var score = strength(this.value);
     meter.style.width = (score * 25) + "%";
     meter.style.background = score <= 1 ? "#b3261e" : score === 2 ? "#d97930" : "#165b3b";
@@ -275,13 +345,15 @@ export async function handleLoginPage(env: Env, request: Request): Promise<Respo
   });
 
   var signUp = document.getElementById("signup-button");
-  signUp.addEventListener("click", function () {
+  var signUpForm = signUp ? signUp.form : null;
+  if (signUpForm) signUpForm.addEventListener("submit", function (event) {
+    event.preventDefault();
     var host = document.getElementById("signup-result");
-    var name = document.getElementById("signup-name").value.trim();
-    var phone = document.getElementById("signup-phone").value.trim();
-    var email = document.getElementById("signup-email").value.trim();
-    var password = document.getElementById("signup-password").value;
-    var confirm = document.getElementById("signup-confirm").value;
+    var name = field("signup-name");
+    var phone = field("signup-phone");
+    var email = field("signup-email");
+    var password = field("signup-password");
+    var confirm = field("signup-confirm");
     if (!window.undalUsableName(name)) { say(host, "Please write your full name — letters, three or more.", "error"); return; }
     if (!window.undalUsablePhone(phone)) { say(host, "Write a Bangladeshi mobile number like 01712345678.", "error"); return; }
     if (email.length < 5 || email.indexOf("@") < 1) { say(host, "That email address is missing something.", "error"); return; }
@@ -317,9 +389,11 @@ export async function handleLoginPage(env: Env, request: Request): Promise<Respo
 
   // ---- reset ---------------------------------------------------------------
   var reset = document.getElementById("reset-button");
-  reset.addEventListener("click", function () {
+  var resetForm = reset ? reset.form : null;
+  if (resetForm) resetForm.addEventListener("submit", function (event) {
+    event.preventDefault();
     var host = document.getElementById("reset-result");
-    var email = document.getElementById("reset-email").value.trim();
+    var email = field("reset-email");
     if (email.length < 5) { say(host, "Write the email address on your Undal account.", "error"); return; }
     busy(reset, true, "Sending the link…");
     fetch("/api/account/reset", {
@@ -351,6 +425,8 @@ export async function handleLoginPage(env: Env, request: Request): Promise<Respo
     origin,
     path: "/login",
     store,
+    coupons: menu?.coupons ?? [],
+    serverCart: carts,
     jsonLd: [organizationJsonLd(origin, store), faqJsonLd(origin, store)],
   });
 }
@@ -366,7 +442,9 @@ export async function handleAccountPage(env: Env, request: Request): Promise<Res
       "This site has not been given the Firebase key that talks to your account yet. The Undal app manages it as usual, and a guest order here works without one.",
     );
   }
-  const store = (await webMenu(env).then((menu) => menu.store).catch(() => null)) ?? null;
+  const menu = await webMenu(env).catch(() => null);
+  const store = menu?.store ?? null;
+  const carts = readCookieCart(request);
   const storePin = { lat: store?.storeLat ?? 0, lng: store?.storeLng ?? 0, radiusKm: store?.radiusKm ?? 0 };
 
   const body = `
@@ -483,12 +561,13 @@ export async function handleAccountPage(env: Env, request: Request): Promise<Res
 
   function say(host, text, kind) {
     if (!host) return;
-    if (!text) { host.replaceChildren(); return; }
+    while (host.firstChild) host.removeChild(host.firstChild);
+    if (!text) return;
     var notice = document.createElement("div");
     notice.className = "notice " + (kind || "");
     notice.setAttribute("role", kind === "error" ? "alert" : "status");
     notice.textContent = text;
-    host.replaceChildren(notice);
+    host.appendChild(notice);
   }
   function busy(button, on, label) {
     if (!button) return;
@@ -520,10 +599,36 @@ export async function handleAccountPage(env: Env, request: Request): Promise<Res
   }
 
   var account = window.undalAccount ? window.undalAccount() : null;
-  if (!account) {
+
+  /**
+   * A session this tab does not have but the browser does: signing in through
+   * the plain form on a phone with no script leaves the session in an HttpOnly
+   * cookie, and this is where the scripted page picks it up. One cookie, both
+   * halves of the site, no surprise sign-outs.
+   */
+  function adoptCookieSession() {
+    if (window.undalHasAccount && window.undalHasAccount()) return Promise.resolve(window.undalAccount());
+    return fetch("/api/account/session", { headers: { accept: "application/json" } })
+      .then(function (response) { return response.ok ? response.json() : null; })
+      .then(function (payload) {
+        if (!payload || !payload.ok || !payload.idToken) return null;
+        window.undalSaveAccount(payload);
+        return window.undalAccount();
+      })
+      .catch(function () { return null; });
+  }
+
+  function signedOut() {
     document.getElementById("account-heading").textContent = "You are not signed in";
     document.getElementById("account-subheading").textContent = "This tab has no Undal session. Sign in, or order as a guest — both work.";
     document.getElementById("account-signed-out").removeAttribute("hidden");
+  }
+
+  if (!account) {
+    adoptCookieSession().then(function (adopted) {
+      if (!adopted) { signedOut(); return; }
+      window.location.reload();
+    });
     return;
   }
   document.getElementById("account-body").removeAttribute("hidden");
@@ -573,10 +678,15 @@ export async function handleAccountPage(env: Env, request: Request): Promise<Res
       });
   });
 
+  /** Empties a node the long way: an older WebView has no replaceChildren. */
+  function clearNode(node) {
+    while (node.firstChild) node.removeChild(node.firstChild);
+  }
+
   // ---- addresses -----------------------------------------------------------
   var list = document.getElementById("address-list");
   function renderAddresses(addresses) {
-    list.replaceChildren();
+    clearNode(list);
     if (!addresses.length) {
       var empty = document.createElement("li");
       empty.className = "field-note";
@@ -741,7 +851,7 @@ export async function handleAccountPage(env: Env, request: Request): Promise<Res
     window.undalApi("/api/account/orders")
       .then(function (payload) {
         say(document.getElementById("order-result"), "");
-        orderList.replaceChildren();
+        clearNode(orderList);
         if (!payload.orders.length) {
           var empty = document.createElement("li");
           empty.className = "field-note";
@@ -858,6 +968,8 @@ export async function handleAccountPage(env: Env, request: Request): Promise<Res
     script,
     origin,
     path: "/account",
+    coupons: menu?.coupons ?? [],
+    serverCart: carts,
     store,
   });
 }

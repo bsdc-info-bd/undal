@@ -22,7 +22,6 @@ import { formatPaisa } from "../util/money";
 import {
   normalizeBdMobile,
   normalizeCoupon,
-  applicableDiscountPaisa,
   deliveryFeePaisa,
   distanceFromStorePinned,
   grandTotalPaisa,
@@ -33,8 +32,17 @@ import {
   lineTotalPaisa,
   validateCartLines,
   type CartLine,
-  type CouponRule,
 } from "../web/cart";
+import {
+  couponClock,
+  couponDays,
+  couponExpiryLabel,
+  couponHeadline,
+  couponTypeOf,
+  evaluateCoupon,
+  pickBestCoupon,
+  type CouponDocument,
+} from "../web/coupons";
 import { menuItem, toStoreConfig, webMenu } from "../web/store-data";
 
 const ORDER_ALERT_TTL = "300s";
@@ -391,12 +399,34 @@ function toRestValue(value: unknown): unknown {
   return { nullValue: null };
 }
 
-export async function handleStoreOrder(env: Env, request: Request): Promise<Response> {
-  const claims = await import("../authverify").then((module) => module.verifyIdToken(env, bearerFrom(request)));
-  const body = await readJson<OrderRequest>(request);
+/**
+ * Everything a web order needs, checked and priced.
+ *
+ * The identity here is deliberately a *typed* one: a name, a phone number and a
+ * pinned address. It is used by both callers — the JSON endpoint a script posts
+ * to, and the plain form post that works with no script at all.
+ */
+export interface WebOrderIdentity {
+  customerName: string;
+  phone: string;
+  lat: number;
+  lng: number;
+  addressTitle: string;
+  addressDesc: string;
+  addressNote: string;
+}
 
-  // ---- who is ordering -----------------------------------------------------
-  const customerName = str(body.customerName).trim().slice(0, MAX_NAME_LENGTH);
+/** The validated identity, or the sentence that says what is missing. */
+export function readOrderIdentity(input: {
+  customerName?: unknown;
+  phone?: unknown;
+  lat?: unknown;
+  lng?: unknown;
+  addressTitle?: unknown;
+  addressDesc?: unknown;
+  addressNote?: unknown;
+}): WebOrderIdentity {
+  const customerName = str(input.customerName).trim().slice(0, MAX_NAME_LENGTH);
   if (!usableName(customerName)) {
     throw new HttpError(
       400,
@@ -404,18 +434,18 @@ export async function handleStoreOrder(env: Env, request: Request): Promise<Resp
       "Please write the name the kitchen should call out — letters, at least three of them.",
     );
   }
-  const phone = normalizeBdMobile(str(body.phone));
+  const phone = normalizeBdMobile(str(input.phone));
   if (!phone) {
     throw new HttpError(400, "phone-invalid", "Write a Bangladeshi mobile number like 01712345678.");
   }
-  const lat = num(body.address?.lat, Number.NaN);
-  const lng = num(body.address?.lng, Number.NaN);
+  const lat = num(input.lat, Number.NaN);
+  const lng = num(input.lng, Number.NaN);
   if (!Number.isFinite(lat) || !Number.isFinite(lng) || lat === 0 || lng === 0) {
     throw new HttpError(400, "location-required", "Tap the locate button so the rider knows where to go.");
   }
-  const addressTitle = str(body.address?.title).trim().slice(0, 80);
-  const addressDesc = str(body.address?.desc).trim().slice(0, 200);
-  const addressNote = str(body.address?.note).trim().slice(0, 200);
+  const addressTitle = str(input.addressTitle).trim().slice(0, 80);
+  const addressDesc = str(input.addressDesc).trim().slice(0, 200);
+  const addressNote = str(input.addressNote).trim().slice(0, 200);
   if (!usableText(addressTitle) || !usableText(addressDesc) || !usableText(addressNote)) {
     throw new HttpError(
       400,
@@ -423,9 +453,54 @@ export async function handleStoreOrder(env: Env, request: Request): Promise<Resp
       "Fill in the area, the house or road, and one landmark the rider can ask for.",
     );
   }
+  return { customerName, phone, lat, lng, addressTitle, addressDesc, addressNote };
+}
+
+export interface WebOrderInput extends WebOrderIdentity {
+  /** The Firebase uid of whoever is ordering — a signed-in account or a guest session. */
+  uid: string;
+  /** Dish ids and quantities. Prices are never accepted from a client. */
+  lines: unknown;
+  /** A code the customer typed. Empty means "let the kitchen's own coupons decide". */
+  couponCode?: string;
+  note?: string;
+  /** "web" for the scripted checkout, "web-nojs" for the plain form. */
+  source?: string;
+}
+
+export interface WebOrderResult {
+  order: StoredOrder;
+  lines: Array<Record<string, unknown>>;
+  subtotalPaisa: number;
+  deliveryPaisa: number;
+  discountPaisa: number;
+  /** The coupon that was applied, automatically or by hand. Empty for none. */
+  couponCode: string;
+  /** Human sentence for the applied coupon, for a confirmation page. */
+  couponLabel: string;
+  distanceKm: number;
+  createdAt: string;
+  /** True when the discount came from the kitchen's automatic board. */
+  couponAutomatic: boolean;
+}
+
+/**
+ * Creates a cash-on-delivery order the way the Android app does.
+ *
+ * The single source of truth for every web order, scripted or not:
+ *   1. the basket is re-read from live Firestore data and re-priced,
+ *   2. the delivery fee is measured from the kitchen's own pin to the customer's,
+ *   3. a **coupon is applied by itself** when the kitchen has published an
+ *      automatic one that helps this basket, and a typed code is honoured when
+ *      it is valid — never silently replaced,
+ *   4. the order document, the live mirror, the chat thread and the kitchen
+ *      alert are written exactly as the app writes them.
+ */
+export async function createWebOrder(env: Env, input: WebOrderInput): Promise<WebOrderResult> {
+  const { customerName, phone, lat, lng, addressTitle, addressDesc, addressNote } = input;
 
   // ---- what is in the basket ----------------------------------------------
-  const { lines, issues } = validateCartLines(body.lines);
+  const { lines, issues } = validateCartLines(input.lines);
   if (issues.length > 0 || lines.length === 0) {
     throw new HttpError(400, "cart-invalid", issues[0]?.message ?? "Your cart is empty.");
   }
@@ -488,41 +563,63 @@ export async function handleStoreOrder(env: Env, request: Request): Promise<Resp
   // ---- coupon, re-validated live ------------------------------------------
   let discountPaisa = 0;
   let appliedCode = "";
+  let couponLabel = "";
+  let couponAutomatic = false;
   let couponUpdateTime: string | null = null;
   let couponUsedCount = 0;
-  const requestedCode = normalizeCoupon(str(body.couponCode));
+  const requestedCode = normalizeCoupon(str(input.couponCode));
   if (requestedCode) {
     const coupon = await fsGet(env, `coupons/${requestedCode}`);
     if (!coupon) throw new HttpError(409, "coupon-missing", `Coupon ${requestedCode} no longer exists.`);
-    const active = coupon.active === true;
-    const type = str(coupon.type, "percent");
-    const value = num(coupon.value);
-    const usageLimit = num(coupon.usageLimit);
-    const usedCount = num(coupon.usedCount);
-    const minimum = num(coupon.minSubtotalAmountPaisa);
-    const expiresAt = str(coupon.expiresAt);
-    if (!active) throw new HttpError(409, "coupon-inactive", `Coupon ${requestedCode} is switched off.`);
-    if (expiresAt && Date.parse(expiresAt) <= Date.now()) {
-      throw new HttpError(409, "coupon-expired", `Coupon ${requestedCode} has expired.`);
+    const type = couponTypeOf(coupon.type);
+    const verdict = evaluateCoupon(coupon as CouponDocument, {
+      subtotalPaisa,
+      deliveryPaisa,
+      ...couponClock(),
+    });
+    if (!verdict.eligible) {
+      throw new HttpError(409, `coupon-${verdict.reason.replace(/\s+/g, "-")}`, couponSentence(requestedCode, coupon, verdict.reason, formatPaisa));
     }
-    if (usageLimit >= 1 && usedCount >= usageLimit) {
-      throw new HttpError(409, "coupon-exhausted", `Coupon ${requestedCode} has been used its last time.`);
-    }
-    if (subtotalPaisa < minimum) {
-      throw new HttpError(
-        409,
-        "coupon-minimum",
-        `Coupon ${requestedCode} needs ${formatPaisa(minimum)} of food.`,
-      );
-    }
-    const rule: CouponRule = { type: type === "fixed" ? "fixed" : "percent", value };
-    discountPaisa = applicableDiscountPaisa(subtotalPaisa, rule);
-    if (discountPaisa <= 0) {
-      throw new HttpError(409, "coupon-no-effect", `Coupon ${requestedCode} does not change this total.`);
-    }
+    discountPaisa = verdict.discountPaisa;
     appliedCode = requestedCode;
+    couponLabel = couponHeadline(type ?? "fixed", num(coupon.value), num(coupon.maxDiscountPaisa));
     couponUpdateTime = str(coupon.updateTime).length > 0 ? str(coupon.updateTime) : null;
-    couponUsedCount = usedCount;
+    couponUsedCount = num(coupon.usedCount);
+  }
+
+  // The kitchen's automatic coupons, applied with no code typed at all. This is
+  // the behaviour the owner expects when they switch a coupon on: it just works,
+  // on the web and in the app, without a customer having to know it exists.
+  if (!appliedCode && (menu.coupons ?? []).length > 0) {
+    // Only the automatic ones: a code-only coupon must never be applied by the
+    // server to a customer who never typed it.
+    const board = (menu.coupons ?? [])
+      .filter((entry) => entry.autoApply !== false)
+      .map((entry) => ({ ...entry, active: true }) as CouponDocument);
+    const best = pickBestCoupon(board, {
+      subtotalPaisa,
+      deliveryPaisa,
+      ...couponClock(),
+    });
+    if (best) {
+      // The board is a cached snapshot; the counter and the switch are not.
+      const live = await fsGet(env, `coupons/${best.code}`).catch(() => null);
+      const verdict = live
+        ? evaluateCoupon(live as unknown as CouponDocument, { subtotalPaisa, deliveryPaisa, ...couponClock() })
+        : { eligible: false, reason: "unreadable", discountPaisa: 0 };
+      if (verdict.eligible && live) {
+        discountPaisa = verdict.discountPaisa;
+        appliedCode = best.code;
+        couponAutomatic = true;
+        couponLabel = couponHeadline(
+          couponTypeOf(live.type) ?? "fixed",
+          num(live.value),
+          num(live.maxDiscountPaisa),
+        );
+        couponUpdateTime = str(live.updateTime).length > 0 ? str(live.updateTime) : null;
+        couponUsedCount = num(live.usedCount);
+      }
+    }
   }
 
   const totalPaisa = grandTotalPaisa(subtotalPaisa, deliveryPaisa, discountPaisa);
@@ -536,10 +633,10 @@ export async function handleStoreOrder(env: Env, request: Request): Promise<Resp
 
   const orderFields: Record<string, unknown> = {
     shortId,
-    customerId: claims.sub,
+    customerId: input.uid,
     customerName,
     phone,
-    channel: "web",
+    channel: input.source ?? "web",
     items: priced,
     subtotalAmountPaisa: subtotalPaisa,
     deliveryAmountPaisa: deliveryPaisa,
@@ -559,8 +656,11 @@ export async function handleStoreOrder(env: Env, request: Request): Promise<Resp
     timeline: [{ status: "placed" }],
     chatId: orderId,
   };
-  if (appliedCode) orderFields.couponCode = appliedCode;
-  const note = str(body.note).trim().slice(0, 300);
+  if (appliedCode) {
+    orderFields.couponCode = appliedCode;
+    orderFields.couponAuto = couponAutomatic;
+  }
+  const note = str(input.note).trim().slice(0, 300);
   if (note) orderFields.note = note;
 
   await fsPatchWithServerTimestamps(env, orderPath, orderFields, ["createdAt", "updatedAt"]);
@@ -579,34 +679,122 @@ export async function handleStoreOrder(env: Env, request: Request): Promise<Resp
   }
 
   // Chat metadata, the live mirror and the kitchen alert — all best effort.
-  await fsPatchWithServerTimestamps(env, `chats/${orderId}`, { customerId: claims.sub, orderId }, [
+  await fsPatchWithServerTimestamps(env, `chats/${orderId}`, { customerId: input.uid, orderId }, [
     "createdAt",
   ]).catch(() => undefined);
   await rtdbSet(env, `orderLive/${orderId}`, {
-    customerId: claims.sub,
+    customerId: input.uid,
     status: "placed",
     updatedAt: Date.now(),
   }).catch(() => undefined);
-  await rtdbSet(env, `chats/${orderId}`, { customerId: claims.sub, createdAt: Date.now() }).catch(
+  await rtdbSet(env, `chats/${orderId}`, { customerId: input.uid, createdAt: Date.now() }).catch(
     () => undefined,
   );
   await alertKitchen(env, orderId, shortId, priced.length, totalPaisa).catch(() => undefined);
 
-  const stored: StoredOrder = { id: orderId, shortId, totalPaisa, status: "placed" };
+  return {
+    order: { id: orderId, shortId, totalPaisa, status: "placed" },
+    lines: priced,
+    subtotalPaisa,
+    deliveryPaisa,
+    discountPaisa,
+    couponCode: appliedCode,
+    couponLabel,
+    distanceKm,
+    createdAt,
+    couponAutomatic,
+  };
+}
+
+export async function handleStoreOrder(env: Env, request: Request): Promise<Response> {
+  const claims = await import("../authverify").then((module) => module.verifyIdToken(env, bearerFrom(request)));
+  const body = await readJson<OrderRequest>(request);
+  const identity = readOrderIdentity({
+    customerName: body.customerName,
+    phone: body.phone,
+    lat: body.address?.lat,
+    lng: body.address?.lng,
+    addressTitle: body.address?.title,
+    addressDesc: body.address?.desc,
+    addressNote: body.address?.note,
+  });
+
+  const result = await createWebOrder(env, {
+    ...identity,
+    uid: claims.sub,
+    lines: body.lines,
+    couponCode: body.couponCode,
+    note: body.note,
+    source: "web",
+  });
+
   return json(
     {
       ok: true,
-      order: stored,
-      lines: priced,
-      deliveryPaisa,
-      discountPaisa,
-      subtotalPaisa,
-      distanceKm: Math.round(distanceKm * 10) / 10,
-      createdAt,
-      trackingUrl: `https://${new URL(request.url).host}/order/${orderId}`,
+      order: result.order,
+      lines: result.lines,
+      deliveryPaisa: result.deliveryPaisa,
+      discountPaisa: result.discountPaisa,
+      subtotalPaisa: result.subtotalPaisa,
+      couponCode: result.couponCode,
+      couponLabel: result.couponLabel,
+      couponAutomatic: result.couponAutomatic,
+      distanceKm: Math.round(result.distanceKm * 10) / 10,
+      createdAt: result.createdAt,
+      trackingUrl: `https://${new URL(request.url).host}/order/${result.order.id}`,
     },
     201,
   );
+}
+
+/**
+ * The sentence a refused coupon gets: which code, and what is true about it.
+ *
+ * Exported for `worker/test/coupons.test.ts`: this is the sentence a customer
+ * reads when a promotion does not apply, and "CODE has expired" with no date is
+ * what made an owner insist the coupon was active while the checkout refused it.
+ *
+ * These are the same sentences the app's `CouponRepo.describe` writes, word for
+ * word where a fact is being stated — the date it ended, the days it runs, the
+ * hours, the shortfall, the count. A customer who is refused on the web and then
+ * tries the app must not get two different explanations of one rule, because the
+ * second one reads as the first one lying.
+ *
+ * Every fact comes from the live document, never from the refusal word alone:
+ * "has expired" with no date is a dead end, and a dead end at the checkout is
+ * where a customer gives up.
+ */
+export function couponSentence(code: string, coupon: Record<string, unknown>, reason: string, format: (paisa: number) => string): string {
+  const minimum = num(coupon.minSubtotalAmountPaisa);
+  switch (reason) {
+    case "expired": {
+      const ended = couponExpiryLabel(coupon.expiresAt ?? coupon.expiresAtMillis);
+      return ended ? `${code} expired on ${ended}.` : `${code} has expired.`;
+    }
+    case "used up": {
+      const limit = num(coupon.usageLimit);
+      return limit >= 1
+        ? `${code} has been used its full ${limit} times.`
+        : `${code} has been used its last time.`;
+    }
+    case "switched off":
+      return `${code} is switched off right now.`;
+    case "basket too small":
+      return `${code} needs a food subtotal of ${format(minimum)}.`;
+    case "not set up correctly":
+      return `${code} is not set up correctly — please tell the kitchen.`;
+    case "outside its hours": {
+      const from = str(coupon.startsAt);
+      const to = str(coupon.endsAt);
+      return from && to ? `${code} works between ${from} and ${to}.` : `${code} is only live between its set hours.`;
+    }
+    case "not today": {
+      const days = couponDays(coupon.daysOfWeek);
+      return days.length > 0 ? `${code} only works on ${days.join(", ")}.` : `${code} is not running today.`;
+    }
+    default:
+      return `${code} would not change this order's total.`;
+  }
 }
 
 function bearerFrom(request: Request): string {
@@ -628,6 +816,37 @@ export async function handleStoreMenuApi(env: Env): Promise<Response> {
       dishes: menu.dishes,
       combos: menu.combos,
       campaigns: menu.campaigns,
+      // The kitchen's live automatic offers. They travel with the menu because
+      // that is what they belong to: a coupon with no menu is a coupon nobody
+      // can satisfy, and the two must never disagree about the subtotal.
+      coupons: menu.coupons ?? [],
+    },
+    200,
+    { "cache-control": "public, max-age=60" },
+  );
+}
+
+/**
+ * `GET /api/store/coupons` — the offers, on their own.
+ *
+ * The menu response carries them too; this exists for the one caller that needs
+ * them without the menu — a price check, a re-order screen, the app's own
+ * "what is running tonight?" glance. Same source, same board, so the two can
+ * never disagree.
+ */
+export async function handleStoreCouponsApi(env: Env): Promise<Response> {
+  const menu = await webMenu(env);
+  const board = menu.coupons ?? [];
+  const automatic = board.filter((entry) => entry.autoApply);
+  return json(
+    {
+      ok: true,
+      fetchedAt: menu.fetchedAt,
+      coupons: board,
+      // The subset that needs no code typed anywhere: this is the list the
+      // checkout applies by itself.
+      automatic,
+      storeOpen: menu.store?.open === true && menu.store?.autoClosed !== true,
     },
     200,
     { "cache-control": "public, max-age=60" },

@@ -45,7 +45,20 @@ class UndalFcmService : FirebaseMessagingService() {
     @Inject lateinit var inboxRepo: NotifInboxRepo
     @Inject lateinit var progress: com.undal.syl.app.core.session.OnboardingProgress
 
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    /**
+     * Every coroutine this service starts, under one handler.
+     *
+     * A push arrives in a process nobody is looking at, and usually in a process
+     * the push itself started. An exception escaping this scope is uncaught, so
+     * the answer is a dead process — the app killed while it was doing the one
+     * thing it was woken for, with the kitchen's phone silent and no reason on any
+     * screen. The handler is on the *scope*, not on each launch, so the six
+     * launches below inherit it and the seventh one will too.
+     */
+    private val scope = CoroutineScope(
+        SupervisorJob() + Dispatchers.IO +
+            com.undal.syl.app.core.util.UndalGuards.service("handling a push")
+    )
 
     override fun onNewToken(token: String) {
         // The token changed under us (restore, reinstall, security event): the
@@ -57,11 +70,12 @@ class UndalFcmService : FirebaseMessagingService() {
         AlarmChannels.ensureChannels(applicationContext)
         val data = message.data
         val uid = runCatching { FirebaseAuth.getInstance().currentUser?.uid }.getOrNull()
-        // The claim can be up to an hour stale; the locally remembered role for
-        // this exact account covers the window where a kitchen push arrives first.
-        val isVendor = PushDeviceRole.isKitchen(applicationContext, uid) || runCatching {
-            FirebaseAuth.getInstance().currentUser?.getIdToken(false)?.result?.claims?.get("vendor") == true
-        }.getOrDefault(false)
+        // The remembered role for this exact account, which is what the router
+        // established from the token the last time it ran. A `Task.getResult()`
+        // read here would throw on a token still being fetched and answer "not
+        // the kitchen" — the second half of this expression used to do exactly
+        // that, every single time, and only the remembered role was ever true.
+        val isVendor = PushDeviceRole.isKitchen(applicationContext, uid)
 
         when (data["type"]) {
             TYPE_ORDER_CREATED -> handleOrderCreated(data, uid)
@@ -132,14 +146,23 @@ class UndalFcmService : FirebaseMessagingService() {
         val body = data["body"].orEmpty()
         val kind = data["kind"].orEmpty()
 
+        // Which channel decides how it interrupts: an order that cannot be
+        // answered is an alert (bypasses Do Not Disturb), a reminder that a
+        // service is starting is a message. Both are one tap from the switch
+        // that answers them.
+        val quietKinds = kind == "prep_due" || kind == "missed" || kind == "opening_soon" || kind == "store_back_online"
+        // The console is where the open/close switch and the reopen banner live,
+        // so every one of these lands there rather than on a settings page that
+        // cannot answer the question the push asked.
+        val consoleKinds = kind == "auto_offline" || kind == "store_back_online" || kind == "opening_soon"
+
         postNotification(
-            channelId = if (kind == "prep_due" || kind == "missed") AlarmChannels.VENDOR_GENERAL
-            else AlarmChannels.VENDOR_NEW_ORDER,
+            channelId = if (quietKinds) AlarmChannels.VENDOR_GENERAL else AlarmChannels.VENDOR_NEW_ORDER,
             notificationId = (kind + title).hashCode() and 0x7FFFFFFF,
             title = title,
             body = body,
-            deepLink = if (kind == "auto_offline") "vendor/store" else "vendor/orders",
-            highPriority = true,
+            deepLink = if (consoleKinds) "vendor/dashboard" else "vendor/orders",
+            highPriority = !quietKinds,
             ongoing = false
         )
 

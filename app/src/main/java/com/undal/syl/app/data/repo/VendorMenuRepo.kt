@@ -119,7 +119,7 @@ class VendorMenuRepo @Inject constructor(
         }
     }.fold(
         onSuccess = { UndalResult.Success(it) },
-        onFailure = { UndalResult.Failure(UndalErrors.firestore(it), it) }
+        onFailure = { UndalResult.Failure(UndalErrors.firestore(it, operation = "saving a category"), it) }
     )
 
     suspend fun deleteCategory(id: String): UndalResult<Unit> = runCatching {
@@ -146,7 +146,7 @@ class VendorMenuRepo @Inject constructor(
         firestore.collection(CATEGORIES).document(id).delete().await()
     }.fold(
         onSuccess = { UndalResult.Success(Unit) },
-        onFailure = { UndalResult.Failure(it.message ?: UndalErrors.firestore(it), it) }
+        onFailure = { UndalResult.Failure(it.message ?: UndalErrors.firestore(it, operation = "deleting a category"), it) }
     )
 
     /** Persists a whole drag reorder in one batch (V-051). */
@@ -159,7 +159,7 @@ class VendorMenuRepo @Inject constructor(
         Unit
     }.fold(
         onSuccess = { UndalResult.Success(Unit) },
-        onFailure = { UndalResult.Failure(UndalErrors.firestore(it), it) }
+        onFailure = { UndalResult.Failure(UndalErrors.firestore(it, operation = "reordering categories"), it) }
     )
 
     suspend fun saveSubcategory(
@@ -185,7 +185,7 @@ class VendorMenuRepo @Inject constructor(
         }
     }.fold(
         onSuccess = { UndalResult.Success(it) },
-        onFailure = { UndalResult.Failure(UndalErrors.firestore(it), it) }
+        onFailure = { UndalResult.Failure(UndalErrors.firestore(it, operation = "saving a subcategory"), it) }
     )
 
     suspend fun deleteSubcategory(id: String): UndalResult<Unit> = runCatching {
@@ -200,7 +200,7 @@ class VendorMenuRepo @Inject constructor(
         firestore.collection(SUBCATEGORIES).document(id).delete().await()
     }.fold(
         onSuccess = { UndalResult.Success(Unit) },
-        onFailure = { UndalResult.Failure(it.message ?: UndalErrors.firestore(it), it) }
+        onFailure = { UndalResult.Failure(it.message ?: UndalErrors.firestore(it, operation = "deleting a subcategory"), it) }
     )
 
     suspend fun reorderSubcategories(orderedIds: List<String>): UndalResult<Unit> = runCatching {
@@ -212,7 +212,7 @@ class VendorMenuRepo @Inject constructor(
         Unit
     }.fold(
         onSuccess = { UndalResult.Success(Unit) },
-        onFailure = { UndalResult.Failure(UndalErrors.firestore(it), it) }
+        onFailure = { UndalResult.Failure(UndalErrors.firestore(it, operation = "reordering subcategories"), it) }
     )
 
     // ------------------------------------------------------------- menu items
@@ -236,14 +236,14 @@ class VendorMenuRepo @Inject constructor(
         reference.id
     }.fold(
         onSuccess = { UndalResult.Success(it) },
-        onFailure = { UndalResult.Failure(it.message ?: UndalErrors.firestore(it), it) }
+        onFailure = { UndalResult.Failure(it.message ?: UndalErrors.firestore(it, operation = "saving a dish"), it) }
     )
 
     suspend fun deleteItem(id: String): UndalResult<Unit> = runCatching {
         firestore.collection(MENU_ITEMS).document(id).delete().await()
     }.fold(
         onSuccess = { UndalResult.Success(Unit) },
-        onFailure = { UndalResult.Failure(UndalErrors.firestore(it), it) }
+        onFailure = { UndalResult.Failure(UndalErrors.firestore(it, operation = "deleting a dish"), it) }
     )
 
     /** The sold-out switch — one tap, live on every customer screen (V-056). */
@@ -269,7 +269,7 @@ class VendorMenuRepo @Inject constructor(
         Unit
     }.fold(
         onSuccess = { UndalResult.Success(Unit) },
-        onFailure = { UndalResult.Failure(UndalErrors.firestore(it), it) }
+        onFailure = { UndalResult.Failure(UndalErrors.firestore(it, operation = "changing availability for several dishes"), it) }
     )
 
     private suspend fun patchItem(id: String, extra: Map<String, Any?>): UndalResult<Unit> = runCatching {
@@ -278,7 +278,7 @@ class VendorMenuRepo @Inject constructor(
         firestore.collection(MENU_ITEMS).document(id).update(payload).await()
     }.fold(
         onSuccess = { UndalResult.Success(Unit) },
-        onFailure = { UndalResult.Failure(UndalErrors.firestore(it), it) }
+        onFailure = { UndalResult.Failure(UndalErrors.firestore(it, operation = "changing a dish"), it) }
     )
 
     // ----------------------------------------------------------------- combos
@@ -306,14 +306,14 @@ class VendorMenuRepo @Inject constructor(
         reference.id
     }.fold(
         onSuccess = { UndalResult.Success(it) },
-        onFailure = { UndalResult.Failure(it.message ?: UndalErrors.firestore(it), it) }
+        onFailure = { UndalResult.Failure(it.message ?: UndalErrors.firestore(it, operation = "saving a combo"), it) }
     )
 
     suspend fun deleteCombo(id: String): UndalResult<Unit> = runCatching {
         firestore.collection(COMBOS).document(id).delete().await()
     }.fold(
         onSuccess = { UndalResult.Success(Unit) },
-        onFailure = { UndalResult.Failure(UndalErrors.firestore(it), it) }
+        onFailure = { UndalResult.Failure(UndalErrors.firestore(it, operation = "deleting a combo"), it) }
     )
 
     suspend fun setComboAvailability(id: String, available: Boolean): UndalResult<Unit> = runCatching {
@@ -327,7 +327,7 @@ class VendorMenuRepo @Inject constructor(
             .await()
     }.fold(
         onSuccess = { UndalResult.Success(Unit) },
-        onFailure = { UndalResult.Failure(UndalErrors.firestore(it), it) }
+        onFailure = { UndalResult.Failure(UndalErrors.firestore(it, operation = "changing a combo's availability"), it) }
     )
 
     // -------------------------------------------------------------- campaigns
@@ -357,27 +357,27 @@ class VendorMenuRepo @Inject constructor(
         reference.id
     }.fold(
         onSuccess = { UndalResult.Success(it) },
-        onFailure = { UndalResult.Failure(it.message ?: UndalErrors.firestore(it), it) }
+        onFailure = { UndalResult.Failure(it.message ?: UndalErrors.firestore(it, operation = "saving a campaign"), it) }
     )
 
     suspend fun setCampaignActive(id: String, active: Boolean): UndalResult<Unit> = runCatching {
         firestore.collection(CAMPAIGNS).document(id).update("active", active).await()
     }.fold(
         onSuccess = { UndalResult.Success(Unit) },
-        onFailure = { UndalResult.Failure(UndalErrors.firestore(it), it) }
+        onFailure = { UndalResult.Failure(UndalErrors.firestore(it, operation = "switching a campaign"), it) }
     )
 
     suspend fun deleteCampaign(id: String): UndalResult<Unit> = runCatching {
         firestore.collection(CAMPAIGNS).document(id).delete().await()
     }.fold(
         onSuccess = { UndalResult.Success(Unit) },
-        onFailure = { UndalResult.Failure(UndalErrors.firestore(it), it) }
+        onFailure = { UndalResult.Failure(UndalErrors.firestore(it, operation = "deleting a campaign"), it) }
     )
 
     // ---------------------------------------------------------------- coupons
 
     suspend fun saveCoupon(draft: CouponDraft): UndalResult<String> = runCatching {
-        if (!draft.isValid) error(draft.codeError ?: draft.valueError ?: "Fill the coupon fields.")
+        if (!draft.isValid) error(draft.firstError ?: "Fill the coupon fields.")
         val code = draft.normalisedCode
         val fields = draft.writeFields().toMutableMap()
         if (draft.originalCode != null) {
@@ -396,14 +396,14 @@ class VendorMenuRepo @Inject constructor(
         code
     }.fold(
         onSuccess = { UndalResult.Success(it) },
-        onFailure = { UndalResult.Failure(it.message ?: UndalErrors.firestore(it), it) }
+        onFailure = { UndalResult.Failure(it.message ?: UndalErrors.firestore(it, operation = "saving a coupon"), it) }
     )
 
     suspend fun setCouponActive(code: String, active: Boolean): UndalResult<Unit> = runCatching {
         firestore.collection(COUPONS).document(code).update("active", active).await()
     }.fold(
         onSuccess = { UndalResult.Success(Unit) },
-        onFailure = { UndalResult.Failure(UndalErrors.firestore(it), it) }
+        onFailure = { UndalResult.Failure(UndalErrors.firestore(it, operation = "switching a coupon"), it) }
     )
 
     /** A coupon that has been used is retired, never deleted (V-065). */
@@ -416,7 +416,7 @@ class VendorMenuRepo @Inject constructor(
         firestore.collection(COUPONS).document(code).delete().await()
     }.fold(
         onSuccess = { UndalResult.Success(Unit) },
-        onFailure = { UndalResult.Failure(it.message ?: UndalErrors.firestore(it), it) }
+        onFailure = { UndalResult.Failure(it.message ?: UndalErrors.firestore(it, operation = "deleting a coupon"), it) }
     )
 
     // ----------------------------------------------------------------- uploads

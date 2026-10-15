@@ -1,7 +1,9 @@
 package com.undal.syl.app.core.model
 
 import com.google.firebase.Timestamp
+import com.undal.syl.app.core.util.CouponMath
 import com.undal.syl.app.core.util.Money
+import com.undal.syl.app.core.util.Validators
 
 /**
  * What the kitchen types into the editor screens (V-049 … V-070).
@@ -9,6 +11,14 @@ import com.undal.syl.app.core.util.Money
  * Every draft knows whether it is valid and why it is not, so the owner is told
  * "a price must be more than zero" instead of watching a save button stay grey.
  */
+
+/**
+ * The ceiling the security rules put on a dish: `amountPaisa <= 1000000` in
+ * `firebase/firestore.rules`, in paisa, so ৳10,000. It is written here as a name
+ * because two fields are measured against it and the rules measure only the one
+ * they can see — and a limit that lives in a literal in one `when` branch drifts.
+ */
+const val MAX_ITEM_PAISA: Long = 1_000_000L
 
 data class MenuDraft(
     val id: String? = null,
@@ -50,27 +60,40 @@ data class MenuDraft(
             .distinct()
             .take(8)
 
-    val nameError: String?
-        get() = when {
-            name.trim().isEmpty() -> "Give the dish a name."
-            name.trim().length < 2 -> "That name is too short."
-            else -> null
-        }
+    /**
+     * The dish name, judged by the same floor the security rules enforce — three
+     * characters, because `nonBlankString()` in `firebase/firestore.rules` is
+     * `size() >= 3`. Accepting two here meant the save was refused by the database
+     * with nothing but "Missing or insufficient permissions", which reads as a
+     * broken menu editor rather than a short name.
+     */
+    val nameError: String? get() = Validators.menuName("dish name", name)
 
     val priceError: String?
         get() = when {
             priceText.isBlank() -> "Set what the customer pays."
             pricePaisa == null -> "That price is not a number."
             (pricePaisa ?: 0L) <= 0L -> "A price must be more than zero."
-            (pricePaisa ?: 0L) > 1_000_000L -> "The maximum item price is ৳ 10,000."
+            (pricePaisa ?: 0L) > MAX_ITEM_PAISA -> "The maximum item price is ${Money.format(MAX_ITEM_PAISA)}."
             else -> null
         }
 
+    /**
+     * The compare price is capped by the same ceiling, because it is not a second
+     * number: `amountPaisa` is whichever of the two is larger, and that is the
+     * field the rules put a ceiling on. An editor that capped only the price let a
+     * dish through with a ৳15,000 "was" price and a ৳500 "now" price, and the
+     * database refused the save with nothing but "Missing or insufficient
+     * permissions" — which reads as a broken menu editor, not a price too high.
+     */
     val compareError: String?
         get() = when {
             compareText.isBlank() -> null
             comparePaisa == null -> "That compare price is not a number."
             (comparePaisa ?: 0L) < (pricePaisa ?: 0L) -> "The compare price must be at least the price."
+            (comparePaisa ?: 0L) > MAX_ITEM_PAISA ->
+                "The maximum price is ${Money.format(MAX_ITEM_PAISA)}, and the compare price is stored as " +
+                    "this dish's list price."
             else -> null
         }
 
@@ -166,8 +189,8 @@ data class ComboDraft(
         get() = if (savingsPaisa > 0L) "Customers save ${Money.format(savingsPaisa)}" else "No saving yet"
 
     val error: String?
-        get() = when {
-            name.trim().length < 2 -> "Name the combo."
+        get() = Validators.menuName("combo name", name)
+            ?: when {
             refs.size < 2 -> "A combo needs at least two dishes."
             refs.any { it.qty < 1 } -> "Every dish in a combo needs a quantity."
             pricePaisa == null -> "Set the combo price."
@@ -223,8 +246,8 @@ data class CampaignDraft(
         }
 
     val error: String?
-        get() = when {
-            title.trim().isEmpty() -> "Give the campaign a title."
+        get() = Validators.menuName("campaign title", title)
+            ?: when {
             type == "percent" && (value ?: 0L) !in 1..90 -> "A percentage must be between 1 and 90."
             type == "fixed" && (value ?: 0L) <= 0L -> "A fixed discount must be more than zero."
             startAtMillis == null -> "Pick the day it starts."
@@ -263,7 +286,18 @@ data class CouponDraft(
     val usageLimitText: String = "",
     val expiresAtMillis: Long? = null,
     val description: String = "",
-    val active: Boolean = true
+    val active: Boolean = true,
+    /** Ceiling on a percentage or a free-delivery coupon, in taka text. */
+    val maxDiscountText: String = "",
+    /** "HH:MM" — the daily window, in Asia/Dhaka. A window may cross midnight. */
+    val startsAt: String = "",
+    val endsAt: String = "",
+    /** ["fri", "sat"] — empty means every day. */
+    val days: Set<String> = emptySet(),
+    /** Applied by every basket it helps, with no code typed. */
+    val autoApply: Boolean = true,
+    /** Shown as a banner on the web store and in the app. */
+    val showOnWeb: Boolean = true
 ) {
 
     val normalisedCode: String get() = code.trim().uppercase().replace(' ', '-')
@@ -288,20 +322,132 @@ data class CouponDraft(
         get() = when {
             type == "percent" && (value ?: 0L) !in 1..90 -> "A percentage must be between 1 and 90."
             type == "fixed" && (value ?: 0L) <= 0L -> "A fixed discount must be more than zero."
+            // Free delivery needs no value: it is worth the ride, whatever the ride is.
+            type == "freedelivery" -> null
             else -> null
         }
+
+    /** The ceiling in paisa, or 0 when the coupon is not capped. */
+    val maxDiscountPaisa: Long
+        get() = if (maxDiscountText.isBlank()) 0L else Money.parseTakaToPaisa(maxDiscountText) ?: -1L
+
+    val maxDiscountError: String?
+        get() = when {
+            maxDiscountText.isBlank() -> null
+            maxDiscountPaisa <= 0L -> "Write the cap in taka, like 100."
+            type == "fixed" -> "A fixed-amount coupon is already exact — remove the cap."
+            else -> null
+        }
+
+    /**
+     * A date that has already passed is refused here, in the editor, rather than
+     * at somebody's checkout.
+     *
+     * This is the mistake behind "the coupon is active but the web says Expired":
+     * the switch is on, the code reads as live in the list, and every customer who
+     * types it is refused. The owner cannot see that from a toggle — but they can
+     * see it from a sentence written at the moment they pick the date.
+     *
+     * An empty expiry is not an error. A promotion with no end date is a decision.
+     */
+    val expiryError: String?
+        get() = expiresAtMillis?.takeIf { it <= System.currentTimeMillis() }?.let {
+            "That date has already passed — pick today or later, or leave the expiry empty for no end date."
+        }
+
+    /** "HH:MM" or blank, both ends. A window that ends before it starts is fine. */
+    val windowError: String?
+        get() = when {
+            startsAt.isNotBlank() && CouponMath.parseMinutesOfDay(startsAt) == null ->
+                "Start the window as HH:MM, like 18:00."
+            endsAt.isNotBlank() && CouponMath.parseMinutesOfDay(endsAt) == null ->
+                "End the window as HH:MM, like 22:00 or 01:00 after midnight."
+            else -> null
+        }
+
+    /** The coupon this draft describes, for a preview that cannot lie. */
+    fun toCoupon(active: Boolean = this.active): CouponMath.Coupon = CouponMath.Coupon(
+        code = normalisedCode,
+        type = type,
+        value = value ?: 0L,
+        active = active,
+        description = description.trim(),
+        minSubtotalAmountPaisa = minOrderPaisa,
+        maxDiscountPaisa = maxDiscountPaisa.coerceAtLeast(0L),
+        expiresAtMillis = expiresAtMillis ?: 0L,
+        startsAt = startsAt.trim(),
+        endsAt = endsAt.trim(),
+        daysOfWeek = days.toList().sorted(),
+        usageLimit = usageLimit,
+        autoApply = autoApply,
+        showOnWeb = showOnWeb
+    )
+
+    /**
+     * What this coupon would be worth on a typical basket, worked out by the same
+     * rule the customer's phone and the Worker run — so the kitchen sees the
+     * discount it is about to give away before it gives it away.
+     */
+    fun preview(sample: SampleBasket = SampleBasket()): String {
+        val coupon = toCoupon(active = true)
+        val verdict = CouponMath.evaluate(
+            coupon,
+            CouponMath.Context(sample.subtotalPaisa, sample.deliveryPaisa)
+        )
+        val basket = "on a ${Money.format(sample.subtotalPaisa)} basket with " +
+            "${Money.format(sample.deliveryPaisa)} delivery"
+        return if (verdict.eligible) {
+            "${coupon.headline} — ${Money.format(verdict.discountPaisa)} off $basket."
+        } else {
+            "Nothing off $basket (${verdict.reason})."
+        }
+    }
+
+    /** The basket a preview is quoted against. */
+    data class SampleBasket(
+        val subtotalPaisa: Long = 50_000L,
+        val deliveryPaisa: Long = 5_000L
+    )
 
     val minOrderPaisa: Long get() = Money.parseTakaToPaisa(minOrderText) ?: 0L
 
     val usageLimit: Long get() = usageLimitText.trim().toLongOrNull()?.coerceIn(0L, 100_000L) ?: 0L
 
-    val isValid: Boolean get() = codeError == null && valueError == null
+    val isValid: Boolean
+        get() = firstError == null
 
+    /**
+     * The first thing wrong with this draft, in the order the fields appear on the
+     * sheet — and the only way the save button may refuse.
+     *
+     * Every caller used to chain two of the five errors by hand
+     * (`codeError ?: valueError`), so a draft whose *window* or *expiry* was wrong
+     * produced no sentence at all: the button did nothing and the owner had no idea
+     * why. One list, in one place, means a refusal always says what to fix.
+     */
+    val firstError: String?
+        get() = codeError
+            ?: valueError
+            ?: maxDiscountError
+            ?: windowError
+            ?: expiryError
+
+    /**
+     * The document the customer's phone, the Worker and the web store all read.
+     * `maxDiscountPaisa: 0` is written as 0 rather than omitted, because "no cap"
+     * is a decision and not a missing field.
+     */
     fun writeFields(): Map<String, Any?> = mapOf(
         "type" to type,
         "value" to (value ?: 0L),
         "active" to active,
         "minSubtotalAmountPaisa" to minOrderPaisa,
+        "maxDiscountPaisa" to maxDiscountPaisa.coerceAtLeast(0L),
+        "startsAt" to startsAt.trim(),
+        "endsAt" to endsAt.trim(),
+        "daysOfWeek" to days.toList().sorted(),
+        "autoApply" to autoApply,
+        "showOnWeb" to showOnWeb,
         "usageLimit" to usageLimit,
         "usedCount" to 0L,
         "expiresAt" to expiresAtMillis?.let { Timestamp(java.util.Date(it)) },
@@ -328,7 +474,13 @@ data class CouponDraft(
             usageLimitText = if (coupon.usageLimit > 0L) coupon.usageLimit.toString() else "",
             expiresAtMillis = coupon.expiresAtMillis,
             description = coupon.description,
-            active = coupon.active
+            active = coupon.active,
+            maxDiscountText = if (coupon.maxDiscountPaisa > 0L) Money.formatPlain(coupon.maxDiscountPaisa) else "",
+            startsAt = coupon.startsAt,
+            endsAt = coupon.endsAt,
+            days = coupon.daysOfWeek.toSet(),
+            autoApply = coupon.autoApply,
+            showOnWeb = coupon.showOnWeb
         )
     }
 }
@@ -343,8 +495,48 @@ data class VendorCoupon(
     val usageLimit: Long,
     val usedCount: Long,
     val expiresAtMillis: Long?,
-    val description: String
+    val description: String,
+    val maxDiscountPaisa: Long = 0L,
+    val startsAt: String = "",
+    val endsAt: String = "",
+    val daysOfWeek: List<String> = emptyList(),
+    val autoApply: Boolean = true,
+    val showOnWeb: Boolean = true
 ) {
+
+    /** The shared rule's shape, so the kitchen's list and the cart agree. */
+    val math: CouponMath.Coupon get() = CouponMath.Coupon(
+        code = code,
+        type = type,
+        value = value,
+        active = active,
+        description = description,
+        minSubtotalAmountPaisa = minSubtotalAmountPaisa,
+        maxDiscountPaisa = maxDiscountPaisa,
+        expiresAtMillis = expiresAtMillis ?: 0L,
+        startsAt = startsAt,
+        endsAt = endsAt,
+        daysOfWeek = daysOfWeek,
+        usageLimit = usageLimit,
+        usedCount = usedCount,
+        autoApply = autoApply,
+        showOnWeb = showOnWeb
+    )
+
+    /** "20% off, up to ৳ 100" · "৳ 50 off" · "Free delivery". */
+    val headline: String get() = math.headline
+
+    /** "On orders over ৳ 250 · 18:00–22:00 · fri". */
+    val conditionLabel: String get() = CouponMath.conditionLine(math)
+
+    /** How the coupon reaches people: automatically, by code, or on the web only. */
+    val reachLabel: String
+        get() = when {
+            autoApply && showOnWeb -> "Applies itself · shown on the web store"
+            autoApply -> "Applies itself · hidden from the web store"
+            showOnWeb -> "Code only · shown on the web store"
+            else -> "Code only · hidden from the web store"
+        }
 
     val valueLabel: String
         get() = if (type == "percent") "$value % off" else "${Money.format(value)} off"
@@ -354,6 +546,34 @@ data class VendorCoupon(
 
     val expired: Boolean
         get() = expiresAtMillis != null && expiresAtMillis < System.currentTimeMillis()
+
+    /** Switched on, and its usage allowance already spent. */
+    val usedUp: Boolean
+        get() = usageLimit > 0L && usedCount >= usageLimit
+
+    /**
+     * Switched on but able to give nobody anything — the state the toggle cannot
+     * show. This is the confusion worth designing out: the kitchen sees the switch
+     * in the on position, tells a customer the code, and the checkout refuses it.
+     */
+    val onButDead: Boolean
+        get() = active && (expired || usedUp)
+
+    /**
+     * The one line that answers "is this coupon doing anything right now?", with
+     * the date in it. A switch says what the owner *asked for*; this says what a
+     * customer will actually get.
+     */
+    val stateLabel: String
+        get() = when {
+            !active -> "Switched off · nobody gets it"
+            expired ->
+                if (expiryLabel.isBlank()) "Expired · not running"
+                else "Expired on $expiryLabel · not running"
+            usedUp -> "All $usageLimit uses spent · not running"
+            expiryLabel.isBlank() -> "Live · no end date"
+            else -> "Live · ends $expiryLabel"
+        }
 
     val expiryLabel: String
         get() = expiresAtMillis
@@ -372,8 +592,22 @@ data class VendorCoupon(
             minSubtotalAmountPaisa = (map["minSubtotalAmountPaisa"] as? Number)?.toLong() ?: 0L,
             usageLimit = (map["usageLimit"] as? Number)?.toLong() ?: 0L,
             usedCount = (map["usedCount"] as? Number)?.toLong() ?: 0L,
-            expiresAtMillis = (map["expiresAt"] as? Timestamp)?.toDate()?.time,
-            description = (map["description"] as? String).orEmpty()
+            // Every shape the field can arrive in, through the shared rule's own
+            // reader: a Timestamp from the SDK, a Date, millis, an ISO string or a
+            // `{seconds, nanos}` map. Reading only `as? Timestamp` answered `null`
+            // — "no expiry" — for the other four.
+            expiresAtMillis = CouponMath.expiryMillis(map["expiresAt"] ?: map["expiresAtMillis"])
+                .takeIf { it > 0L },
+            description = (map["description"] as? String).orEmpty(),
+            maxDiscountPaisa = (map["maxDiscountPaisa"] as? Number)?.toLong() ?: 0L,
+            startsAt = (map["startsAt"] as? String).orEmpty(),
+            endsAt = (map["endsAt"] as? String).orEmpty(),
+            daysOfWeek = CouponMath.days(map["daysOfWeek"]),
+            // Both defaults are opt-out, and they are the same in three places:
+            // coupons.ts, cart-client.ts and here. A coupon the kitchen created is
+            // meant to be used.
+            autoApply = map["autoApply"] != false,
+            showOnWeb = map["showOnWeb"] != false
         )
     }
 }

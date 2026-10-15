@@ -5,6 +5,7 @@ import android.content.Context
 import android.content.Intent
 import com.google.firebase.auth.FirebaseAuth
 import com.undal.syl.app.core.fcm.AlarmChannels
+import com.undal.syl.app.core.fcm.PushDeviceRole
 
 /**
  * Android threw the process away — the kitchen must come back on its own
@@ -17,7 +18,9 @@ import com.undal.syl.app.core.fcm.AlarmChannels
  *     opens the app,
  *   · brings the heartbeat foreground service back for a signed-in kitchen,
  *   · brings the live order watcher back, so a rebooted phone rings for an order
- *     that arrives before anybody touches it.
+ *     that arrives before anybody touches it,
+ *   · arms the alert watchdog, which is what keeps all of the above true after
+ *     Android kills the app for its own reasons (see [AlertWatchdog]).
  *
  * It never touches the customer experience: if nobody is signed in, it simply
  * recreates the channels and returns.
@@ -31,11 +34,22 @@ class BootReceiver : BroadcastReceiver() {
         AlarmChannels.ensureChannels(context)
 
         val user = runCatching { FirebaseAuth.getInstance().currentUser }.getOrNull()
-        val isVendor = runCatching {
-            user?.getIdToken(false)?.result?.claims?.get("vendor") == true
-        }.getOrDefault(false)
+        // The role the router established before this phone went down, not a
+        // token read: `Task.getResult()` on a fetch that has not finished throws,
+        // and the throw used to be swallowed into "this is not a kitchen" — which
+        // is how a rebooted vendor phone came back silent until somebody opened
+        // the app and signed in again.
+        val isVendor = PushDeviceRole.isKitchen(context, user?.uid)
 
-        PresenceHeartbeatWorker.ensureScheduled(context)
+        // The fifteen-minute heartbeat is the kitchen's writer of last resort and
+        // nobody else's: a customer's phone that beat `presence/vendor` would hold
+        // a closed store open, and a periodic job that only ever answers "not me"
+        // is a wakeup every fifteen minutes for nothing.
+        if (isVendor) {
+            PresenceHeartbeatWorker.ensureScheduled(context)
+        } else {
+            PresenceHeartbeatWorker.cancel(context)
+        }
 
         if (user != null) {
             TokenRefreshWorker.enqueue(context)
@@ -50,9 +64,13 @@ class BootReceiver : BroadcastReceiver() {
             // A rebooted kitchen phone must be able to ring again immediately,
             // so the alert channel state is verified as part of the boot path.
             OrderAlertController.stop()
+            // The watchdog outlives everything else here: the two services above
+            // can be killed later in the day, and this is what brings them back.
+            AlertWatchdog.arm(context)
         } else if (user != null) {
             // A customer device must never keep the kitchen's watcher alive.
             KitchenWatchService.stop(context)
+            AlertWatchdog.cancel(context)
         }
     }
 

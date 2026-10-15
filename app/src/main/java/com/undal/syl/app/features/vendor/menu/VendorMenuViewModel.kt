@@ -59,12 +59,20 @@ class VendorMenuViewModel @Inject constructor(
         val iconUrl: String = ""
     ) {
         val order: Int get() = orderText.trim().toIntOrNull() ?: 0
+        /**
+         * The name is judged by the floor the rules enforce (three characters), so
+         * a short one is refused here with a sentence instead of by the database
+         * with "Missing or insufficient permissions".
+         */
         val error: String?
-            get() = when {
-                name.trim().length < 2 -> "Give it a name customers will recognise."
-                !isCategory && categoryId.isBlank() -> "Pick the category it belongs to."
-                else -> null
-            }
+            get() = com.undal.syl.app.core.util.Validators.menuName(
+                if (isCategory) "category name" else "subcategory name",
+                name
+            )
+                ?: when {
+                    !isCategory && categoryId.isBlank() -> "Pick the category it belongs to."
+                    else -> null
+                }
     }
 
     data class DeleteRequest(
@@ -103,20 +111,33 @@ class VendorMenuViewModel @Inject constructor(
 
     private val _state = MutableStateFlow(State())
     val state: StateFlow<State> = _state.asStateFlow()
+    /**
+     * Nothing this ViewModel does may end the process.
+     *
+     * An exception that escapes a `viewModelScope` job is uncaught, and Android's
+     * answer to an uncaught exception is to kill the app — which the person
+     * experiences as the app vanishing a few seconds after it opened, then the
+     * crash guard reopening it, then the home screen. Every coroutine here carries
+     * this handler, so a failed read becomes one sentence where the screen already
+     * shows messages.
+     */
+    private val guard = com.undal.syl.app.core.util.UndalGuards.viewModel("reading the menu") { message ->
+        _state.value = _state.value.copy(message = message, busy = false)
+    }
 
     init {
-        viewModelScope.launch {
+        viewModelScope.launch(guard) {
             menuRepo.observeMenu().collect { menu ->
                 val filtered = menu
                 _state.value = _state.value.copy(loading = false, menu = filtered)
             }
         }
-        viewModelScope.launch {
+        viewModelScope.launch(guard) {
             vendorMenuRepo.observeCampaigns().collect { campaigns ->
                 _state.value = _state.value.copy(campaigns = campaigns)
             }
         }
-        viewModelScope.launch {
+        viewModelScope.launch(guard) {
             vendorMenuRepo.observeCoupons().collect { coupons ->
                 _state.value = _state.value.copy(coupons = coupons)
             }
@@ -198,7 +219,7 @@ class VendorMenuViewModel @Inject constructor(
         val ids = _state.value.selectedIds.toList()
         if (ids.isEmpty()) return
         _state.value = _state.value.copy(busy = true)
-        viewModelScope.launch {
+        viewModelScope.launch(guard) {
             val result = vendorMenuRepo.setAvailabilityBulk(ids, available)
             _state.value = _state.value.copy(
                 busy = false,
@@ -258,7 +279,7 @@ class VendorMenuViewModel @Inject constructor(
 
     fun uploadDishImage(uri: Uri) {
         _state.value = _state.value.copy(uploadProgress = 0f)
-        viewModelScope.launch {
+        viewModelScope.launch(guard) {
             when (val result = vendorMenuRepo.uploadImage(uri) { fraction ->
                 _state.value = _state.value.copy(uploadProgress = fraction)
             }) {
@@ -285,7 +306,7 @@ class VendorMenuViewModel @Inject constructor(
             return
         }
         _state.value = _state.value.copy(busy = true)
-        viewModelScope.launch {
+        viewModelScope.launch(guard) {
             val result = vendorMenuRepo.saveItem(draft)
             _state.value = _state.value.copy(
                 busy = false,
@@ -301,7 +322,7 @@ class VendorMenuViewModel @Inject constructor(
     }
 
     fun toggleAvailability(item: MenuItem) {
-        viewModelScope.launch {
+        viewModelScope.launch(guard) {
             val result = vendorMenuRepo.setItemAvailability(item.id, !item.available)
             if (result is UndalResult.Failure) {
                 _state.value = _state.value.copy(message = result.message)
@@ -310,7 +331,7 @@ class VendorMenuViewModel @Inject constructor(
     }
 
     fun toggleFeatured(item: MenuItem) {
-        viewModelScope.launch {
+        viewModelScope.launch(guard) {
             val result = vendorMenuRepo.setItemFeatured(item.id, !item.featured)
             _state.value = _state.value.copy(
                 message = when (result) {
@@ -381,7 +402,7 @@ class VendorMenuViewModel @Inject constructor(
     fun uploadSectionIcon(uri: Uri) {
         val draft = _state.value.sectionDraft ?: return
         _state.value = _state.value.copy(uploadProgress = 0f)
-        viewModelScope.launch {
+        viewModelScope.launch(guard) {
             when (val result = vendorMenuRepo.uploadImage(uri) { fraction ->
                 _state.value = _state.value.copy(uploadProgress = fraction)
             }) {
@@ -406,7 +427,7 @@ class VendorMenuViewModel @Inject constructor(
             return
         }
         _state.value = _state.value.copy(busy = true)
-        viewModelScope.launch {
+        viewModelScope.launch(guard) {
             val result = if (draft.isCategory) {
                 vendorMenuRepo.saveCategory(
                     id = draft.id,
@@ -455,7 +476,7 @@ class VendorMenuViewModel @Inject constructor(
         val moved = reordered.removeAt(from)
         reordered.add(to, moved)
         _state.value = _state.value.copy(dragIndex = -1)
-        viewModelScope.launch {
+        viewModelScope.launch(guard) {
             val result = if (isCategory) {
                 vendorMenuRepo.reorderCategories(reordered)
             } else {
@@ -520,7 +541,7 @@ class VendorMenuViewModel @Inject constructor(
     fun uploadComboImage(uri: Uri) {
         val draft = _state.value.comboDraft ?: return
         _state.value = _state.value.copy(uploadProgress = 0f)
-        viewModelScope.launch {
+        viewModelScope.launch(guard) {
             when (val result = vendorMenuRepo.uploadImage(uri) { fraction ->
                 _state.value = _state.value.copy(uploadProgress = fraction)
             }) {
@@ -545,7 +566,7 @@ class VendorMenuViewModel @Inject constructor(
             return
         }
         _state.value = _state.value.copy(busy = true)
-        viewModelScope.launch {
+        viewModelScope.launch(guard) {
             val result = vendorMenuRepo.saveCombo(draft)
             _state.value = _state.value.copy(
                 busy = false,
@@ -559,7 +580,7 @@ class VendorMenuViewModel @Inject constructor(
     }
 
     fun toggleCombo(combo: Combo) {
-        viewModelScope.launch {
+        viewModelScope.launch(guard) {
             val result = vendorMenuRepo.setComboAvailability(combo.id, !combo.available)
             if (result is UndalResult.Failure) _state.value = _state.value.copy(message = result.message)
         }
@@ -586,7 +607,7 @@ class VendorMenuViewModel @Inject constructor(
     fun uploadCampaignBanner(uri: Uri) {
         val draft = _state.value.campaignDraft ?: return
         _state.value = _state.value.copy(uploadProgress = 0f)
-        viewModelScope.launch {
+        viewModelScope.launch(guard) {
             when (val result = vendorMenuRepo.uploadImage(uri) { fraction ->
                 _state.value = _state.value.copy(uploadProgress = fraction)
             }) {
@@ -611,7 +632,7 @@ class VendorMenuViewModel @Inject constructor(
             return
         }
         _state.value = _state.value.copy(busy = true)
-        viewModelScope.launch {
+        viewModelScope.launch(guard) {
             val result = vendorMenuRepo.saveCampaign(draft)
             _state.value = _state.value.copy(
                 busy = false,
@@ -625,7 +646,7 @@ class VendorMenuViewModel @Inject constructor(
     }
 
     fun toggleCampaign(campaign: Campaign) {
-        viewModelScope.launch {
+        viewModelScope.launch(guard) {
             val result = vendorMenuRepo.setCampaignActive(campaign.id, !campaign.active)
             _state.value = _state.value.copy(
                 message = when (result) {
@@ -655,11 +676,14 @@ class VendorMenuViewModel @Inject constructor(
     fun saveCoupon() {
         val draft = _state.value.couponDraft ?: return
         if (!draft.isValid) {
-            _state.value = _state.value.copy(message = draft.codeError ?: draft.valueError)
+            // The sheet's own first wrong field, whatever it is: a code, a value, a
+            // cap, a window or a date already passed. Chaining two of them by hand
+            // left the other three refusing in silence.
+            _state.value = _state.value.copy(message = draft.firstError)
             return
         }
         _state.value = _state.value.copy(busy = true)
-        viewModelScope.launch {
+        viewModelScope.launch(guard) {
             val result = vendorMenuRepo.saveCoupon(draft)
             _state.value = _state.value.copy(
                 busy = false,
@@ -673,7 +697,7 @@ class VendorMenuViewModel @Inject constructor(
     }
 
     fun toggleCoupon(coupon: VendorCoupon) {
-        viewModelScope.launch {
+        viewModelScope.launch(guard) {
             val result = vendorMenuRepo.setCouponActive(coupon.code, !coupon.active)
             _state.value = _state.value.copy(
                 message = when (result) {
@@ -695,7 +719,7 @@ class VendorMenuViewModel @Inject constructor(
         _state.value = _state.value.copy(
             confirmDelete = DeleteRequest(DeleteRequest.Kind.DISH, item.id, item.name, null)
         )
-        viewModelScope.launch {
+        viewModelScope.launch(guard) {
             val used = vendorMenuRepo.recentOrdersUsing(item.name)
             val current = _state.value.confirmDelete
             if (current != null && current.id == item.id) {
@@ -741,7 +765,7 @@ class VendorMenuViewModel @Inject constructor(
     fun confirmDelete() {
         val request = _state.value.confirmDelete ?: return
         _state.value = _state.value.copy(confirmDelete = null, busy = true)
-        viewModelScope.launch {
+        viewModelScope.launch(guard) {
             val result: UndalResult<Unit> = when (request.kind) {
                 DeleteRequest.Kind.DISH -> vendorMenuRepo.deleteItem(request.id)
                 DeleteRequest.Kind.SECTION -> vendorMenuRepo.deleteCategory(request.id)

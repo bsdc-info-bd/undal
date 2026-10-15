@@ -74,6 +74,19 @@ class VendorOrderDetailViewModel @Inject constructor(
 
     private val _state = MutableStateFlow(State())
     val state: StateFlow<State> = _state.asStateFlow()
+    /**
+     * Nothing this ViewModel does may end the process.
+     *
+     * An exception that escapes a `viewModelScope` job is uncaught, and Android's
+     * answer to an uncaught exception is to kill the app — which the person
+     * experiences as the app vanishing a few seconds after it opened, then the
+     * crash guard reopening it, then the home screen. Every coroutine here carries
+     * this handler, so a failed read becomes one sentence where the screen already
+     * shows messages.
+     */
+    private val guard = com.undal.syl.app.core.util.UndalGuards.viewModel("reading this order") { message ->
+        _state.value = _state.value.copy(infoMessage = message, busy = false)
+    }
 
     private val _now = MutableStateFlow(System.currentTimeMillis())
     val now: StateFlow<Long> = _now.asStateFlow()
@@ -82,7 +95,7 @@ class VendorOrderDetailViewModel @Inject constructor(
     private var typingPublished = false
 
     init {
-        viewModelScope.launch {
+        viewModelScope.launch(guard) {
             while (true) {
                 _now.value = System.currentTimeMillis()
                 delay(1_000L)
@@ -95,7 +108,7 @@ class VendorOrderDetailViewModel @Inject constructor(
         this.orderId = orderId
         _state.value = _state.value.copy(chatOpen = openChatInitially)
 
-        viewModelScope.launch {
+        viewModelScope.launch(guard) {
             vendorOrderRepo.observeOrder(orderId).collect { order ->
                 _state.value = _state.value.copy(
                     loading = false,
@@ -112,7 +125,7 @@ class VendorOrderDetailViewModel @Inject constructor(
             }
         }
 
-        viewModelScope.launch {
+        viewModelScope.launch(guard) {
             chatRepo.observeMessages(orderId).collect { messages ->
                 val lastRead = chatRepo.vendorLastRead(orderId)
                 val unread = if (_state.value.chatOpen) 0 else chatRepo.unreadFromCustomer(messages, lastRead)
@@ -127,13 +140,13 @@ class VendorOrderDetailViewModel @Inject constructor(
             }
         }
 
-        viewModelScope.launch {
+        viewModelScope.launch(guard) {
             chatRepo.observeCustomerTyping(orderId).collect { typing ->
                 _state.value = _state.value.copy(customerTyping = typing)
             }
         }
 
-        viewModelScope.launch {
+        viewModelScope.launch(guard) {
             chatRepo.observeReadMark(orderId, ChatRepo.SENDER_CUSTOMER).collect { seenAt ->
                 _state.value = _state.value.copy(customerSeenAtMillis = seenAt)
             }
@@ -237,7 +250,7 @@ class VendorOrderDetailViewModel @Inject constructor(
             )
             return
         }
-        viewModelScope.launch {
+        viewModelScope.launch(guard) {
             _state.value = _state.value.copy(busy = true)
             when (val result = orderStatusRepo.markDelivered(orderId, collected)) {
                 is UndalResult.Success -> _state.value = _state.value.copy(
@@ -262,7 +275,7 @@ class VendorOrderDetailViewModel @Inject constructor(
     private fun transition(successMessage: String, block: suspend () -> UndalResult<Unit>) {
         if (_state.value.busy) return
         _state.value = _state.value.copy(busy = true)
-        viewModelScope.launch {
+        viewModelScope.launch(guard) {
             val result = block()
             _state.value = _state.value.copy(
                 busy = false,
@@ -282,7 +295,7 @@ class VendorOrderDetailViewModel @Inject constructor(
         _state.value = _state.value.copy(chatOpen = open, unread = if (open) 0 else _state.value.unread)
         if (open) {
             val newest = _state.value.messages.maxOfOrNull { it.tsMillis } ?: 0L
-            viewModelScope.launch {
+            viewModelScope.launch(guard) {
                 chatRepo.markVendorRead(orderId, newest)
                 chatRepo.publishRead(orderId, ChatRepo.SENDER_VENDOR, newest)
             }
@@ -294,14 +307,14 @@ class VendorOrderDetailViewModel @Inject constructor(
         val typing = value.isNotBlank()
         if (typing != typingPublished) {
             typingPublished = typing
-            viewModelScope.launch { chatRepo.setVendorTyping(orderId, typing) }
+            viewModelScope.launch(guard) { chatRepo.setVendorTyping(orderId, typing) }
         }
     }
 
     fun sendMessage() {
         val body = _state.value.messageText.trim()
         if (body.isEmpty()) return
-        viewModelScope.launch {
+        viewModelScope.launch(guard) {
             when (chatRepo.sendAsVendor(orderId, body)) {
                 is UndalResult.Success -> {
                     _state.value = _state.value.copy(messageText = "")
@@ -348,7 +361,7 @@ class VendorOrderDetailViewModel @Inject constructor(
     private fun escalateIfOverdue(order: VendorOrder) {
         if (!order.isOverdue() || _state.value.overdueNoticeSent) return
         _state.value = _state.value.copy(overdueNoticeSent = true)
-        viewModelScope.launch {
+        viewModelScope.launch(guard) {
             runCatching {
                 workerApi.notifyVendorSelf(
                     kind = "overdue",

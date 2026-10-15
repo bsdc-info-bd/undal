@@ -74,14 +74,14 @@ fun CustomerNotificationConsent(progress: OnboardingProgress) {
             ),
             continueLabel = "Allow notifications",
             onContinue = {
-                scope.launch { progress.markNotificationConsentAsked() }
+                scope.launch { runCatching { progress.markNotificationConsentAsked() } }
                 ask = false
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
                     launcher.launch(Manifest.permission.POST_NOTIFICATIONS)
                 }
             },
             onDismiss = {
-                scope.launch { progress.markNotificationConsentAsked() }
+                scope.launch { runCatching { progress.markNotificationConsentAsked() } }
                 ask = false
             }
         )

@@ -47,7 +47,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
@@ -60,13 +62,16 @@ import com.undal.syl.app.core.design.UndalEmptyState
 import com.undal.syl.app.core.design.UndalPrimaryButton
 import com.undal.syl.app.core.design.UndalScaffold
 import com.undal.syl.app.core.design.UndalStatusPill
+import com.undal.syl.app.core.design.UndalTextButton
 import com.undal.syl.app.core.design.UndalTextField
 import com.undal.syl.app.core.model.Campaign
 import com.undal.syl.app.core.model.MenuCard
 import com.undal.syl.app.core.model.MenuSort
 import com.undal.syl.app.core.theme.UndalDimens
+import com.undal.syl.app.core.util.CouponMath
 import com.undal.syl.app.core.util.Distance
 import com.undal.syl.app.core.util.Money
+import com.undal.syl.app.data.repo.CouponRepo
 
 /**
  * The store (C-021 … C-037).
@@ -89,10 +94,14 @@ fun StoreScreen(
     val state by viewModel.state.collectAsState()
     var refreshing by remember { mutableStateOf(false) }
 
-    LaunchedEffect(Unit) { viewModel.refreshAddress() }
+    LaunchedEffect(Unit) {
+        viewModel.refreshAddress()
+        viewModel.refreshOffers()
+    }
     LaunchedEffect(refreshing) {
         if (refreshing) {
             viewModel.refreshAddress()
+            viewModel.refreshOffers()
             kotlinx.coroutines.delay(700)
             refreshing = false
         }
@@ -161,6 +170,12 @@ fun StoreScreen(
                                 }
                             }
                         )
+                    }
+                }
+
+                if (state.offers.isNotEmpty()) {
+                    item(span = { GridItemSpan(maxLineSpan) }) {
+                        OfferStrip(offers = state.offers)
                     }
                 }
 
@@ -404,6 +419,80 @@ private fun GreetingHeader(
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
                 )
+            }
+        }
+    }
+}
+
+/**
+ * The kitchen's live offers, in the words the web store uses for the same list.
+ *
+ * This is the discovery half of a promotion. The basket already had somewhere to
+ * *enter* a code, and an automatic offer already priced itself silently — but
+ * nowhere in the app could a customer find out a code existed, which is what
+ * "there is no coupon option in the app" actually meant. Same board, same
+ * headline, same two reach states as the storefront's banner: one promotion, and
+ * the phone and the browser describe it identically.
+ *
+ * Tapping copies the code, because the only thing worth doing with a code on this
+ * screen is taking it to the basket — and a code the customer has to retype from
+ * a small screen is a code that gets mistyped.
+ */
+@Composable
+private fun OfferStrip(offers: List<CouponRepo.Coupon>) {
+    val clipboard = LocalClipboardManager.current
+    var copied by remember { mutableStateOf<String?>(null) }
+
+    LazyRow(horizontalArrangement = Arrangement.spacedBy(UndalDimens.sm)) {
+        items(offers, key = { it.code }) { offer ->
+            Surface(
+                modifier = Modifier.width(260.dp),
+                shape = RoundedCornerShape(UndalDimens.radiusMd),
+                color = MaterialTheme.colorScheme.primaryContainer
+            ) {
+                Column(modifier = Modifier.padding(UndalDimens.md)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        UndalStatusPill(
+                            text = offer.labelFor(),
+                            containerColour = MaterialTheme.colorScheme.primary,
+                            contentColour = MaterialTheme.colorScheme.onPrimary
+                        )
+                        Spacer(Modifier.weight(1f))
+                        UndalStatusPill(
+                            // The same two sentences the web banner carries.
+                            text = if (offer.autoApply) "Applies itself" else "Type this code",
+                            containerColour = MaterialTheme.colorScheme.surface,
+                            contentColour = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    Spacer(Modifier.height(UndalDimens.xs))
+                    val condition = CouponMath.conditionLine(offer.toMath())
+                    Text(
+                        text = condition.ifBlank { "On everything we cook." },
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onPrimaryContainer,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                    if (offer.description.isNotBlank()) {
+                        Text(
+                            text = offer.description,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onPrimaryContainer,
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+                    Spacer(Modifier.height(UndalDimens.xs))
+                    UndalTextButton(
+                        text = if (copied == offer.code) "${offer.code} copied" else "Copy ${offer.code}",
+                        onClick = {
+                            clipboard.setText(AnnotatedString(offer.code))
+                            copied = offer.code
+                        },
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
             }
         }
     }

@@ -93,6 +93,23 @@
             </intent-filter>
         </activity>
 
+        <!--
+          What Undal shows when it cannot start. Reached only from the crash
+          guard, so it is not exported and has no intent filter of its own.
+
+          `singleTask` because the guard may dispatch it more than once in a row,
+          and two copies of "the app could not open" stacked on top of each other
+          would be the loop this screen exists to end. It is deliberately not the
+          launcher activity and deliberately not `excludeFromRecents`: a person
+          who put the phone down on this screen should find it again, not a blank
+          recent-apps list.
+        -->
+        <activity
+            android:name=".SafeModeActivity"
+            android:exported="false"
+            android:launchMode="singleTask"
+            android:theme="@style/Theme.Undal" />
+
         <!-- ================================================================ -->
         <!-- Background services that make a locked phone ring (PART I)        -->
         <!-- ================================================================ -->
@@ -143,6 +160,19 @@
                 android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
                 android:value="kitchen-presence" />
         </service>
+
+        <!-- The alert watchdog: an alarm the system holds on Undal's behalf, so a
+             kitchen phone whose app was swiped away or killed by a battery
+             cleaner rebuilds its order watcher without anyone opening anything.
+             Never armed on a customer phone. -->
+        <receiver
+            android:name=".core.background.AlertWatchdogReceiver"
+            android:enabled="true"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="com.undal.syl.app.action.ALERT_WATCHDOG" />
+            </intent-filter>
+        </receiver>
 
         <!-- Brings the heartbeat, the token registration and the channels back
              after a reboot, an app update or a timezone change. -->

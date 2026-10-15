@@ -54,7 +54,21 @@ class LocationSetupViewModel @Inject constructor(
         val permissionNeeded: Boolean = false,
         val saved: Boolean = false,
         val banner: String? = null,
-        val showOsmFallback: Boolean = false
+        /**
+         * Which map engine is on screen.
+         *
+         * The street map is the default because it is the one that works: it is
+         * drawn from OpenStreetMap tiles by osmdroid, in the app's own process,
+         * and it is the only one of the two the customer can actually *drag* —
+         * which is what pinning a door means. The keyless Google embed is offered
+         * as a labelled choice for anyone who wants the familiar look, and it
+         * degrades to a sentence rather than a grey box, because Google serves it
+         * to a WebView only when it feels like it.
+         *
+         * This step is mandatory: no pin, no address, no order. The map that opens
+         * it must not be the one that can arrive blank.
+         */
+        val showGoogleEmbed: Boolean = false
     ) {
         val location: UndalLocation
             get() = UndalLocation(lat, lng, title, desc, note, label, accuracyMeters)
@@ -68,11 +82,24 @@ class LocationSetupViewModel @Inject constructor(
 
     private val _state = MutableStateFlow(State())
     val state: StateFlow<State> = _state.asStateFlow()
+    /**
+     * Nothing this ViewModel does may end the process.
+     *
+     * An exception that escapes a `viewModelScope` job is uncaught, and Android's
+     * answer to an uncaught exception is to kill the app — which the person
+     * experiences as the app vanishing a few seconds after it opened, then the
+     * crash guard reopening it, then the home screen. Every coroutine here carries
+     * this handler, so a failed read becomes one sentence where the screen already
+     * shows messages.
+     */
+    private val guard = com.undal.syl.app.core.util.UndalGuards.viewModel("reading your saved address") { message ->
+        _state.value = _state.value.copy(banner = message, busy = false)
+    }
 
     private var displayName: String = ""
 
     init {
-        viewModelScope.launch {
+        viewModelScope.launch(guard) {
             // Restore anything already known: a saved address (re-pin flow), a
             // draft from an interrupted session, and the name/phone typed at
             // registration.
@@ -128,7 +155,7 @@ class LocationSetupViewModel @Inject constructor(
     }
 
     fun captureCurrentLocation(context: Context) {
-        viewModelScope.launch {
+        viewModelScope.launch(guard) {
             _state.value = _state.value.copy(locating = true, banner = null)
             when (val fix = controller.currentFix(context)) {
                 is UndalResult.Success -> {
@@ -165,7 +192,7 @@ class LocationSetupViewModel @Inject constructor(
             accuracyNote = "Pin placed by hand — drag it onto your building.",
             label = controller.geocoderFallback(lat, lng)
         )
-        viewModelScope.launch {
+        viewModelScope.launch(guard) {
             val label = controller.describe(lat, lng)
             _state.value = _state.value.copy(label = label)
             persistDraft()
@@ -190,8 +217,9 @@ class LocationSetupViewModel @Inject constructor(
         _state.value = _state.value.copy(phone = digits, phoneError = null, banner = null)
     }
 
-    fun toggleOsmFallback() {
-        _state.value = _state.value.copy(showOsmFallback = !_state.value.showOsmFallback)
+    /** Street map ⇄ Google embed. Both draw the same pin; only one of them drags. */
+    fun toggleGoogleEmbed() {
+        _state.value = _state.value.copy(showGoogleEmbed = !_state.value.showGoogleEmbed)
     }
 
     fun save(onSaved: () -> Unit) {
@@ -211,7 +239,7 @@ class LocationSetupViewModel @Inject constructor(
         }
 
         _state.value = current.copy(busy = true, banner = null)
-        viewModelScope.launch {
+        viewModelScope.launch(guard) {
             val name = displayName.ifBlank { auth.currentUser?.displayName.orEmpty() }
             // Keep the number on the device as well, so an interrupted save (a
             // call, a flat battery) does not lose it.

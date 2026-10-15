@@ -10,7 +10,7 @@ laptop step, no CLI step, no paid service anywhere in the stack.
 
 > Status of the build plan: **Response 1 of 5** is complete — foundation,
 > security rules, Worker, pipelines and the counted feature list.
-> `FEATURES.md` tracks the 256 features and ticks each one only when it is
+> `FEATURES.md` tracks the 263 features and ticks each one only when it is
 > really implemented.
 
 ---
@@ -193,16 +193,24 @@ Battery and autostart paths by brand (Android 13–15):
 **Honest caveat:** Android can always throttle background work under extreme
 memory pressure, and a device that is switched off receives nothing. The app is
 built for that reality: the alert has three independent triggers — the live
-Firestore listener, the RTDB `orderLive` mirror and the Worker's FCM push — and
-a fourth safety net on the server side: if the kitchen goes silent for fifteen
-minutes while the store is open, the Worker closes the store automatically and
-pushes you a **Reopen now** notice, so a sleeping phone can never quietly take
-orders it does not see.
+Firestore listener, the RTDB `orderLive` mirror and the Worker's FCM push — plus
+a watchdog of its own on the device, an alarm the system holds on Undal's behalf
+that rebuilds the order watcher and the heartbeat within nine minutes of a swipe
+or a kill. On the server side, ten minutes of silence while the store is open
+closes the store automatically — and when the phone comes back inside half an
+hour the Worker reopens it and says so, so a sleeping phone can never quietly
+take orders it does not see, and a blink never costs the kitchen an evening.
 
 Every rung of that ladder — the data-only payload, the OAuth2 minting, the topic
 fallback, the re-alert windows, the alarm channel, the looping player, the
 full-screen intent, the OEM exemption screens and the boot receiver — is written
 up with its code, its file path and the reason it exists in
+**`docs/CRASH-DISCIPLINE.md`** is the same argument for the app itself: an
+exception that escapes a `viewModelScope` is uncaught, Android's answer to an
+uncaught exception is a dead process, and the customer's experience is an app
+that reopens itself and then closes. Every coroutine in the app carries a handler
+from `UndalGuards`, so a failed read becomes one sentence on the screen.
+
 **`docs/ALERT-RELIABILITY.md`**, together with the device acceptance matrix that
 has to be run on the real kitchen phone.
 
@@ -247,8 +255,9 @@ first build of the project cannot fail on a bleeding-edge version skew.
 ```
 undal/
 ├── README.md                       this runbook
-├── FEATURES.md                     the counted 256-feature checklist
+├── FEATURES.md                     the counted 263-feature checklist
 ├── docs/ALERT-RELIABILITY.md       the alert ladder: payload, channels, manifest, acceptance
+├── docs/CRASH-DISCIPLINE.md        why no ViewModel coroutine may end the process
 ├── assets/sound/                   the official Undal order sound
 ├── app/                            the Android app (customer + kitchen)
 ├── firebase/                       rules, indexes, firebase.json
@@ -280,17 +289,17 @@ Steering the build with the task owner's command phrases: `Continue`,
 
 ## 11 · Acceptance table (PART R)
 
-Eighteen things that have to be true before this is called finished. The **result**
+Nineteen things that have to be true before this is called finished. The **result**
 column is what was actually run for this build; the **your phone** column is the
 step only you can do, because it needs your own Firebase project.
 
 | # | What is checked | How | Result |
 | --- | --- | --- | --- |
 | 1 | The Worker compiles | `cd worker && npx tsc --noEmit` | **0 errors** |
-| 2 | The Android sources hang together without a compiler | `python3 tools/check_kotlin_shape.py` and `check_import_contracts.py` | **128 files**: balanced, no split strings, every `com.undal.syl.app` import and member call resolves, 283 cross-package names indexed |
-| 3 | No unfinished markers anywhere | `bash tools/check_no_placeholders.sh` | **clean across 188 files** |
-| 4 | The web prices food exactly like the app | `node tools/check-web-rules.mjs` | **17 rule families · 130 comparisons**, all from the app's own test vectors (82 assertions shared, app-only rules declared out loud) |
-| 5 | Every page renders and every route has a handler | `cd worker && npm test` | **114 tests across 8 files**; `/ /store /item/{id} /about /basket /checkout /login /account /track /order/{id} /download /robots.txt /sitemap.xml /manifest.webmanifest /sw.js /icons/* /healthz /api/store/* /api/account/*` are asserted by name, and the rendered pages are asserted as HTML |
+| 2 | The Android sources hang together without a compiler | `python3 tools/check_kotlin_shape.py` and `check_import_contracts.py` | **142 files**: balanced, no split strings, every `com.undal.syl.app` import and member call resolves, 310 cross-package names indexed |
+| 3 | No unfinished markers anywhere | `bash tools/check_no_placeholders.sh` | **clean across 207 files** |
+| 4 | The web prices food exactly like the app | `node tools/check-web-rules.mjs` | **20 rule families · 220 comparisons**, all from the app's own test vectors (140 assertions shared, app-only rules declared out loud) |
+| 5 | Every page renders and every route has a handler | `cd worker && npm test` | **134 tests across 10 files**; `/ /store /item/{id} /about /basket /checkout /login /account /track /order/{id} /download /robots.txt /sitemap.xml /manifest.webmanifest /sw.js /icons/* /healthz /api/store/* /api/account/*` are asserted by name, and the rendered pages are asserted as HTML |
 | 6 | The API refuses politely | `curl` probes | no web key → a sentence, not a stack trace; order without a token → `missing-id-token`; rate buckets 90/120/300 per minute per IP |
 | 7 | Icons and QR codes are real images | decoded with `pngjs`; QR matrix compared with `qrcode@1.5.4` | icons **1744 / 5868 / 4054 bytes**, QR **exact match on 43 URLs** |
 | 8 | The web store installs as an app | manifest + service worker + `/download` with two QR codes and the unknown-sources guide | shipped (P-014, P-016) |
@@ -304,6 +313,7 @@ step only you can do, because it needs your own Firebase project.
 | 16 | Nothing here costs money | Spark plan, Cloudinary free, Workers free, OpenStreetMap tiles, Actions free — see §7 | no billing account anywhere |
 | 17 | The order alert leaves the Worker in the only shape that can ring a phone | `worker/test/fcm-alert.test.ts` | **14 tests**: data-only with no `notification` block anywhere, `android.priority HIGH`, `ttl 300s`, APNs headers at a priority Apple permits, topic fallback when the device list is empty, dead tokens purged |
 | 18 | The web account is the app's account, and only its owner can touch it | `worker/test/account.test.ts` against a fake Firebase that signs real RS256 tokens | **27 tests**: a uid only ever comes from a verified ID token, a forged one is refused by the real signature check, a profile is written only in the shape the Firestore rules accept, the history needs no composite index |
+| 19 | Nothing in the app breaks a promise to Android, and the crash guard cannot loop | `python3 tools/check_foreground_contract.py` and `CrashRecoveryPolicyTest` | **142 files**: every foreground-service call goes through `UndalForeground`, every `onStartCommand` takes the foreground before it decides anything, and no `Task` is read as though `getResult()` waited; **12 tests** pin one startup reopen then the honest screen, three ordinary reopens then the honest screen, two honest screens then the platform |
 
 **What only your project can prove.** Four checks need your real Firebase project,
 your Cloudinary account and a signed keystore, so run them once after §3e:
@@ -356,3 +366,57 @@ Three decisions are worth knowing about:
 - **An account is optional.** A guest can order. The profile document is written
   only once a pin exists, because the app reads a missing `users/{uid}` as
   "onboarding not finished" and a half-written document would lie to it.
+
+### The offers a customer sees
+
+A promotion the kitchen creates in the app reaches the website with no second
+step, and the basket applies the best one **by itself** — nobody has to know a
+code exists:
+
+| The kitchen's two switches | What the customer gets |
+| --- | --- |
+| **Apply automatically** on | the basket prices it with no code typed, on the web and in the app |
+| **Apply automatically** off | it works only when the code is typed — but it can still be advertised |
+| **Show on the web store** on | it appears in the offer strip on `/`, `/store` and `/basket`, with the tag *Applied automatically* or *Type this code at checkout* |
+
+Both switches default to **on**, in the console, in the app's own reader and in
+the Worker, because a coupon the owner created and switched on has to reach
+somebody. Turning *Show on the web store* off keeps an automatic coupon working
+in silence — a voucher for people who already know its name. Turning *Apply
+automatically* off makes a code-only offer: the strip can advertise it, and the
+checkout will never apply it to a customer who did not type it.
+
+The rule that decides whether a code is valid, what it is worth, and whether it
+may run today lives in **one place per surface, proven to be the same rule**:
+`worker/src/web/coupons.ts`, the storefront's own script, and
+`app/…/core/util/CouponMath.kt`. `tools/check-web-rules.mjs` replays the app's
+own JVM test vectors through both JavaScript copies, and
+`tools/check-coupon-parity.mjs` proves the wiring. The checkout re-reads the live
+coupon document before it writes an order, so a browser that lies about a
+discount changes nothing: the price the kitchen sees is the price the server
+computed.
+
+**One expiry, four shapes.** `coupons.expiresAt` is written by the app as a
+Firestore timestamp, and each surface meets it differently: the Worker gets an
+ISO string over REST, the phone gets a `Timestamp` object from the SDK, and a
+cached offer board carries it already normalised as `expiresAtMillis`. Every
+reader accepts all four — `couponExpiryMillis` in the Worker,
+`CouponMath.expiryMillis` in the app, pinned by `worker/test/coupons.test.ts` and
+`CouponMathTest`. A reader that knows only one shape answers "no expiry" for the
+others, and "no expiry" reads as "live forever": that is how a phone came to
+accept a code the website refused as expired, with the owner certain the coupon
+was switched on.
+
+**A refusal names its fact.** "EID20 has expired" is a dead end at the checkout;
+"EID20 expired on 14 Oct 2026" is an answer, and it is the same sentence in
+Dhaka time on both surfaces — the Worker's `couponSentence` and the app's
+`CouponRepo.describe`. The kitchen's own coupon list says it too, with a state
+line under the switch (*Live · ends 16 Oct 2026*, *Expired on 13 Oct 2026 · not
+running*, *All 40 uses spent · not running*), because a toggle shows what the
+owner asked for and not what a customer will get. The editor refuses to save a
+date that has already passed, and the offer strip re-judges every banner against
+the clock of the request that is rendering it, so a cached board cannot advertise
+an offer the order is about to refuse.
+
+Orders pay cash on delivery. There is no card, no wallet and no payment gateway
+anywhere in this repository.

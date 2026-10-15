@@ -56,6 +56,8 @@ import com.undal.syl.app.core.design.UndalTextField
 import com.undal.syl.app.core.design.UndalTextButton
 import com.undal.syl.app.core.theme.UndalDimens
 import com.undal.syl.app.core.theme.undalSemantics
+import com.undal.syl.app.core.background.PresenceHeartbeat
+import com.undal.syl.app.core.model.PresenceSummary
 import com.undal.syl.app.core.util.Money
 import com.undal.syl.app.core.util.TimeDhaka
 import com.undal.syl.app.features.vendor.VendorAgePill
@@ -174,7 +176,7 @@ fun VendorDashboardScreen(
                     item {
                         UndalAlertBanner(
                             text = "Undal closed the store automatically: this phone stopped checking in " +
-                                "for fifteen minutes. Reopen when you are back.",
+                                "for ten minutes. Reopen when you are back.",
                             icon = Icons.Filled.Notifications,
                             action = {
                                 UndalTextButton(
@@ -183,6 +185,39 @@ fun VendorDashboardScreen(
                                 )
                             }
                         )
+                    }
+                }
+
+                // The question the opening reminder asks, in the place the tap
+                // lands: one button between "we are closed" and orders ringing.
+                if (!state.openState.serviceable && !state.loading) {
+                    item {
+                        VendorSection(
+                            title = "Are you taking orders?",
+                            subtitle = state.openState.nextOpeningLine
+                        ) {
+                            Column {
+                                Text(
+                                    text = if (state.store.autoClosed) {
+                                        "Undal paused the store because this phone stopped checking in. " +
+                                            "Confirming starts the heartbeat again and opens the store."
+                                    } else {
+                                        "Confirming takes you online right now: customers can order and this " +
+                                            "phone rings for them."
+                                    },
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                                Spacer(Modifier.height(UndalDimens.sm))
+                                UndalPrimaryButton(
+                                    text = "Yes — take orders now",
+                                    onClick = { viewModel.confirmOpenNow(context) },
+                                    icon = Icons.Filled.Notifications,
+                                    enabled = !state.busy,
+                                    loading = state.busy
+                                )
+                            }
+                        }
                     }
                 }
 
@@ -261,6 +296,22 @@ fun VendorDashboardScreen(
                     ) {
                         VendorWeekChart(points = state.week)
                     }
+                }
+
+                item {
+                    ConnectionCard(
+                        // The age is recomputed from the one-second clock the
+                        // queue already ticks on, so "last check-in" counts up
+                        // while the owner watches instead of freezing at paint.
+                        summary = PresenceSummary.of(
+                            days = state.presenceDays,
+                            heartbeatAgeMillis = state.presence?.lastSeen
+                                ?.takeIf { lastSeen -> lastSeen > 0L }
+                                ?.let { lastSeen -> now - lastSeen }
+                                ?: -1L
+                        ),
+                        loaded = state.presenceLoaded
+                    )
                 }
 
                 if (state.runningTimers.isNotEmpty()) {
@@ -511,6 +562,100 @@ fun VendorDashboardScreen(
         }
     }
 }
+
+/**
+ * Offline and online time, measured rather than guessed (V-013 era).
+ *
+ * Every number here comes from the Worker's five-minute presence samples for the
+ * last seven Dhaka days, so "we were offline twelve minutes yesterday" is a
+ * measurement, not a memory. The heartbeat line is this phone's own last
+ * check-in, which is the number the ten-minute auto-offline rule reads.
+ */
+@Composable
+private fun ConnectionCard(summary: PresenceSummary, loaded: Boolean) {
+    val today = summary.today
+    VendorSection(
+        title = "Connection",
+        subtitle = if (loaded) {
+            "Five-minute samples the Worker kept for this kitchen over seven days."
+        } else {
+            "Waiting for the first sample — the Worker checks in every five minutes."
+        }
+    ) {
+        Column {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(UndalDimens.xs)
+            ) {
+                VendorStatCard(
+                    label = "Uptime",
+                    value = if (loaded) summary.uptimeLabel else "—",
+                    caption = if (summary.sampledMinutes > 0) {
+                        "${summary.sampledMinutes} min sampled"
+                    } else {
+                        "no samples yet"
+                    },
+                    highlight = summary.heartbeatHealthy,
+                    modifier = Modifier.weight(1f)
+                )
+                VendorStatCard(
+                    label = "Offline",
+                    value = PresenceSummary.formatMinutes(summary.offlineMinutes),
+                    caption = "in 7 days",
+                    highlight = summary.heartbeatAgeMillis > PresenceHeartbeat.STALE_AGE_MILLIS,
+                    modifier = Modifier.weight(1f)
+                )
+            }
+            Spacer(Modifier.height(UndalDimens.sm))
+            UndalKeyValueRow(
+                label = "This phone",
+                value = if (summary.heartbeatAgeMillis < 0L) "checking…" else "last check-in ${summary.heartbeatLabel}"
+            )
+            UndalKeyValueRow(
+                label = "Offline time",
+                value = summary.offlineLine
+            )
+            UndalKeyValueRow(
+                label = "Automatic pauses",
+                value = if (summary.pauses == 0) {
+                    "none in 7 days"
+                } else {
+                    "${summary.pauses} paused · ${summary.restores} reopened"
+                }
+            )
+            UndalKeyValueRow(
+                label = "Outages",
+                value = summary.outageLine
+            )
+            if (today != null && today.outages.isNotEmpty()) {
+                Spacer(Modifier.height(UndalDimens.xs))
+                Text(
+                    text = "Today, in Dhaka time",
+                    style = MaterialTheme.typography.labelLarge,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                today.outages.takeLast(MAX_OUTAGE_LINES).forEach { outage ->
+                    UndalKeyValueRow(
+                        label = if (outage.open) "Still offline" else "Outage",
+                        value = outage.span,
+                        icon = Icons.Filled.Info
+                    )
+                }
+            }
+            Text(
+                text = "A pause is Undal's own decision: this phone stopped checking in for ten " +
+                    "minutes while the store was open, so orders were paused before a customer " +
+                    "waited on one nobody could cook. Coming back within half an hour reopens it " +
+                    "by itself and tells you why.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+    }
+}
+
+/** The card never grows taller than this, however bad the night was. */
+private const val MAX_OUTAGE_LINES = 4
 
 @Composable
 private fun StoreHero(

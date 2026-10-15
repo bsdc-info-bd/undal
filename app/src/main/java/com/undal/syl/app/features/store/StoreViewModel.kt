@@ -15,6 +15,7 @@ import com.undal.syl.app.core.util.Money
 import com.undal.syl.app.core.util.TimeDhaka
 import com.undal.syl.app.data.repo.AuthRepo
 import com.undal.syl.app.data.repo.CartRepo
+import com.undal.syl.app.data.repo.CouponRepo
 import com.undal.syl.app.data.repo.MenuRepo
 import com.undal.syl.app.data.repo.StoreRepo
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -38,7 +39,8 @@ class StoreViewModel @Inject constructor(
     private val storeRepo: StoreRepo,
     private val menuRepo: MenuRepo,
     private val cartRepo: CartRepo,
-    private val authRepo: AuthRepo
+    private val authRepo: AuthRepo,
+    private val couponRepo: CouponRepo
 ) : ViewModel() {
 
     /** How the customer's pinned address stands against the kitchen's radius. */
@@ -59,6 +61,16 @@ class StoreViewModel @Inject constructor(
         val menu: MenuSnapshot = MenuSnapshot(),
         val cards: List<MenuCard> = emptyList(),
         val campaigns: List<Campaign> = emptyList(),
+        /**
+         * The offers the kitchen is running, from the same public board the web
+         * store prints its banners from.
+         *
+         * A code a customer cannot see is a code they cannot type, and an
+         * automatic offer that this basket does not reach yet is invisible — so
+         * without this list the app's only coupon surface is the field in the
+         * basket, which is a place to *enter* a code and not a place to find one.
+         */
+        val offers: List<CouponRepo.Coupon> = emptyList(),
         val query: String = "",
         val categoryId: String? = null,
         val subcategoryId: String? = null,
@@ -77,6 +89,19 @@ class StoreViewModel @Inject constructor(
 
     private val _state = MutableStateFlow(State())
     val state: StateFlow<State> = _state.asStateFlow()
+    /**
+     * Nothing this ViewModel does may end the process.
+     *
+     * An exception that escapes a `viewModelScope` job is uncaught, and Android's
+     * answer to an uncaught exception is to kill the app — which the person
+     * experiences as the app vanishing a few seconds after it opened, then the
+     * crash guard reopening it, then the home screen. Every coroutine here carries
+     * this handler, so a failed read becomes one sentence where the screen already
+     * shows messages.
+     */
+    private val guard = com.undal.syl.app.core.util.UndalGuards.viewModel("reading the menu") { message ->
+        _state.value = _state.value.copy(errorMessage = message)
+    }
 
     private val addressFlow = MutableStateFlow<UndalLocation?>(null)
     private val filterFlow = MutableStateFlow(Filter())
@@ -90,12 +115,12 @@ class StoreViewModel @Inject constructor(
     )
 
     init {
-        viewModelScope.launch {
+        viewModelScope.launch(guard) {
             refreshAddress()
         }
         // Quantities per dish drive the stepper on every card, so the grid shows
         // exactly how many of this dish are already in the cart.
-        viewModelScope.launch {
+        viewModelScope.launch(guard) {
             cartRepo.cart.collect { cart ->
                 quantitiesFlow.value = buildMap {
                     cart.lines.forEach { line ->
@@ -104,7 +129,7 @@ class StoreViewModel @Inject constructor(
                 }
             }
         }
-        viewModelScope.launch {
+        viewModelScope.launch(guard) {
             val filterAndQuantities = combine(filterFlow, quantitiesFlow) { filter, quantities ->
                 filter to quantities
             }
@@ -145,8 +170,15 @@ class StoreViewModel @Inject constructor(
                     greeting = greetingForHour(TimeDhaka.now().hour),
                     addressLabel = addressLabelOf(address)
                 )
-            }.collect { next -> _state.value = next }
+            }.collect { next ->
+                // The offers are not an input to this combine: they come from the
+                // Worker's public board on their own clock, and the menu snapshot
+                // rebuilds the whole State on every emission. Carrying them across
+                // is what stops a menu update from emptying the offer strip.
+                _state.value = next.copy(offers = _state.value.offers)
+            }
         }
+        viewModelScope.launch(guard) { refreshOffers() }
     }
 
     /** The header greeting, told by the Dhaka clock (C-021). */
@@ -165,8 +197,26 @@ class StoreViewModel @Inject constructor(
 
     /** Re-reads the pinned address; call this whenever the customer returns. */
     fun refreshAddress() {
-        viewModelScope.launch {
+        viewModelScope.launch(guard) {
             addressFlow.value = authRepo.loadProfileLocation()
+        }
+    }
+
+    /**
+     * The offers, as the kitchen published them.
+     *
+     * The board is cached in [CouponRepo] for a minute, so this is cheap to call
+     * every time the customer comes back to the store. An empty answer is a real
+     * answer — a kitchen running no promotion shows no strip — and a failed read
+     * leaves the last good list rather than blanking the screen, because an offer
+     * that flickers out is worse than one that is a minute stale.
+     */
+    fun refreshOffers() {
+        viewModelScope.launch(guard) {
+            val board = couponRepo.board()
+            if (board.isNotEmpty() || _state.value.offers.isEmpty()) {
+                _state.value = _state.value.copy(offers = board)
+            }
         }
     }
 
@@ -200,7 +250,7 @@ class StoreViewModel @Inject constructor(
 
     /** Quick add straight from the grid, with the dish's own note left empty. */
     fun quickAdd(itemId: String) {
-        viewModelScope.launch {
+        viewModelScope.launch(guard) {
             val item = _state.value.menu.dish(itemId)
             if (item != null) {
                 if (!item.available) {
@@ -239,7 +289,7 @@ class StoreViewModel @Inject constructor(
     }
 
     fun quickRemove(itemId: String) {
-        viewModelScope.launch {
+        viewModelScope.launch(guard) {
             val cart = cartRepo.current()
             val line = cart.lines.firstOrNull { it.id == itemId } ?: return@launch
             cartRepo.setQuantity(line.id, line.note, line.quantity - 1)

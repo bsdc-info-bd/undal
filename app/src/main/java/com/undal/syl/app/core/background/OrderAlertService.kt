@@ -21,8 +21,6 @@ import android.os.VibratorManager
 import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
-import androidx.core.app.ServiceCompat
-import androidx.core.content.ContextCompat
 import androidx.core.content.getSystemService
 import com.google.firebase.database.DataSnapshot
 import com.google.firebase.database.DatabaseError
@@ -64,7 +62,14 @@ import org.json.JSONObject
  *   · **a resource that will not open** — the tone is then read again from a copy
  *     in the app's own cache, and if even that fails the phone's own alarm tone
  *     rings in its place. A fallback ring is worse than the Undal sound and far
- *     better than a missed order.
+ *     better than a missed order;
+ *   · **a player that stops on its own** — an audio server that restarts, a ROM
+ *     that reclaims the session, a decoder that gives up on the file. Nothing
+ *     tells the service; the notification stays and the room goes quiet. So the
+ *     ring is *watched*: every ten seconds while an order waits, [keepRinging]
+ *     asks whether anything is actually making noise and rebuilds it if not.
+ *     A phone that is visibly alerting and audibly silent is the one state this
+ *     service must never be in.
  *
  * Two orders are not one order
  * ----------------------------
@@ -92,6 +97,18 @@ class OrderAlertService : Service() {
     private var ringtone: Ringtone? = null
     private var vibrator: Vibrator? = null
     private var liveReference: com.google.firebase.database.DatabaseReference? = null
+
+    /**
+     * How many times the bundled tone has failed since this ring started, and
+     * when the fallback tone was last tried.
+     *
+     * Together they make a bad decoder quiet rather than busy: the bundled sound
+     * gets [MAX_BUNDLED_ATTEMPTS] goes, then the phone's own alarm tone takes
+     * over — and *that* is retried no faster than once per watchdog tick. A
+     * rebuild loop on the main thread would turn "no order sound" into "no app".
+     */
+    private var soundFailures = 0
+    private var lastFallbackAtMillis = 0L
     private var currentOrderId: String? = null
     private var currentShortId: String = ""
 
@@ -122,6 +139,64 @@ class OrderAlertService : Service() {
         runCatching { tone.play() }
         handler.postDelayed(this, RINGER_REPLAY_MILLIS)
         }
+    }
+
+    /**
+     * The ring's own watchdog.
+     *
+     * `MediaPlayer` can stop without telling anybody: an audio server restart, a
+     * decoder that errors out, a ROM that reclaims the session, a file whose
+     * descriptor is withdrawn. The order is still unanswered, the notification is
+     * still on the lock screen — and the kitchen is silent, which is worse than
+     * either failure on its own, because it *looks* handled.
+     *
+     * Ten seconds, because that is the point where a silent phone is still a
+     * phone somebody will pick up. The check costs nothing: it reads two fields.
+     */
+    private val soundWatchdog: Runnable = object : Runnable {
+        override fun run() {
+            if (waiting.isEmpty()) return
+            keepRinging()
+            handler.postDelayed(this, SOUND_CHECK_MILLIS)
+        }
+    }
+
+    /**
+     * Makes sure *something* is ringing, without restarting a healthy tone.
+     *
+     * Called when the head of the queue changes and every ten seconds by
+     * [soundWatchdog]. A player that is playing, or a fallback ringtone that the
+     * replay loop owns, is left completely alone: nothing here is allowed to
+     * stutter the sound or it would be audible.
+     */
+    private fun keepRinging() {
+        if (waiting.isEmpty()) return
+        val playing = player?.isPlaying == true
+        if (ringtone == null && !playing) {
+            // Whatever was making the noise is gone. Release what is left of it
+            // first — a dead player still holds an audio session and the partial
+            // wake lock it took — then build the ring again from scratch.
+            player?.let { dead -> runCatching { dead.release() } }
+            player = null
+            if (soundFailures < MAX_BUNDLED_ATTEMPTS) {
+                startSound()
+            } else {
+                // The bundled tone is not playing on this phone tonight. Fall
+                // back to the device's own alarm, and try at most once a tick.
+                val now = System.currentTimeMillis()
+                if (now - lastFallbackAtMillis >= SOUND_CHECK_MILLIS) {
+                    lastFallbackAtMillis = now
+                    playSystemRinger()
+                }
+            }
+        }
+        if ((player?.isPlaying == true || ringtone != null) && vibrator == null) startVibration()
+    }
+
+    /** Exactly one watchdog chain, however many times the ring is rebuilt. */
+    private fun watchSound() {
+        handler.removeCallbacks(soundWatchdog)
+        handler.postDelayed(soundWatchdog, SOUND_CHECK_MILLIS)
     }
 
     private data class Waiting(
@@ -163,6 +238,17 @@ class OrderAlertService : Service() {
         }.onFailure { Log.w(TAG, "Could not restore alert queue", it) }
     }
 
+    /**
+     * The alert is playing and the task is being taken off the screen. The sound
+     * keeps running (the service is not tied to the task), but if this phone's
+     * ROM kills the process anyway, the watchdog revives the watcher and the
+     * heartbeat — and the persisted queue means the ring resumes where it was.
+     */
+    override fun onTaskRemoved(rootIntent: Intent?) {
+        AlertWatchdog.arm(this, AlertWatchdog.SWIPE_GRACE_MILLIS)
+        super.onTaskRemoved(rootIntent)
+    }
+
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onCreate() {
@@ -171,10 +257,25 @@ class OrderAlertService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        // A restart with no intent is the system bringing the service back for the
+        // orders it was ringing for, so the queue is read before the foreground is
+        // taken — the notice that goes up has to be the true one.
+        if (intent == null) restoreQueue()
+
+        // The foreground is taken before this call's meaning is acted on, every
+        // time. Three of the branches below end in `stopSelf()`, and a service
+        // started with `startForegroundService()` that stops without ever taking
+        // the foreground is killed by the platform from the main thread — a crash
+        // the caller cannot catch and the log cannot explain.
+        enterForeground()
+
         if (intent == null) {
-            restoreQueue()
-            if (waiting.isEmpty()) stopSelf()
-            return if (waiting.isEmpty()) START_NOT_STICKY else START_STICKY
+            if (waiting.isEmpty()) {
+                // Nothing left to ring for, so the notice goes as well.
+                stopQuietly()
+                return START_NOT_STICKY
+            }
+            return START_STICKY
         }
         when (intent.action) {
             ACTION_STOP -> {
@@ -182,22 +283,62 @@ class OrderAlertService : Service() {
                 return if (waiting.isEmpty()) START_NOT_STICKY else START_STICKY
             }
             ACTION_RING, null -> {
-                val orderId = intent?.getStringExtra(EXTRA_ORDER_ID)
-                val shortId = intent?.getStringExtra(EXTRA_SHORT_ID).orEmpty()
-                val title = intent?.getStringExtra(EXTRA_TITLE).orEmpty().ifBlank { "New order" }
-                val body = intent?.getStringExtra(EXTRA_BODY).orEmpty()
-                val isTest = intent?.getBooleanExtra(EXTRA_IS_TEST, false) ?: false
+                val orderId = intent.getStringExtra(EXTRA_ORDER_ID)
+                val shortId = intent.getStringExtra(EXTRA_SHORT_ID).orEmpty()
+                val title = intent.getStringExtra(EXTRA_TITLE).orEmpty().ifBlank { "New order" }
+                val body = intent.getStringExtra(EXTRA_BODY).orEmpty()
+                val isTest = intent.getBooleanExtra(EXTRA_IS_TEST, false)
                 if (orderId.isNullOrBlank()) {
-                    stopSelf()
+                    stopQuietly()
                     return START_NOT_STICKY
                 }
                 if (waiting.isEmpty()) restoreQueue()
                 beginAlert(orderId, shortId, title, body, isTest)
             }
-            else -> stopSelf()
+            else -> stopQuietly()
         }
         return START_STICKY
     }
+
+    /**
+     * Stops with nothing to ring for. The notice this call has just posted goes
+     * with it — a bare `stopSelf()` would leave a foreground notification on the
+     * screen with no service behind it, which Android then removes on its own
+     * schedule and the owner reads as an order that never arrived.
+     */
+    private fun stopQuietly() {
+        UndalForeground.leave(this, AlarmChannels.ORDER_ALERT_NOTIFICATION_ID)
+        stopSelf()
+    }
+
+    /**
+     * Keeps Android's foreground promise with whatever is actually waiting: the
+     * head of the queue when an order is unanswered, the plainest honest notice
+     * when nothing is. It is never skipped, because the branches that have
+     * nothing to ring for are exactly the ones that stop, and stopping without
+     * this is what turns a bad push payload into a dead process.
+     */
+    private fun enterForeground() {
+        val head = waiting.entries.firstOrNull()?.value
+        val notification = if (head == null) idleNotification() else buildNotification(head)
+        UndalForeground.enter(
+            this,
+            AlarmChannels.ORDER_ALERT_NOTIFICATION_ID,
+            notification,
+            foregroundType()
+        )
+    }
+
+    /** What the notice says when this service is up with nothing to ring for. */
+    private fun idleNotification(): Notification =
+        NotificationCompat.Builder(this, AlarmChannels.VENDOR_GENERAL)
+            .setSmallIcon(R.drawable.ic_undal_mark)
+            .setContentTitle(getString(R.string.watch_title))
+            .setContentText(getString(R.string.watch_body))
+            .setPriority(NotificationCompat.PRIORITY_MIN)
+            .setSilent(true)
+            .setShowWhen(false)
+            .build()
 
     private fun beginAlert(orderId: String, shortId: String, title: String, body: String, isTest: Boolean) {
         // Idempotent: three routes can deliver the same order, and the re-alert
@@ -220,7 +361,7 @@ class OrderAlertService : Service() {
         }
 
         val foregroundOrder = waiting.entries.first().value
-        ServiceCompat.startForeground(
+        UndalForeground.enter(
             this,
             AlarmChannels.ORDER_ALERT_NOTIFICATION_ID,
             buildNotification(foregroundOrder),
@@ -234,6 +375,11 @@ class OrderAlertService : Service() {
             publishNotification(foregroundOrder)
             return
         }
+
+        // A ring that starts now is a new attempt: yesterday's dead decoder must
+        // not push tonight's order straight to the fallback tone.
+        soundFailures = 0
+        lastFallbackAtMillis = 0L
 
         currentOrderId = foregroundOrder.orderId
         currentShortId = foregroundOrder.shortId
@@ -250,6 +396,7 @@ class OrderAlertService : Service() {
 
         startSound()
         startVibration()
+        watchSound()
         watchOrderLive(foregroundOrder.orderId)
 
         if (isTest) {
@@ -281,8 +428,8 @@ class OrderAlertService : Service() {
         )
         publishNotification(next)
         watchOrderLive(next.orderId)
-        if (player?.isPlaying != true && ringtone == null) startSound()
-        if ((player?.isPlaying == true || ringtone != null) && vibrator == null) startVibration()
+        keepRinging()
+        watchSound()
     }
 
     /** "2 orders waiting" when the queue is longer than one. */
@@ -311,6 +458,8 @@ class OrderAlertService : Service() {
         player = createOrderPlayer()
         if (player == null) {
             Log.e(TAG, "the bundled order sound would not start; using the phone's own alarm tone")
+            soundFailures += 1
+            lastFallbackAtMillis = System.currentTimeMillis()
             playSystemRinger()
         }
     }
@@ -334,6 +483,7 @@ class OrderAlertService : Service() {
         return runCatching {
             MediaPlayer().apply {
                 opened = this
+                val self = this
                 setAudioAttributes(attributes)
                 // The player holds a partial wake lock for us, which is exactly
                 // what is needed for the sound to survive a locked screen.
@@ -342,6 +492,21 @@ class OrderAlertService : Service() {
                 isLooping = true
                 setOnErrorListener { _, what, extra ->
                     Log.e(TAG, "order sound failed (what=$what extra=$extra)")
+                    // A player that errored will not play again, so holding on to
+                    // it would silence the ring for good — and leaking it would
+                    // hold an audio session and a wake lock until the process
+                    // died. Swap it out on the main thread and let the ring
+                    // rebuild itself immediately rather than at the next tick.
+                    val dead = self
+                    handler.post {
+                        if (player === dead) {
+                            runCatching { dead.release() }
+                            player = null
+                        }
+                        soundFailures += 1
+                        keepRinging()
+                        watchSound()
+                    }
                     true
                 }
                 prepare()
@@ -550,9 +715,12 @@ class OrderAlertService : Service() {
         runCatching { player?.release() }
         player = null
 
+        handler.removeCallbacks(soundWatchdog)
         handler.removeCallbacks(replayRinger)
         runCatching { ringtone?.stop() }
         ringtone = null
+        soundFailures = 0
+        lastFallbackAtMillis = 0L
 
         // Whatever the ring had to change is put back now that nothing is ringing.
         AlertVolume.restore(this)
@@ -565,8 +733,7 @@ class OrderAlertService : Service() {
         OrderAlertController.stop(orderId ?: currentOrderId)
         currentOrderId = null
 
-        ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE)
-        notifyManager().cancel(AlarmChannels.ORDER_ALERT_NOTIFICATION_ID)
+        UndalForeground.leave(this, AlarmChannels.ORDER_ALERT_NOTIFICATION_ID)
         stopSelf()
     }
 
@@ -574,6 +741,7 @@ class OrderAlertService : Service() {
         liveListener?.let { liveReference?.removeEventListener(it) }
         runCatching { player?.release() }
         player = null
+        handler.removeCallbacks(soundWatchdog)
         handler.removeCallbacks(replayRinger)
         runCatching { ringtone?.stop() }
         ringtone = null
@@ -602,6 +770,21 @@ class OrderAlertService : Service() {
         const val SOURCE_PUSH = "push"
         const val SOURCE_WATCH = "watcher"
 
+        /**
+         * How often the ring checks that it is still audible. Short enough that a
+         * phone which went quiet is ringing again before anybody notices the
+         * silence; long enough that the check itself is nothing.
+         */
+        private const val SOUND_CHECK_MILLIS = 10_000L
+
+        /**
+         * How many times the bundled tone is rebuilt before the phone's own alarm
+         * tone is used instead. Two, because the first failure is usually
+         * transient (an audio server restarting) and the second is usually the
+         * device telling the truth.
+         */
+        private const val MAX_BUNDLED_ATTEMPTS = 2
+
         /** How long a "ring my phone" test rings before it stops itself. */
         private const val TEST_SECONDS = 45
 
@@ -626,6 +809,14 @@ class OrderAlertService : Service() {
             source: String = SOURCE_PUSH
         ) {
             Log.i(TAG, "ring $orderId via $source (test=$isTest)")
+            if (orderId.isBlank()) {
+                // Nothing to ring for, so nothing is started. A service asked for
+                // the foreground with no order in its payload would have to take
+                // it and give it straight back, which is a crash on some ROMs;
+                // a bad push payload must cost a log line, not the process.
+                Log.w(TAG, "a ring arrived with no order id; nothing was started")
+                return
+            }
             val intent = Intent(context, OrderAlertService::class.java).apply {
                 action = ACTION_RING
                 putExtra(EXTRA_ORDER_ID, orderId)
@@ -634,12 +825,10 @@ class OrderAlertService : Service() {
                 putExtra(EXTRA_BODY, body)
                 putExtra(EXTRA_IS_TEST, isTest)
             }
-            try {
-                ContextCompat.startForegroundService(context, intent)
-            } catch (error: RuntimeException) {
+            if (!UndalForeground.start(context, intent)) {
                 // Android may downgrade a push or deny background FGS starts.
                 // Keep a visible, actionable alert rather than crashing the FCM callback.
-                Log.e(TAG, "Background alarm start denied; posting notification", error)
+                Log.w(TAG, "Android refused the alarm service; posting the notification instead")
                 AlarmChannels.ensureChannels(context)
                 val open = PendingIntent.getActivity(context, orderId.hashCode(),
                     MainActivity.intentFor(context, "vendor/order/$orderId"),
@@ -657,16 +846,21 @@ class OrderAlertService : Service() {
 
         /** Silences the loop. Called when an order is answered anywhere. */
         fun silence(context: Context, orderId: String? = null) {
-            val intent = Intent(context, OrderAlertService::class.java).apply {
-                action = ACTION_STOP
-                if (orderId != null) putExtra(EXTRA_ORDER_ID, orderId)
-            }
-            // A stop is never a foreground start. If the service is not running,
-            // the saved queue is still corrected so a later restore cannot ring an
-            // order that somebody already answered.
+            // A stop is never a foreground start: `startService`, not
+            // `startForegroundService`, because a service asked for the foreground
+            // only to give it straight back is the shape Android answers with a
+            // dead process.
+            //
+            // The saved queue is corrected first, and whether the service is woken
+            // at all then depends on there being anything left to correct. An order
+            // answered while this phone's alert service was not running is the
+            // common case — the second kitchen device took it — and starting a
+            // process in order to tell it to stop is a notification flash and a
+            // battery wake for nothing.
             val prefs = context.getSharedPreferences("order_alert_queue", Context.MODE_PRIVATE)
-            if (orderId == null) {
-                prefs.edit().remove("orders").commit()
+            val stillWaiting = if (orderId == null) {
+                prefs.edit().remove("orders").apply()
+                false
             } else {
                 runCatching {
                     val remaining = JSONArray()
@@ -675,10 +869,19 @@ class OrderAlertService : Service() {
                         val row = records.getJSONObject(index)
                         if (row.getString("id") != orderId) remaining.put(row)
                     }
-                    prefs.edit().putString("orders", remaining.toString()).commit()
-                }
+                    prefs.edit().putString("orders", remaining.toString()).apply()
+                    remaining.length() > 0
+                }.getOrDefault(false)
+            }
+
+            if (OrderAlertController.ringing.value == null && !stillWaiting) return
+
+            val intent = Intent(context, OrderAlertService::class.java).apply {
+                action = ACTION_STOP
+                if (orderId != null) putExtra(EXTRA_ORDER_ID, orderId)
             }
             runCatching { context.startService(intent) }
+                .onFailure { Log.w(TAG, "the alert could not be told to stop", it) }
         }
     }
 }

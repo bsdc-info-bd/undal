@@ -66,8 +66,18 @@ object UndalErrors {
     fun firestore(error: Throwable, operation: String = ""): String {
         val sentence = when (error) {
             is FirebaseFirestoreException -> when (error.code) {
+                // A rule refusal arrives with no explanation at all — Firestore
+                // answers "Missing or insufficient permissions" and nothing else —
+                // so this sentence has to carry the two things that actually cause
+                // one: a field the rules require and the app did not satisfy, or an
+                // account that is not the kitchen's. Naming both turns a dead end
+                // into something the owner can check in a minute.
                 FirebaseFirestoreException.Code.PERMISSION_DENIED ->
-                    "The kitchen has not published this yet, or your account cannot read it."
+                    "The database refused that. On a kitchen edit it means one field did not match the " +
+                        "rules it is checked against — a name shorter than three characters, a price above " +
+                        "৳ 10,000, a combo with fewer than two dishes, a campaign that ends before it " +
+                        "starts — or that this account is not carrying the kitchen's vendor sign-in. " +
+                        "On a read it means this account cannot see that collection."
                 FirebaseFirestoreException.Code.UNAUTHENTICATED ->
                     "Your sign-in has expired. Please sign in again."
                 FirebaseFirestoreException.Code.UNAVAILABLE ->
@@ -119,4 +129,54 @@ object UndalErrors {
 
     fun generic(error: Throwable, fallback: String = "Something went wrong. Please try again."): String =
         error.message?.takeIf { it.isNotBlank() } ?: fallback
+
+    /**
+     * True when this failure is the phone having no connection, rather than the
+     * server refusing it.
+     *
+     * The two look identical from the call site — a rejected `Task` — and they
+     * need opposite answers. A refusal means "stop and say so". No connection
+     * means "use what this phone already knows", because Firestore has been
+     * keeping a 100 MB cache for exactly this moment and a kitchen in a dead spot
+     * still has orders to cook. Treating the second as the first is what put a
+     * red error screen in front of an offline kitchen on every cold start.
+     *
+     * The `cause` chain is walked because Firebase wraps: an auth failure arrives
+     * as a `FirebaseException` around a `SocketTimeoutException`, and it is the
+     * inner one that says which of the two this is.
+     */
+    fun isOffline(error: Throwable?, depth: Int = 0): Boolean {
+        if (error == null || depth > MAX_CAUSE_DEPTH) return false
+        return when (error) {
+            is FirebaseNetworkException -> true
+            is IOException -> true
+            is FirebaseFirestoreException ->
+                error.code == FirebaseFirestoreException.Code.UNAVAILABLE || isOffline(error.cause, depth + 1)
+            else -> {
+                val message = error.message.orEmpty()
+                OFFLINE_MARKERS.any { message.contains(it, ignoreCase = true) } ||
+                    isOffline(error.cause, depth + 1)
+            }
+        }
+    }
+
+    /** How far down a `cause` chain is worth looking before it is a cycle. */
+    private const val MAX_CAUSE_DEPTH = 4
+
+    /**
+     * What the SDKs put in a message when they mean "there is no network".
+     * Matched case-insensitively; each of these has been seen in the field on a
+     * phone that was, in fact, in a lift.
+     */
+    private val OFFLINE_MARKERS = listOf(
+        "NETWORK_ERROR",
+        "UNAVAILABLE",
+        "no internet",
+        "unable to resolve host",
+        "no address associated with hostname",
+        "failed to connect",
+        "connection timed out",
+        "network is unreachable",
+        "software caused connection abort"
+    )
 }

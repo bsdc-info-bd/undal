@@ -5,17 +5,13 @@ import android.app.PendingIntent
 import android.app.Service
 import android.content.Context
 import android.content.Intent
-import android.content.pm.ServiceInfo
 import android.media.AudioAttributes
 import android.media.SoundPool
-import android.os.Build
 import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
-import androidx.core.app.ServiceCompat
-import androidx.core.content.ContextCompat
 import com.undal.syl.app.MainActivity
 import com.undal.syl.app.R
 import com.undal.syl.app.core.fcm.AlarmChannels
@@ -71,42 +67,46 @@ class PrepTimerService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        when (intent?.action) {
-            ACTION_STOP -> {
-                stopTimer()
-                return START_NOT_STICKY
+        val action = intent?.action
+        if (action == ACTION_START || action == null) {
+            val id = intent?.getStringExtra(EXTRA_ORDER_ID).orEmpty()
+            val endsAt = intent?.getLongExtra(EXTRA_PREP_ENDS_AT, 0L) ?: 0L
+            if (id.isNotBlank() && endsAt > 0L) {
+                orderId = id
+                shortId = intent?.getStringExtra(EXTRA_SHORT_ID).orEmpty()
+                prepEndsAtMillis = endsAt
             }
-            ACTION_START, null -> {
-                val id = intent?.getStringExtra(EXTRA_ORDER_ID).orEmpty()
-                val endsAt = intent?.getLongExtra(EXTRA_PREP_ENDS_AT, 0L) ?: 0L
-                if (id.isBlank() || endsAt <= 0L) {
-                    stopSelf()
-                    return START_NOT_STICKY
-                }
-                startTimer(id, intent?.getStringExtra(EXTRA_SHORT_ID).orEmpty(), endsAt)
-            }
-            else -> stopSelf()
         }
-        return START_STICKY
+
+        // The promise is kept before this call's meaning is acted on. A stop, a
+        // payload with no order in it and an action this service does not know
+        // all reach `stopSelf()` from here, and every one of them would otherwise
+        // be a `startForegroundService()` that never called `startForeground()` —
+        // a crash from the main thread a few seconds later, with nothing in the
+        // log to say which order caused it.
+        UndalForeground.enter(this, AlarmChannels.PREP_TIMER_NOTIFICATION_ID, timerNotification())
+
+        return when {
+            action == ACTION_STOP -> {
+                stopTimer()
+                START_NOT_STICKY
+            }
+            orderId.isBlank() || prepEndsAtMillis <= 0L -> {
+                stopTimer()
+                START_NOT_STICKY
+            }
+            else -> {
+                startTimer()
+                START_STICKY
+            }
+        }
     }
 
-    private fun startTimer(id: String, short: String, endsAtMillis: Long) {
-        orderId = id
-        shortId = short
-        prepEndsAtMillis = endsAtMillis
+    /** The countdown as it stands right now, overdue or not. */
+    private fun timerNotification(): Notification =
+        buildNotification(orderId, shortId, overdue = prepEndsAtMillis < System.currentTimeMillis())
 
-        val notification = buildNotification(id, short, overdue = endsAtMillis < System.currentTimeMillis())
-        ServiceCompat.startForeground(
-            this,
-            AlarmChannels.PREP_TIMER_NOTIFICATION_ID,
-            notification,
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
-                ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE
-            } else {
-                0
-            }
-        )
-
+    private fun startTimer() {
         handler.removeCallbacks(ticker)
         handler.post(ticker)
     }
@@ -162,14 +162,19 @@ class PrepTimerService : Service() {
 
     private fun stopTimer() {
         handler.removeCallbacks(ticker)
-        ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE)
-        NotificationManagerCompat.from(this).cancel(AlarmChannels.PREP_TIMER_NOTIFICATION_ID)
+        UndalForeground.leave(this, AlarmChannels.PREP_TIMER_NOTIFICATION_ID)
         stopSelf()
     }
 
+    /**
+     * The same cleanup a stop intent asks for, because the honest way to stop
+     * this service is `Context.stopService`, which never reaches `onStartCommand`
+     * at all (see [UndalForeground.stop]).
+     */
     override fun onDestroy() {
         handler.removeCallbacks(ticker)
-        soundPool?.release()
+        UndalForeground.leave(this, AlarmChannels.PREP_TIMER_NOTIFICATION_ID)
+        runCatching { soundPool?.release() }
         soundPool = null
         super.onDestroy()
     }
@@ -191,12 +196,16 @@ class PrepTimerService : Service() {
                 putExtra(EXTRA_SHORT_ID, shortId)
                 putExtra(EXTRA_PREP_ENDS_AT, prepEndsAtMillis)
             }
-            runCatching { ContextCompat.startForegroundService(context, intent) }
+            UndalForeground.start(context, intent)
         }
 
+        /**
+         * Stops the countdown. A plain `stopService`: this used to ask for the
+         * foreground so that the service could immediately give it back, which is
+         * the one shape Android answers with a dead process.
+         */
         fun stop(context: Context) {
-            val intent = Intent(context, PrepTimerService::class.java).apply { action = ACTION_STOP }
-            runCatching { ContextCompat.startForegroundService(context, intent) }
+            UndalForeground.stop(context, PrepTimerService::class.java)
         }
 
         /** Convenience for callers that hold an ISO timestamp from Firestore. */

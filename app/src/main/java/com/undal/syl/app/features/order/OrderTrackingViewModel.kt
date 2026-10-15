@@ -95,6 +95,19 @@ class OrderTrackingViewModel @Inject constructor(
 
     private val _state = MutableStateFlow(State())
     val state: StateFlow<State> = _state.asStateFlow()
+    /**
+     * Nothing this ViewModel does may end the process.
+     *
+     * An exception that escapes a `viewModelScope` job is uncaught, and Android's
+     * answer to an uncaught exception is to kill the app — which the person
+     * experiences as the app vanishing a few seconds after it opened, then the
+     * crash guard reopening it, then the home screen. Every coroutine here carries
+     * this handler, so a failed read becomes one sentence where the screen already
+     * shows messages.
+     */
+    private val guard = com.undal.syl.app.core.util.UndalGuards.viewModel("following your order") { message ->
+        _state.value = _state.value.copy(notice = message)
+    }
 
     private var boundOrderId: String = ""
     private val detailFlow = MutableStateFlow<OrderRepo.OrderDetail?>(null)
@@ -109,13 +122,13 @@ class OrderTrackingViewModel @Inject constructor(
     private val noticeFlow = MutableStateFlow<String?>(null)
 
     init {
-        viewModelScope.launch {
+        viewModelScope.launch(guard) {
             while (isActive) {
                 delay(1_000)
                 tickFlow.value = System.currentTimeMillis()
             }
         }
-        viewModelScope.launch {
+        viewModelScope.launch(guard) {
             combine(
                 detailFlow,
                 messagesFlow,
@@ -141,7 +154,7 @@ class OrderTrackingViewModel @Inject constructor(
         boundOrderId = orderId
         _state.value = _state.value.copy(orderId = orderId, loading = true)
 
-        viewModelScope.launch {
+        viewModelScope.launch(guard) {
             orderRepo.observeOrder(orderId).collect { detail ->
                 detailFlow.value = detail
                 if (detail != null) {
@@ -150,16 +163,16 @@ class OrderTrackingViewModel @Inject constructor(
                 }
             }
         }
-        viewModelScope.launch {
+        viewModelScope.launch(guard) {
             chatRepo.observeMessages(orderId).collect { messages ->
                 messagesFlow.value = messages
                 if (chatOpenFlow.value) markReadFor(messages)
             }
         }
-        viewModelScope.launch {
+        viewModelScope.launch(guard) {
             chatRepo.lastReadFlow(orderId).collect { lastReadFlow.value = it }
         }
-        viewModelScope.launch {
+        viewModelScope.launch(guard) {
             chatRepo.observeKitchenTyping(orderId).collect { typingFlow.value = it }
         }
     }
@@ -235,7 +248,7 @@ class OrderTrackingViewModel @Inject constructor(
 
     fun closeChat() {
         chatOpenFlow.value = false
-        viewModelScope.launch { chatRepo.setCustomerTyping(boundOrderId, false) }
+        viewModelScope.launch(guard) { chatRepo.setCustomerTyping(boundOrderId, false) }
     }
 
     fun onDraftChange(value: String) {
@@ -244,7 +257,7 @@ class OrderTrackingViewModel @Inject constructor(
         // One write on the first keystroke, cleared on send or when the sheet
         // closes: enough for "the customer is typing", without a write per key.
         if (next.length == 1) {
-            viewModelScope.launch { chatRepo.setCustomerTyping(boundOrderId, true) }
+            viewModelScope.launch(guard) { chatRepo.setCustomerTyping(boundOrderId, true) }
         }
     }
 
@@ -252,7 +265,7 @@ class OrderTrackingViewModel @Inject constructor(
         val body = draftFlow.value.trim()
         if (body.isEmpty() || sendingFlow.value) return
         sendingFlow.value = true
-        viewModelScope.launch {
+        viewModelScope.launch(guard) {
             when (val result = chatRepo.send(boundOrderId, body)) {
                 is UndalResult.Success -> {
                     draftFlow.value = ""
@@ -276,7 +289,7 @@ class OrderTrackingViewModel @Inject constructor(
         if (boundOrderId.isBlank()) return
         val newest = messages.maxOfOrNull { it.tsMillis } ?: 0L
         val stamp = maxOf(System.currentTimeMillis(), newest)
-        viewModelScope.launch { chatRepo.markRead(boundOrderId, stamp) }
+        viewModelScope.launch(guard) { chatRepo.markRead(boundOrderId, stamp) }
     }
 
     // ---------------------------------------------------------------- reorder
@@ -284,7 +297,7 @@ class OrderTrackingViewModel @Inject constructor(
     fun reorder() {
         if (reorderingFlow.value) return
         reorderingFlow.value = true
-        viewModelScope.launch {
+        viewModelScope.launch(guard) {
             val snapshot = menuRepo.observeMenu().first()
             if (!snapshot.loaded) {
                 noticeFlow.value = "The menu has not loaded yet. Check your connection and try again."

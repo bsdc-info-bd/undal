@@ -4,6 +4,8 @@ import android.content.Context
 import android.net.Uri
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.undal.syl.app.core.background.KitchenWatchService
+import com.undal.syl.app.core.background.OrderAlertController
 import com.undal.syl.app.core.background.PresenceHeartbeat
 import com.undal.syl.app.core.background.PresenceHeartbeatWorker
 import com.undal.syl.app.core.maps.UndalLocation
@@ -73,13 +75,26 @@ class ProfileViewModel @Inject constructor(
 
     private val _state = MutableStateFlow(State())
     val state: StateFlow<State> = _state.asStateFlow()
+    /**
+     * Nothing this ViewModel does may end the process.
+     *
+     * An exception that escapes a `viewModelScope` job is uncaught, and Android's
+     * answer to an uncaught exception is to kill the app — which the person
+     * experiences as the app vanishing a few seconds after it opened, then the
+     * crash guard reopening it, then the home screen. Every coroutine here carries
+     * this handler, so a failed read becomes one sentence where the screen already
+     * shows messages.
+     */
+    private val guard = com.undal.syl.app.core.util.UndalGuards.viewModel("reading your profile") { message ->
+        _state.value = _state.value.copy(notice = message, noticeIsError = true)
+    }
 
     init {
         load()
     }
 
     fun load() {
-        viewModelScope.launch {
+        viewModelScope.launch(guard) {
             _state.value = _state.value.copy(loading = true)
             val location = authRepo.loadProfileLocation()
             _state.value = State(
@@ -97,7 +112,7 @@ class ProfileViewModel @Inject constructor(
     }
 
     fun refreshAddress() {
-        viewModelScope.launch {
+        viewModelScope.launch(guard) {
             _state.value = _state.value.copy(address = authRepo.loadProfileLocation())
         }
     }
@@ -105,7 +120,7 @@ class ProfileViewModel @Inject constructor(
     fun saveBasics(name: String, phone: String) {
         if (_state.value.savingBasics) return
         _state.value = _state.value.copy(savingBasics = true)
-        viewModelScope.launch {
+        viewModelScope.launch(guard) {
             when (val result = authRepo.saveProfileBasics(name, phone)) {
                 is UndalResult.Success -> {
                     val cleanPhone = Validators.normalizeBdMobile(phone).orEmpty()
@@ -133,7 +148,7 @@ class ProfileViewModel @Inject constructor(
     fun uploadPhoto(uri: Uri) {
         if (_state.value.uploading) return
         _state.value = _state.value.copy(uploading = true, notice = "Uploading your photo…", noticeIsError = false)
-        viewModelScope.launch {
+        viewModelScope.launch(guard) {
             when (val upload = uploader.uploadImage(uri)) {
                 is UndalResult.Success -> {
                     when (val save = authRepo.saveProfilePhoto(upload.value.secureUrl)) {
@@ -177,7 +192,7 @@ class ProfileViewModel @Inject constructor(
             return
         }
         _state.value = _state.value.copy(changingPassword = true)
-        viewModelScope.launch {
+        viewModelScope.launch(guard) {
             when (val result = authRepo.changePassword(current, fresh)) {
                 is UndalResult.Success -> {
                     _state.value = _state.value.copy(
@@ -201,7 +216,7 @@ class ProfileViewModel @Inject constructor(
     fun resendVerification() {
         if (_state.value.resendingVerification) return
         _state.value = _state.value.copy(resendingVerification = true)
-        viewModelScope.launch {
+        viewModelScope.launch(guard) {
             when (val result = authRepo.resendVerificationEmail()) {
                 is UndalResult.Success -> {
                     _state.value = _state.value.copy(
@@ -228,11 +243,15 @@ class ProfileViewModel @Inject constructor(
      * left saying the kitchen is staffed.
      */
     fun signOut() {
-        viewModelScope.launch {
+        viewModelScope.launch(guard) {
             session.currentUser?.uid?.let { uid -> registrar.unregister(uid) }
             PresenceHeartbeat.stopService(context)
             PresenceHeartbeatWorker.cancel(context)
             heartbeat.markOffline()
+            // No session, no ringing: whichever screen signs out, the watcher,
+            // the alert and the watchdog that revives them go with the account.
+            KitchenWatchService.stop(context)
+            OrderAlertController.stop()
             session.signOut()
         }
     }
@@ -241,11 +260,13 @@ class ProfileViewModel @Inject constructor(
     fun deleteAccount() {
         if (_state.value.deleting) return
         _state.value = _state.value.copy(deleting = true)
-        viewModelScope.launch {
+        viewModelScope.launch(guard) {
             when (val result = authRepo.deleteAccount()) {
                 is UndalResult.Success -> {
                     PresenceHeartbeat.stopService(context)
                     PresenceHeartbeatWorker.cancel(context)
+                    KitchenWatchService.stop(context)
+                    OrderAlertController.stop()
                     _state.value = _state.value.copy(
                         deleting = false,
                         notice = "Your account has been deleted.",

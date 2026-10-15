@@ -17,6 +17,7 @@ import com.google.firebase.auth.FirebaseAuth
 import kotlinx.coroutines.tasks.await
 import dagger.assisted.Assisted
 import dagger.assisted.AssistedInject
+import com.undal.syl.app.core.fcm.PushDeviceRole
 import com.undal.syl.app.core.net.WorkerApi
 import java.util.concurrent.TimeUnit
 
@@ -44,12 +45,27 @@ class PresenceHeartbeatWorker @AssistedInject constructor(
 
     override suspend fun doWork(): Result {
         // Only a signed-in vendor device should ever claim the kitchen is alive.
-        if (auth.currentUser == null) return Result.success()
+        val uid = auth.currentUser?.uid ?: return Result.success()
+        // Being signed in is not enough, and this check used to be the whole of
+        // it: `presence/vendor` is the one number the Worker's ten-minute rule
+        // trusts, so a customer's phone beating it would hold a closed store open
+        // — and every customer phone ran this job, because the app scheduled it at
+        // every start for whoever was on it. The remembered role is the same
+        // answer the watchdog and the boot receiver use, and it costs no network.
+        if (!PushDeviceRole.isKitchen(applicationContext, uid)) return Result.success()
         heartbeat.beat()
         return Result.success()
     }
 
     companion object {
+        /**
+         * Arms the fifteen-minute heartbeat fallback.
+         *
+         * WorkManager's first touch of this process opens its database on the
+         * calling thread, so callers decide where that happens — `UndalApp` does
+         * it off the main thread, and a kitchen that has just signed in does it
+         * from a coroutine.
+         */
         fun ensureScheduled(context: Context) {
             val request = PeriodicWorkRequestBuilder<PresenceHeartbeatWorker>(
                 15, TimeUnit.MINUTES

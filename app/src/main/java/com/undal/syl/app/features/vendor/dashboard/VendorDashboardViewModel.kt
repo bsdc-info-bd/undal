@@ -5,6 +5,8 @@ import androidx.core.app.NotificationManagerCompat
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.google.firebase.auth.FirebaseAuth
+import com.undal.syl.app.core.background.KitchenWatchService
+import com.undal.syl.app.core.background.OrderAlertController
 import com.undal.syl.app.core.background.PresenceHeartbeat
 import com.undal.syl.app.core.background.PresenceHeartbeatWorker
 import com.undal.syl.app.core.background.TokenRefreshWorker
@@ -21,6 +23,7 @@ import com.undal.syl.app.core.telemetry.UndalTelemetry
 import com.undal.syl.app.core.util.OrderStatus
 import com.undal.syl.app.core.util.UndalResult
 import com.undal.syl.app.data.repo.StoreRepo
+import com.undal.syl.app.data.repo.PresenceRepo
 import com.undal.syl.app.data.repo.VendorOrderRepo
 import com.undal.syl.app.data.repo.VendorStoreRepo
 import com.undal.syl.app.features.vendor.storeShareText
@@ -49,6 +52,7 @@ class VendorDashboardViewModel @Inject constructor(
     private val registrar: TokenRegistrar,
     private val sessionKeeper: VendorSessionKeeper,
     private val heartbeat: PresenceHeartbeat,
+    private val presenceRepo: PresenceRepo,
     private val session: AuthSession,
     private val auth: FirebaseAuth,
     private val telemetry: UndalTelemetry
@@ -75,11 +79,31 @@ class VendorDashboardViewModel @Inject constructor(
         val infoMessage: String? = null,
         val exportCsv: String? = null,
         val shareText: String = "",
-        val presence: PresenceHeartbeat.Presence? = null
+        val presence: PresenceHeartbeat.Presence? = null,
+        /**
+         * The last seven days the Worker's presence sweep wrote, newest first.
+         * Empty until the first snapshot arrives, so the analytics card can say
+         * "waiting for the first check-in" instead of showing a confident zero.
+         */
+        val presenceDays: List<com.undal.syl.app.core.model.PresenceDay> = emptyList(),
+        val presenceLoaded: Boolean = false
     )
 
     private val _state = MutableStateFlow(State())
     val state: StateFlow<State> = _state.asStateFlow()
+    /**
+     * Nothing this ViewModel does may end the process.
+     *
+     * An exception that escapes a `viewModelScope` job is uncaught, and Android's
+     * answer to an uncaught exception is to kill the app — which the person
+     * experiences as the app vanishing a few seconds after it opened, then the
+     * crash guard reopening it, then the home screen. Every coroutine here carries
+     * this handler, so a failed read becomes one sentence where the screen already
+     * shows messages.
+     */
+    private val guard = com.undal.syl.app.core.util.UndalGuards.viewModel("reading the kitchen's dashboard") { message ->
+        _state.value = _state.value.copy(infoMessage = message, busy = false)
+    }
 
     /** Bumped by pull-to-refresh: restarting the listener forces a server read (V-022). */
     private val refreshKey = MutableStateFlow(0)
@@ -90,7 +114,7 @@ class VendorDashboardViewModel @Inject constructor(
     val now: StateFlow<Long> = _now.asStateFlow()
 
     init {
-        viewModelScope.launch {
+        viewModelScope.launch(guard) {
             while (true) {
                 _now.value = System.currentTimeMillis()
                 delay(1_000L)
@@ -100,10 +124,11 @@ class VendorDashboardViewModel @Inject constructor(
         observeToday()
         observeWeek()
         observeHeartbeat()
+        observePresenceHistory()
     }
 
     fun refresh(context: Context) {
-        viewModelScope.launch {
+        viewModelScope.launch(guard) {
             val health = sessionKeeper.verifySession()
             val token = registrar.currentToken()
             _state.value = _state.value.copy(
@@ -125,7 +150,7 @@ class VendorDashboardViewModel @Inject constructor(
     }
 
     private fun observeStore() {
-        viewModelScope.launch {
+        viewModelScope.launch(guard) {
             storeRepo.observeStore().collect { store ->
                 _state.value = _state.value.copy(
                     store = store,
@@ -136,7 +161,7 @@ class VendorDashboardViewModel @Inject constructor(
     }
 
     private fun observeToday() {
-        viewModelScope.launch {
+        viewModelScope.launch(guard) {
             refreshKey.flatMapLatest { vendorOrderRepo.observeToday() }.collect { feed ->
                 val open = feed.orders.filter { it.isOpen }
                 _state.value = _state.value.copy(
@@ -161,7 +186,7 @@ class VendorDashboardViewModel @Inject constructor(
             }
         }
         // The kitchen's own alert history mirrors the phone's ringing (V-109).
-        viewModelScope.launch {
+        viewModelScope.launch(guard) {
             refreshKey.flatMapLatest { vendorOrderRepo.observeToday() }.collect { feed ->
                 feed.orders.filter { it.status == OrderStatus.PLACED }
                     .forEach { order -> vendorOrderRepo.recordAlertIfNew(order) }
@@ -170,7 +195,7 @@ class VendorDashboardViewModel @Inject constructor(
     }
 
     private fun observeWeek() {
-        viewModelScope.launch {
+        viewModelScope.launch(guard) {
             refreshKey.flatMapLatest { vendorOrderRepo.observeWeek() }.collect { feed ->
                 _state.value = _state.value.copy(week = VendorOrder.weekSeries(feed.orders))
             }
@@ -178,7 +203,7 @@ class VendorDashboardViewModel @Inject constructor(
     }
 
     private fun observeHeartbeat() {
-        viewModelScope.launch {
+        viewModelScope.launch(guard) {
             heartbeat.observe().collect { presence ->
                 val lastSeen = presence?.lastSeen ?: 0L
                 _state.value = _state.value.copy(
@@ -189,6 +214,19 @@ class VendorDashboardViewModel @Inject constructor(
                         PresenceHeartbeat.describeAge(System.currentTimeMillis() - lastSeen)
                     }
                 )
+            }
+        }
+    }
+
+    /**
+     * Seven days of connection samples: the uptime figure, the pauses the
+     * watchdog applied by itself, and every outage window with its clock times.
+     * Read once per dashboard open and kept live while it is on screen.
+     */
+    private fun observePresenceHistory() {
+        viewModelScope.launch(guard) {
+            presenceRepo.observeDays(PRESENCE_DAYS).collect { days ->
+                _state.value = _state.value.copy(presenceDays = days, presenceLoaded = true)
             }
         }
     }
@@ -207,7 +245,7 @@ class VendorDashboardViewModel @Inject constructor(
     fun setOpen(context: Context, open: Boolean) {
         if (_state.value.busy) return
         _state.value = _state.value.copy(busy = true)
-        viewModelScope.launch {
+        viewModelScope.launch(guard) {
             val note = _state.value.note.trim().ifBlank {
                 if (open) "The kitchen is taking orders now." else "The kitchen is closed for now."
             }
@@ -230,6 +268,19 @@ class VendorDashboardViewModel @Inject constructor(
     /** The reopen flow after the auto-offline cron closed the store (V-076, V-077). */
     fun reopenNow(context: Context) {
         _state.value = _state.value.copy(note = "Back on the phone — accepting orders again.")
+        setOpen(context, open = true)
+    }
+
+    /**
+     * The owner has confirmed they are cooking: open the store and say so.
+     *
+     * This is what the opening reminder's notification lands on — one tap from a
+     * push that asked "are you taking orders?" to a store that is open and
+     * ringing, with the heartbeat service started in the same breath so the
+     * watchdog's ten-minute rule has something to read.
+     */
+    fun confirmOpenNow(context: Context) {
+        _state.value = _state.value.copy(note = "Confirmed on the phone — orders are welcome.")
         setOpen(context, open = true)
     }
 
@@ -263,12 +314,22 @@ class VendorDashboardViewModel @Inject constructor(
 
     /** Signs out and stops every device-side process that belongs to the kitchen. */
     fun signOut(context: Context) {
-        viewModelScope.launch {
+        viewModelScope.launch(guard) {
             auth.currentUser?.uid?.let { uid -> registrar.unregister(uid) }
             PresenceHeartbeat.stopService(context)
             PresenceHeartbeatWorker.cancel(context)
             heartbeat.markOffline()
+            // Everything that keeps this phone ringing belongs to the kitchen
+            // session, so it goes with it: the live watcher, anything currently
+            // ringing, and the watchdog that would revive both.
+            KitchenWatchService.stop(context)
+            OrderAlertController.stop()
             session.signOut()
         }
+    }
+
+    companion object {
+        /** A working week is enough to see a pattern without scraping a year. */
+        const val PRESENCE_DAYS = 7
     }
 }

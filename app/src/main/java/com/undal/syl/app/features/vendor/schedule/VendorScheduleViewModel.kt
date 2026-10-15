@@ -57,11 +57,24 @@ class VendorScheduleViewModel @Inject constructor(
 
     private val _state = MutableStateFlow(State())
     val state: StateFlow<State> = _state.asStateFlow()
+    /**
+     * Nothing this ViewModel does may end the process.
+     *
+     * An exception that escapes a `viewModelScope` job is uncaught, and Android's
+     * answer to an uncaught exception is to kill the app — which the person
+     * experiences as the app vanishing a few seconds after it opened, then the
+     * crash guard reopening it, then the home screen. Every coroutine here carries
+     * this handler, so a failed read becomes one sentence where the screen already
+     * shows messages.
+     */
+    private val guard = com.undal.syl.app.core.util.UndalGuards.viewModel("reading the kitchen's schedule") { message ->
+        _state.value = _state.value.copy(message = message, busy = false)
+    }
 
     private var loadedStore: StoreConfig? = null
 
     init {
-        viewModelScope.launch {
+        viewModelScope.launch(guard) {
             storeRepo.observeStore().collect { store ->
                 val editing = _state.value.dirty || _state.value.busy
                 if (loadedStore?.updatedAt != store.updatedAt && !editing) {
@@ -85,7 +98,7 @@ class VendorScheduleViewModel @Inject constructor(
                 }
             }
         }
-        viewModelScope.launch {
+        viewModelScope.launch(guard) {
             vendorStoreRepo.lastSnapshot().collect { snapshot ->
                 _state.value = _state.value.copy(hasSnapshot = snapshot != null)
             }
@@ -255,7 +268,7 @@ class VendorScheduleViewModel @Inject constructor(
             return
         }
         _state.value = state.copy(busy = true)
-        viewModelScope.launch {
+        viewModelScope.launch(guard) {
             val result = vendorStoreRepo.saveSchedule(state.weekly, state.specialDates)
             _state.value = _state.value.copy(
                 busy = false,
@@ -272,7 +285,7 @@ class VendorScheduleViewModel @Inject constructor(
     /** V-093: put the week back the way it was before the last save. */
     fun undoLastSave() {
         _state.value = _state.value.copy(busy = true)
-        viewModelScope.launch {
+        viewModelScope.launch(guard) {
             when (val result = vendorStoreRepo.undoLastSchedule()) {
                 is UndalResult.Success -> {
                     val snapshot = result.value

@@ -14,6 +14,7 @@ import com.undal.syl.app.core.maps.UndalLocation
 import com.undal.syl.app.core.telemetry.UndalTelemetry
 import com.undal.syl.app.core.model.MenuSnapshot
 import com.undal.syl.app.core.model.StoreConfig
+import com.undal.syl.app.core.util.CouponMath
 import com.undal.syl.app.core.util.Money
 import com.undal.syl.app.core.util.OrderStateMachine
 import com.undal.syl.app.core.util.OrderStatus
@@ -237,29 +238,34 @@ class OrderRepo @Inject constructor(
                     if (!couponSnapshot.exists()) {
                         throw OrderBlocked("Coupon $couponCode no longer exists. Remove it to continue.")
                     }
-                    val active = couponSnapshot.getBoolean("active") ?: false
-                    val type = couponSnapshot.getString("type").orEmpty()
-                    val value = couponSnapshot.getLong("value") ?: 0L
-                    val usageLimit = couponSnapshot.getLong("usageLimit") ?: 0L
-                    val usedCount = couponSnapshot.getLong("usedCount") ?: 0L
-                    val minimum = couponSnapshot.getLong("minSubtotalAmountPaisa") ?: 0L
-                    val expiry = couponSnapshot.getTimestamp("expiresAt")
 
-                    if (!active) throw OrderBlocked("Coupon $couponCode was switched off. Remove it to continue.")
-                    if (expiry != null && expiry.toDate().time <= System.currentTimeMillis()) {
-                        throw OrderBlocked("Coupon $couponCode expired. Remove it to continue.")
+                    // The same rule the cart quoted, the Worker enforces and the web
+                    // storefront shows: one promotion, four surfaces, one verdict.
+                    val coupon = CouponMath.Coupon(
+                        code = couponCode,
+                        type = couponSnapshot.getString("type").orEmpty(),
+                        value = couponSnapshot.getLong("value") ?: 0L,
+                        active = couponSnapshot.getBoolean("active") ?: false,
+                        description = couponSnapshot.getString("description").orEmpty(),
+                        minSubtotalAmountPaisa = couponSnapshot.getLong("minSubtotalAmountPaisa") ?: 0L,
+                        maxDiscountPaisa = couponSnapshot.getLong("maxDiscountPaisa") ?: 0L,
+                        expiresAtMillis = CouponMath.expiryMillis(couponSnapshot.getTimestamp("expiresAt")),
+                        startsAt = couponSnapshot.getString("startsAt").orEmpty(),
+                        endsAt = couponSnapshot.getString("endsAt").orEmpty(),
+                        daysOfWeek = CouponMath.days(couponSnapshot.get("daysOfWeek")),
+                        usageLimit = couponSnapshot.getLong("usageLimit") ?: 0L,
+                        usedCount = couponSnapshot.getLong("usedCount") ?: 0L
+                    )
+                    val verdict = CouponMath.evaluate(
+                        coupon,
+                        CouponMath.Context(subtotalPaisa = subtotal, deliveryPaisa = delivery)
+                    )
+                    if (!verdict.eligible) {
+                        throw OrderBlocked("Coupon $couponCode ${couponRefusal(verdict.reason, coupon, subtotal)}")
                     }
-                    if (usageLimit in 1..usedCount) {
-                        throw OrderBlocked("Coupon $couponCode has just been used its last time. Sorry about that.")
-                    }
-                    if (subtotal < minimum) {
-                        throw OrderBlocked(
-                            "Coupon $couponCode needs ${Money.format(minimum)} of food. Remove it or add more."
-                        )
-                    }
-                    discount = Money.applicableDiscount(subtotal, type, value)
-                    if (discount <= 0L) throw OrderBlocked("Coupon $couponCode does not change this total.")
+                    discount = verdict.discountPaisa
                     appliedCode = couponCode
+                    val usedCount = coupon.usedCount
                     transaction.update(couponReference, "usedCount", usedCount + 1L)
                 }
 
@@ -562,6 +568,43 @@ class OrderRepo @Inject constructor(
             createdAt = getTimestamp("createdAt")?.toDate()?.toInstant()
         )
     }
+
+    /**
+     * The shared rule's refusal, said the way the customer needs to hear it —
+     * "remove it or add more", never a bare "invalid coupon".
+     *
+     * A refusal that names its fact is one the customer can act on: the date a
+     * code ended, the days it runs, the taka still needed. Without the date,
+     * "expired" on a promotion the kitchen swears is live is an argument, not an
+     * answer — and it is the same sentence the web checkout writes, from
+     * `couponSentence` in the Worker.
+     */
+    private fun couponRefusal(reason: String, coupon: CouponMath.Coupon, subtotalPaisa: Long): String =
+        when (reason) {
+            "switched off" -> "was switched off. Remove it to continue."
+            "not set up correctly" -> "is not set up correctly — please tell the kitchen."
+            "expired" -> {
+                val ended = expiryDate(coupon.expiresAtMillis)
+                if (ended.isBlank()) "expired. Remove it to continue."
+                else "expired on $ended. Remove it to continue."
+            }
+            "not today" -> "only works on ${coupon.daysOfWeek.joinToString(", ")}. Remove it to continue."
+            "outside its hours" -> "only works between ${coupon.startsAt} and ${coupon.endsAt}."
+            "used up" ->
+                if (coupon.usageLimit > 0L) "has been used its full ${coupon.usageLimit} times. Sorry about that."
+                else "has just been used its last time. Sorry about that."
+            "basket too small" -> "needs ${Money.format(coupon.minSubtotalAmountPaisa)} of food — add " +
+                "${Money.format(coupon.minSubtotalAmountPaisa - subtotalPaisa)} more, or remove it."
+            else -> "does not change this total."
+        }
+
+    /** "16 Oct 2026" in Dhaka, or "" when the coupon carries no expiry to name. */
+    private fun expiryDate(expiresAtMillis: Long): String =
+        if (expiresAtMillis <= 0L) {
+            ""
+        } else {
+            TimeDhaka.formatDate(TimeDhaka.fromInstant(java.time.Instant.ofEpochMilli(expiresAtMillis)).toLocalDate())
+        }
 
     private companion object {
         const val ORDERS = "orders"

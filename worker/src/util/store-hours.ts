@@ -21,6 +21,12 @@ export interface StoreConfig {
   open?: boolean;
   autoClosed?: boolean;
   autoClosedReason?: string;
+  /** When the watchdog paused the store (ISO string once Firestore reads it back). */
+  autoClosedAt?: string | number;
+  /** When the watchdog undid that pause by itself. */
+  autoRestoredAt?: string | number;
+  /** How long the device had been silent when the pause was applied, in minutes. */
+  autoClosedSilentMinutes?: number;
   manualOverrideNote?: string;
   weekly?: Record<string, StoreSlot[]>;
   specialDates?: SpecialDate[];

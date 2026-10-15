@@ -58,7 +58,7 @@ class DiagnosticsViewModel @Inject constructor(
     enum class Status { OK, ATTENTION, MISSING }
 
     /** How this check can be repaired, if it can. */
-    enum class Fix { NOTIFICATIONS, CHANNEL, FULL_SCREEN, BATTERY, EXACT_ALARMS, AUTOSTART, TOKEN, WATCH, VOLUME }
+    enum class Fix { NOTIFICATIONS, CHANNEL, FULL_SCREEN, BATTERY, EXACT_ALARMS, AUTOSTART, TOKEN, WATCH, WATCHDOG, VOLUME }
 
     data class Check(
         val id: String,
@@ -90,7 +90,15 @@ class DiagnosticsViewModel @Inject constructor(
         val fullScreenIntentAllowed: Boolean = true,
         val watchRunning: Boolean = false,
         val serverSeesToken: Boolean? = null,
-        val test: TestAlert = TestAlert()
+        val test: TestAlert = TestAlert(),
+        /**
+         * One sentence when a read behind this screen failed.
+         *
+         * The readiness screen is where the kitchen goes when the phone has been
+         * quiet, so a failure here has to be distinguishable from "every check
+         * passed" — the opposite reading of the same empty screen.
+         */
+        val notice: String? = null
     ) {
         /** Every check that would lose an order is passing. */
         val armed: Boolean get() = checks.none { it.blocking && it.status != Status.OK }
@@ -102,6 +110,19 @@ class DiagnosticsViewModel @Inject constructor(
 
     private val _state = MutableStateFlow(State())
     val state: StateFlow<State> = _state.asStateFlow()
+    /**
+     * Nothing this ViewModel does may end the process.
+     *
+     * An exception that escapes a `viewModelScope` job is uncaught, and Android's
+     * answer to an uncaught exception is to kill the app — which the person
+     * experiences as the app vanishing a few seconds after it opened, then the
+     * crash guard reopening it, then the home screen. Every coroutine here carries
+     * this handler, so a failed read becomes one sentence where the screen already
+     * shows messages.
+     */
+    private val guard = com.undal.syl.app.core.util.UndalGuards.viewModel("checking this device") { message ->
+        _state.value = _state.value.copy(notice = message, soundTesting = false)
+    }
 
     private var testPlayer: MediaPlayer? = null
 
@@ -109,7 +130,7 @@ class DiagnosticsViewModel @Inject constructor(
     private var soundContext: Context? = null
 
     fun refresh(context: Context) {
-        viewModelScope.launch {
+        viewModelScope.launch(guard) {
             val checks = buildChecks(context)
             val token = tokenRegistrar.currentToken()
             val health = sessionKeeper.verifySession()
@@ -137,7 +158,7 @@ class DiagnosticsViewModel @Inject constructor(
 
     /** Watches the heartbeat so the tile updates while the screen is open. */
     fun observeHeartbeat() {
-        viewModelScope.launch {
+        viewModelScope.launch(guard) {
             heartbeat.observe().collect { presence ->
                 val age = if (presence?.lastSeen == null || presence.lastSeen == 0L) {
                     Long.MAX_VALUE
@@ -368,7 +389,7 @@ class DiagnosticsViewModel @Inject constructor(
 
     /** Re-registers this device and re-runs the checks, so the fix shows itself. */
     fun reregister(context: Context) {
-        viewModelScope.launch {
+        viewModelScope.launch(guard) {
             val outcome = reRegisterDevice()
             _state.value = _state.value.copy(
                 test = TestAlert(running = false, ok = !outcome.startsWith("Could not"), message = outcome)
@@ -380,7 +401,7 @@ class DiagnosticsViewModel @Inject constructor(
     /** Starts the live watcher from the screen, then re-reads whether it is up. */
     fun startWatcher(context: Context) {
         KitchenWatchService.start(context)
-        viewModelScope.launch {
+        viewModelScope.launch(guard) {
             // The service publishes its own state; give it a moment to come up
             // before the check is read again, so the tick reflects the service
             // and not this click.
@@ -398,7 +419,7 @@ class DiagnosticsViewModel @Inject constructor(
     fun ringMyPhone(context: Context) {
         if (_state.value.test.running) return
         _state.value = _state.value.copy(test = TestAlert(running = true, message = "Asking the kitchen relay…"))
-        viewModelScope.launch {
+        viewModelScope.launch(guard) {
             val outcome = workerApi.testAlert()
             _state.value = _state.value.copy(
                 test = outcome.fold(
@@ -542,7 +563,7 @@ class DiagnosticsViewModel @Inject constructor(
     }
 
     fun heartbeatNow(context: Context) {
-        viewModelScope.launch {
+        viewModelScope.launch(guard) {
             PresenceHeartbeat.startService(context)
             heartbeat.beat()
             refresh(context)
