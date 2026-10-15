@@ -1,6 +1,7 @@
 package com.undal.syl.app.core.session
 
 import com.google.firebase.firestore.FirebaseFirestore
+import com.undal.syl.app.core.util.UndalErrors
 import kotlinx.coroutines.tasks.await
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -52,7 +53,7 @@ class RoleGate @Inject constructor(
      */
     suspend fun resolve(): RoleResolution = runCatching { decide() }.getOrElse { error ->
         RoleResolution.Failed(
-            com.undal.syl.app.core.util.UndalErrors.firestore(error, operation = "opening your account")
+            UndalErrors.firestore(error, operation = "opening your account")
         )
     }
 
@@ -70,16 +71,28 @@ class RoleGate @Inject constructor(
             // settles it, and only the kitchen ever pays for it — a customer's
             // `vendor/{uid}` does not exist, so their cold start is unchanged.
             val refreshed = runCatching { user.getIdToken(true).await() }
-            if (refreshed.isFailure) {
-                // The document says kitchen, the token cannot confirm it, and the
-                // rules read the token. Rather than showing a console whose every
-                // read is refused, say what happened and offer another try.
-                return RoleResolution.Failed(
-                    "This phone holds the kitchen's account, but Undal could not confirm it with the server just now. " +
-                        "Check the connection and try again — the kitchen's orders are safe while you do."
-                )
+            when {
+                refreshed.isSuccess -> isVendor = claimIsVendor(refreshed.getOrNull()?.claims)
+
+                // No connection is not a refusal, and the two need opposite
+                // answers. `vendor/{uid}` was written by the provisioning tool and
+                // cannot be forged by a client, this phone has it in its cache
+                // because it has opened the console before, and Firestore will read
+                // every order the kitchen already has from that same cache. So an
+                // offline kitchen gets its console — with the rules, not this
+                // router, deciding what it may actually read — instead of a red
+                // screen telling it to check a connection it cannot fix from here.
+                UndalErrors.isOffline(refreshed.exceptionOrNull()) -> isVendor = true
+
+                else ->
+                    // The document says kitchen, the server was reached and would
+                    // not confirm it. Rather than showing a console whose every
+                    // read is refused, say what happened and offer another try.
+                    return RoleResolution.Failed(
+                        "This phone holds the kitchen's account, but Undal could not confirm it with the server just now. " +
+                            "Check the connection and try again — the kitchen's orders are safe while you do."
+                    )
             }
-            isVendor = claimIsVendor(refreshed.getOrNull()?.claims)
         }
 
         if (isVendor) {
@@ -99,7 +112,7 @@ class RoleGate @Inject constructor(
             RoleResolution.Routed(role = UndalRole.CUSTOMER, hasLocation = hasCoordinates && hasText)
         }.getOrElse { error ->
             RoleResolution.Failed(
-                com.undal.syl.app.core.util.UndalErrors.firestore(error, operation = "reading your profile")
+                UndalErrors.firestore(error, operation = "reading your profile")
             )
         }
     }

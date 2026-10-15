@@ -5,6 +5,7 @@ import android.content.Context
 import android.content.Intent
 import com.google.firebase.auth.FirebaseAuth
 import com.undal.syl.app.core.fcm.AlarmChannels
+import com.undal.syl.app.core.fcm.PushDeviceRole
 
 /**
  * Android threw the process away — the kitchen must come back on its own
@@ -33,11 +34,22 @@ class BootReceiver : BroadcastReceiver() {
         AlarmChannels.ensureChannels(context)
 
         val user = runCatching { FirebaseAuth.getInstance().currentUser }.getOrNull()
-        val isVendor = runCatching {
-            user?.getIdToken(false)?.result?.claims?.get("vendor") == true
-        }.getOrDefault(false)
+        // The role the router established before this phone went down, not a
+        // token read: `Task.getResult()` on a fetch that has not finished throws,
+        // and the throw used to be swallowed into "this is not a kitchen" — which
+        // is how a rebooted vendor phone came back silent until somebody opened
+        // the app and signed in again.
+        val isVendor = PushDeviceRole.isKitchen(context, user?.uid)
 
-        PresenceHeartbeatWorker.ensureScheduled(context)
+        // The fifteen-minute heartbeat is the kitchen's writer of last resort and
+        // nobody else's: a customer's phone that beat `presence/vendor` would hold
+        // a closed store open, and a periodic job that only ever answers "not me"
+        // is a wakeup every fifteen minutes for nothing.
+        if (isVendor) {
+            PresenceHeartbeatWorker.ensureScheduled(context)
+        } else {
+            PresenceHeartbeatWorker.cancel(context)
+        }
 
         if (user != null) {
             TokenRefreshWorker.enqueue(context)

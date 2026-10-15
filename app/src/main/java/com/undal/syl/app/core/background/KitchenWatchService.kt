@@ -5,13 +5,9 @@ import android.app.PendingIntent
 import android.app.Service
 import android.content.Context
 import android.content.Intent
-import android.content.pm.ServiceInfo
-import android.os.Build
 import android.os.IBinder
 import android.util.Log
 import androidx.core.app.NotificationCompat
-import androidx.core.app.ServiceCompat
-import androidx.core.content.ContextCompat
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.database.DataSnapshot
 import com.google.firebase.database.DatabaseError
@@ -97,14 +93,20 @@ class KitchenWatchService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        // The foreground is taken first, before this call's meaning is even read.
+        //
+        // Android's rule is that a service started with `startForegroundService`
+        // must call `startForeground` — including one whose intent says "stop".
+        // This service used to check for `ACTION_STOP` first and stop, which left
+        // the promise unkept and killed the process from the main thread a few
+        // seconds later. Every customer login asked for exactly that stop.
+        UndalForeground.enter(this, AlarmChannels.WATCH_NOTIFICATION_ID, watchNotification())
+
         if (intent?.action == ACTION_STOP) {
             stopWatching()
             return START_NOT_STICKY
         }
 
-        // Foreground before anything else: a listener held by a service Android
-        // is about to reclaim is not a guarantee.
-        startForegroundNotification()
         startWatching()
         return START_STICKY
     }
@@ -123,14 +125,15 @@ class KitchenWatchService : Service() {
         super.onTaskRemoved(rootIntent)
     }
 
-    private fun startForegroundNotification() {
+    /** The quiet, ongoing notice that says this phone is watching for orders. */
+    private fun watchNotification(): Notification {
         val open = PendingIntent.getActivity(
             this,
             0,
             MainActivity.intentFor(this, "vendor/dashboard"),
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
-        val notification: Notification = NotificationCompat.Builder(this, AlarmChannels.VENDOR_WATCH)
+        return NotificationCompat.Builder(this, AlarmChannels.VENDOR_WATCH)
             .setSmallIcon(R.drawable.ic_undal_mark)
             .setContentTitle(getString(R.string.watch_title))
             .setContentText(getString(R.string.watch_body))
@@ -140,13 +143,6 @@ class KitchenWatchService : Service() {
             .setShowWhen(false)
             .setContentIntent(open)
             .build()
-
-        val type = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
-            ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE
-        } else {
-            0
-        }
-        ServiceCompat.startForeground(this, AlarmChannels.WATCH_NOTIFICATION_ID, notification, type)
     }
 
     private fun startWatching() {
@@ -195,16 +191,26 @@ class KitchenWatchService : Service() {
         liveReference = null
         handedOver.clear()
         KitchenWatchState.stopped()
-        ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE)
+        UndalForeground.leave(this, AlarmChannels.WATCH_NOTIFICATION_ID)
         stopSelf()
     }
 
+    /**
+     * The whole of the cleanup, because this is the method a `Context.stopService`
+     * reaches — which is now the only way this service is stopped from outside.
+     *
+     * `UndalForeground.leave` is here rather than left to the platform, which does
+     * remove a destroyed service's notification on its own schedule: a "Watching
+     * for orders" notice that outlives the watcher by a second or two is a notice
+     * the owner reads as a promise this phone is no longer keeping.
+     */
     override fun onDestroy() {
         ordersRegistration?.remove()
         ordersRegistration = null
         liveReference?.removeEventListener(liveListener)
         liveReference = null
         KitchenWatchState.stopped()
+        UndalForeground.leave(this, AlarmChannels.WATCH_NOTIFICATION_ID)
         super.onDestroy()
     }
 
@@ -215,21 +221,42 @@ class KitchenWatchService : Service() {
         private const val ORDERS = "orders"
         private const val LIVE = "orderLive"
 
-        /** Starts the watch. Idempotent: starting twice keeps one watcher. */
-        fun start(context: Context) {
+        /**
+         * Starts the watch. Idempotent: starting twice keeps one watcher.
+         *
+         * Returns whether Android allowed the start at all, which is the fact the
+         * watchdog and the readiness screen both need: a service that could not be
+         * started is a phone that will not ring, and saying so is better than
+         * carrying on as though the call had worked.
+         */
+        fun start(context: Context): Boolean {
             val intent = Intent(context, KitchenWatchService::class.java).apply { action = ACTION_START }
-            runCatching { ContextCompat.startForegroundService(context, intent) }
-                .onFailure { Log.w(TAG, "could not start the kitchen watch", it) }
+            val started = UndalForeground.start(context, intent)
+            // The service reports itself running once its listener is attached;
+            // here only a refusal is worth recording, and it is worth recording
+            // because the readiness screen is what the owner believes.
+            if (!started) {
+                KitchenWatchState.stopped("Android would not let this phone start its order watcher")
+            }
             // Armed from here rather than from every caller: the watchdog is the
             // same promise as the watcher — "this phone rings for orders" — so it
             // is armed and cancelled with it, in the one place that knows.
             AlertWatchdog.arm(context)
+            return started
         }
 
-        /** Stops it — used on sign-out, so a customer phone never watches. */
+        /**
+         * Stops it — used on sign-out, and on every customer login, so a customer
+         * phone never watches.
+         *
+         * This is a plain `stopService`: asking for the foreground in order to
+         * give it straight back is what used to kill the process. `onDestroy`
+         * already does the same cleanup `ACTION_STOP` does, so nothing is lost by
+         * never reaching `onStartCommand` at all.
+         */
         fun stop(context: Context) {
-            val intent = Intent(context, KitchenWatchService::class.java).apply { action = ACTION_STOP }
-            runCatching { ContextCompat.startForegroundService(context, intent) }
+            UndalForeground.stop(context, KitchenWatchService::class.java)
+            KitchenWatchState.stopped()
             AlertWatchdog.cancel(context)
         }
 
@@ -238,7 +265,11 @@ class KitchenWatchService : Service() {
          * the rule; this service does.
          */
         fun sync(context: Context, isVendor: Boolean) {
-            if (isVendor) start(context) else stop(context)
+            if (isVendor) {
+                start(context)
+            } else {
+                stop(context)
+            }
         }
     }
 }

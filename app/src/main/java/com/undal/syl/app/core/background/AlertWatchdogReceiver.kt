@@ -39,19 +39,21 @@ class AlertWatchdogReceiver : BroadcastReceiver() {
         if (intent?.action != ACTION_WATCHDOG) return
         val app = context.applicationContext
 
-        if (!AlertWatchdog.isKitchenDevice()) {
+        if (!AlertWatchdog.isKitchenDevice(app)) {
             AlertWatchdog.cancel(app)
             return
         }
 
         AlarmChannels.ensureChannels(app)
-        val started = runCatching {
-            PresenceHeartbeat.startService(app)
-            KitchenWatchService.start(app)
-        }
+        // Both calls report whether Android allowed them; wrapping them in one
+        // `runCatching` hid that, because neither throws any more. A watchdog that
+        // cannot tell the difference between "revived" and "refused" is a
+        // watchdog that reports a green tick over a silent kitchen.
+        val heartbeat = runCatching { PresenceHeartbeat.startService(app) }.getOrDefault(false)
+        val watcher = runCatching { KitchenWatchService.start(app) }.getOrDefault(false)
 
-        if (started.isFailure) {
-            Log.w(TAG, "watchdog could not revive the kitchen services", started.exceptionOrNull())
+        if (!heartbeat || !watcher) {
+            Log.w(TAG, "watchdog was refused: heartbeat=$heartbeat watcher=$watcher")
             warnOwner(app)
         } else {
             Log.i(TAG, "watchdog revived the kitchen: heartbeat and order watcher restarted")

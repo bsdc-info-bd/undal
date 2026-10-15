@@ -32,5 +32,25 @@
     <string name="alert_test_title">Kitchen alert test</string>
     <string name="alert_test_body">If you can hear this, the kitchen will ring for a real order. This test stops by itself.</string>
     <string name="watch_title">Watching for orders</string>
+
     <string name="watch_body">The kitchen rings the moment an order arrives, even with this screen off.</string>
+
+    <!--
+      The screen Undal falls back to when it cannot start (SafeModeActivity).
+      Every string here is read by a person who has just watched the app fail, so
+      each one says what happened, what is still safe, and what to do next — none
+      of them may be a technical shrug. The `\n` are real line breaks: a raw
+      newline inside a string resource is collapsed to a space by aapt.
+    -->
+    <string name="safe_mode_title">Undal could not open properly</string>
+    <string name="safe_mode_body">Undal ran into a problem while it was starting, and it has stopped trying to reopen itself so it does not keep flashing at you.\n\nYour orders, your basket and your account are all on the server — nothing was lost by this. Try again below; if it fails a second time, send the report to the kitchen and order by phone while it is being fixed.</string>
+    <string name="safe_mode_report_heading">What went wrong</string>
+    <string name="safe_mode_try_again">Try opening Undal again</string>
+    <string name="safe_mode_copy">Copy this report</string>
+    <string name="safe_mode_call">Call the Undal kitchen</string>
+    <string name="safe_mode_footnote">If you copy the report, send it to the kitchen on WhatsApp or by phone. It names the part of Undal that failed, the version it failed on and the phone it failed on, which is what turns a two-day investigation into a two-minute one.</string>
+    <string name="safe_mode_copied">Report copied. Paste it into a message to the kitchen.</string>
+    <string name="safe_mode_copy_refused">This phone would not let Undal copy the report. Please take a screenshot of this screen instead.</string>
+    <string name="safe_mode_retry_refused">This phone would not let Undal reopen. Close it from the recent-apps list and tap the icon again.</string>
+    <string name="safe_mode_no_phone">No phone number is set on this build. Please message the kitchen instead.</string>
 </resources>

@@ -6,6 +6,8 @@ import android.content.Context
 import android.content.Intent
 import android.os.Build
 import android.util.Log
+import com.google.firebase.auth.FirebaseAuth
+import com.undal.syl.app.core.fcm.PushDeviceRole
 
 /**
  * The watchdog that brings the kitchen back after Android takes it away
@@ -163,18 +165,30 @@ object AlertWatchdog {
     private fun prefs(context: Context) =
         context.applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
 
+    /**
+     * `apply`, not `commit`: this runs on the main thread at every cold start,
+     * and the values it writes are read by a later process, which `apply`
+     * reaches just as surely without an fsync on the opening frame.
+     */
     private fun put(context: Context, armed: Boolean, nextAt: Long) {
-        prefs(context).edit().putBoolean(KEY_ARMED, armed).putLong(KEY_NEXT_AT, nextAt).commit()
+        prefs(context).edit().putBoolean(KEY_ARMED, armed).putLong(KEY_NEXT_AT, nextAt).apply()
     }
 
     /**
      * The one place that decides what "still the kitchen" means, so the receiver
-     * and the boot path can never disagree: a signed-in account whose token says
-     * it is a vendor.
+     * and the boot path can never disagree.
+     *
+     * It reads the role the router last established for the account that is
+     * signed in now — never a `Task`, because a watchdog fires in a process that
+     * was started to run it and has no time to wait for a token round trip. The
+     * previous version read `getIdToken(false).result`, which throws unless the
+     * task has already finished; the throw was swallowed, so the answer was
+     * always "not the kitchen" and the watchdog disarmed itself the first time it
+     * fired. A kitchen phone that had been swiped away never came back.
      */
-    fun isKitchenDevice(): Boolean = runCatching {
-        val user = com.google.firebase.auth.FirebaseAuth.getInstance().currentUser ?: return false
-        user.getIdToken(false).result?.claims?.get("vendor") == true
+    fun isKitchenDevice(context: Context): Boolean = runCatching {
+        val uid = FirebaseAuth.getInstance().currentUser?.uid ?: return false
+        PushDeviceRole.isKitchen(context, uid)
     }.getOrDefault(false)
 
 }

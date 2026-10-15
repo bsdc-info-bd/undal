@@ -5,6 +5,8 @@ import androidx.lifecycle.viewModelScope
 import com.google.firebase.auth.FirebaseAuth
 import com.undal.syl.app.core.background.KitchenWatchService
 import com.undal.syl.app.core.background.OrderAlertController
+import com.undal.syl.app.core.background.PresenceHeartbeatWorker
+import com.undal.syl.app.core.fcm.PushDeviceRole
 import com.undal.syl.app.core.fcm.TokenRegistrar
 import com.undal.syl.app.core.session.AuthSession
 import com.undal.syl.app.core.session.OnboardingProgress
@@ -13,11 +15,14 @@ import com.undal.syl.app.core.session.RoleGate
 import com.undal.syl.app.core.session.UndalRole
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.CoroutineExceptionHandler
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import javax.inject.Inject
 
 /**
@@ -116,9 +121,23 @@ class UndalRootViewModel @Inject constructor(
         }
     }
 
+    /**
+     * The resolution currently in flight, if any.
+     *
+     * A cold start asks for this more than once: the session emits when Firebase
+     * restores the account, emits again when the ID token's claims land, and the
+     * login screen asks a third time. Each ask costs a token read and two Firestore
+     * reads, and two of them finishing out of order would paint a destination that
+     * the third then painted over — which on screen is a flicker and on the network
+     * is a phone in a dead spot spending its only good moment on a duplicate.
+     * The last ask is the one that answers.
+     */
+    private var resolving: Job? = null
+
     /** Re-runs the router after sign-in, sign-out, address save or wizard finish. */
     fun resolveRole() {
-        viewModelScope.launch(failures) {
+        resolving?.cancel()
+        resolving = viewModelScope.launch(failures) {
             // The screen the person is on stays on screen until the router knows
             // where it is sending them: the splash used to be painted here first,
             // which made every address save flash the splash and re-run the graph.
@@ -138,6 +157,13 @@ class UndalRootViewModel @Inject constructor(
                 }
 
                 is RoleGate.RoleResolution.Routed -> {
+                    // The claim has now been read off the token, which is the
+                    // authority. Correct the provisional registration above if it
+                    // guessed differently — and it does guess differently on a
+                    // cold start, because a token being fetched has no claims yet.
+                    session.uid?.let { uid ->
+                        registerDevice(uid, resolution.role == UndalRole.VENDOR)
+                    }
                     _destination.value = when (resolution.role) {
                         UndalRole.VENDOR -> {
                             // The kitchen sees the device wizard once, then the console
@@ -162,8 +188,22 @@ class UndalRootViewModel @Inject constructor(
         }
     }
 
+    /**
+     * Tells this phone which of the two it is.
+     *
+     * Called twice for a signed-in account, and both calls matter. The first is
+     * immediate, so a phone that is offline still registers its push token and
+     * still switches the kitchen's watcher off if it is a customer's. The second
+     * comes from [resolveRole], which is the only place that has actually read the
+     * claim off the token — and before that read existed, a kitchen phone spent
+     * the first second of every cold start believing it was a customer's, which
+     * switched its order watcher off and told the watchdog to disarm.
+     */
     private fun registerDevice(uid: String, isVendor: Boolean) {
         viewModelScope.launch(failures) {
+            if (registeredRole == RoleRegistration(uid, isVendor)) return@launch
+            registeredRole = RoleRegistration(uid, isVendor)
+
             // Best effort, every step of it: a failed token write, a refused
             // notification permission or a service the ROM will not let us start
             // must never block the portal the person is trying to reach.
@@ -172,21 +212,43 @@ class UndalRootViewModel @Inject constructor(
             // Who is signed in decides which alert routes exist on this phone: the
             // kitchen gets the live watcher, everyone else has it switched off.
             // The fact is also remembered, because a push can arrive in a fresh
-            // process before the claim is refreshed.
+            // process before the claim is refreshed — and because the watchdog,
+            // the boot receiver and the fifteen-minute heartbeat all read it from
+            // a place where they cannot wait for a token round trip.
             runCatching { progress.setKitchenDevice(isVendor) }
-            runCatching { com.undal.syl.app.core.fcm.PushDeviceRole.remember(applicationContext(), uid, isVendor) }
+            runCatching { PushDeviceRole.remember(applicationContext(), uid, isVendor) }
             runCatching { KitchenWatchService.sync(applicationContext(), isVendor) }
+            // The heartbeat job is the writer of last resort for the ten-minute
+            // auto-offline rule, so it follows the role and not the launch: a
+            // customer's phone that beat the kitchen's presence would hold a
+            // closed store open.
+            // On `IO`, not on the main thread: the first touch of WorkManager in a
+            // process opens its database on the calling thread, and a login is the
+            // last moment to spend a hundred milliseconds of the main thread on it.
+            runCatching {
+                withContext(Dispatchers.IO) {
+                    if (isVendor) PresenceHeartbeatWorker.ensureScheduled(applicationContext())
+                    else PresenceHeartbeatWorker.cancel(applicationContext())
+                }
+            }
         }
     }
+
+    /** The role this phone has already been told it is, so a repeat costs nothing. */
+    private data class RoleRegistration(val uid: String, val isVendor: Boolean)
+
+    @Volatile
+    private var registeredRole: RoleRegistration? = null
 
     /** The kitchen signs out from store settings; the role gate re-resolves immediately. */
     fun signOut() {
         viewModelScope.launch(failures) {
+            registeredRole = null
             // Silence anything that is ringing and drop the watcher before the
             // session goes: a signed-out phone must not keep watching orders.
             KitchenWatchService.stop(applicationContext())
             OrderAlertController.stop()
-            com.undal.syl.app.core.fcm.PushDeviceRole.clear(applicationContext())
+            PushDeviceRole.clear(applicationContext())
             session.signOut()
             resolveRole()
         }

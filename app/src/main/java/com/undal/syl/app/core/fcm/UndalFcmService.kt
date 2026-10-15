@@ -70,11 +70,12 @@ class UndalFcmService : FirebaseMessagingService() {
         AlarmChannels.ensureChannels(applicationContext)
         val data = message.data
         val uid = runCatching { FirebaseAuth.getInstance().currentUser?.uid }.getOrNull()
-        // The claim can be up to an hour stale; the locally remembered role for
-        // this exact account covers the window where a kitchen push arrives first.
-        val isVendor = PushDeviceRole.isKitchen(applicationContext, uid) || runCatching {
-            FirebaseAuth.getInstance().currentUser?.getIdToken(false)?.result?.claims?.get("vendor") == true
-        }.getOrDefault(false)
+        // The remembered role for this exact account, which is what the router
+        // established from the token the last time it ran. A `Task.getResult()`
+        // read here would throw on a token still being fetched and answer "not
+        // the kitchen" — the second half of this expression used to do exactly
+        // that, every single time, and only the remembered role was ever true.
+        val isVendor = PushDeviceRole.isKitchen(applicationContext, uid)
 
         when (data["type"]) {
             TYPE_ORDER_CREATED -> handleOrderCreated(data, uid)

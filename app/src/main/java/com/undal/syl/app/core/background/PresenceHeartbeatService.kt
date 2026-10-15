@@ -3,16 +3,11 @@ package com.undal.syl.app.core.background
 import android.app.Notification
 import android.app.Service
 import android.content.Intent
-import android.content.pm.ServiceInfo
-import android.os.Build
 import android.os.IBinder
 import androidx.core.app.NotificationCompat
-import androidx.core.app.NotificationManagerCompat
-import androidx.core.app.ServiceCompat
 import com.undal.syl.app.R
 import com.undal.syl.app.core.fcm.AlarmChannels
 import com.google.firebase.database.FirebaseDatabase
-import com.google.firebase.database.ServerValue
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -47,34 +42,27 @@ class PresenceHeartbeatService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        // Foreground first, whatever this intent turns out to ask for: a service
+        // that was started with `startForegroundService` and stops without ever
+        // taking the foreground is killed by the platform, not by us.
+        UndalForeground.enter(this, AlarmChannels.HEARTBEAT_NOTIFICATION_ID, buildNotification())
+
         if (intent?.action == ACTION_STOP) {
-            stopForegroundAndSelf()
+            // The offline write and the notice both happen in `onDestroy`, which
+            // `stopSelf()` always reaches — so this route and a plain
+            // `Context.stopService` from outside behave identically, and neither
+            // can leave the Worker believing a kitchen that has gone away is still
+            // beating.
+            stopSelf()
             return START_NOT_STICKY
         }
-
-        ServiceCompat.startForeground(
-            this,
-            AlarmChannels.HEARTBEAT_NOTIFICATION_ID,
-            buildNotification(),
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
-                ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE
-            } else {
-                0
-            }
-        )
 
         if (loop == null) {
             loop = scope.launch {
                 val reference = FirebaseDatabase.getInstance().getReference("presence").child("vendor")
                 while (isActive) {
                     runCatching {
-                        reference.setValue(
-                            mapOf(
-                                "lastSeen" to ServerValue.TIMESTAMP,
-                                "online" to true,
-                                "device" to "vendor-app"
-                            )
-                        ).await()
+                        reference.setValue(PresenceHeartbeat.presencePayload(online = true)).await()
                     }
                     delay(BEAT_INTERVAL_MILLIS)
                 }
@@ -94,22 +82,23 @@ class PresenceHeartbeatService : Service() {
             .setShowWhen(false)
             .build()
 
-    private fun stopForegroundAndSelf() {
+    /**
+     * Tells the Worker this kitchen has stopped beating, so the ten-minute rule
+     * starts from now rather than from the last five-minute beat.
+     *
+     * It runs from [onDestroy] as well, because the honest way to stop a service
+     * is `Context.stopService`, which never reaches `onStartCommand` at all — and
+     * an offline write that only happened on one of the two stop routes is an
+     * offline write that usually does not happen.
+     */
+    private fun markOffline() {
         scope.launch {
             runCatching {
                 FirebaseDatabase.getInstance().getReference("presence").child("vendor")
-                    .updateChildren(
-                        mapOf(
-                            "lastSeen" to ServerValue.TIMESTAMP,
-                            "online" to false
-                        )
-                    )
+                    .updateChildren(PresenceHeartbeat.presencePayload(online = false))
                     .await()
             }
         }
-        ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE)
-        NotificationManagerCompat.from(this).cancel(AlarmChannels.HEARTBEAT_NOTIFICATION_ID)
-        stopSelf()
     }
 
     /**
@@ -127,18 +116,14 @@ class PresenceHeartbeatService : Service() {
     private suspend fun beatNow() {
         runCatching {
             FirebaseDatabase.getInstance().getReference("presence").child("vendor")
-                .setValue(
-                    mapOf(
-                        "lastSeen" to ServerValue.TIMESTAMP,
-                        "online" to true,
-                        "device" to "vendor-app"
-                    )
-                )
+                .setValue(PresenceHeartbeat.presencePayload(online = true))
                 .await()
         }
     }
 
     override fun onDestroy() {
+        markOffline()
+        UndalForeground.leave(this, AlarmChannels.HEARTBEAT_NOTIFICATION_ID)
         loop?.cancel()
         loop = null
         super.onDestroy()

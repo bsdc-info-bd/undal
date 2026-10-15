@@ -51,12 +51,65 @@ class AuthSession @Inject constructor(
 
     fun isSignedIn(): Boolean = auth.currentUser != null
 
+    /**
+     * The claims of the ID token Firebase last handed this phone, empty until it
+     * has handed one over.
+     *
+     * This used to be read with `getIdToken(false).result`, which is not a read
+     * at all: `Task.getResult()` throws `IllegalStateException` unless the task
+     * has already finished, and a token being fetched has not. The throw was
+     * swallowed, so every cold start called the kitchen a customer — and the
+     * router then asked the kitchen's order watcher to stop, through a route
+     * that killed the process. The claims are taken from the task's own callback
+     * now, published when they land, and read synchronously by everything that
+     * cannot suspend.
+     */
+    @Volatile
+    private var cachedClaims: Map<String, Any> = emptyMap()
+
+    /**
+     * What the token says about this phone, for the paths that run with no
+     * coroutine to wait in: the alert watchdog deciding whether to revive the
+     * kitchen, the boot receiver deciding the same thing before anyone has
+     * opened the app. Both were reading a `Task` that had not finished.
+     */
+    val vendorClaim: Boolean get() = cachedClaims[VENDOR_CLAIM_KEY] == true
+
     /** Continuous auth state for the navigation graph. */
     val state: Flow<SessionState> = callbackFlow {
-        trySend(auth.currentUser.toSessionState())
-        val listener = FirebaseAuth.AuthStateListener { updated -> trySend(updated.currentUser.toSessionState()) }
-        auth.addAuthStateListener(listener)
-        awaitClose { auth.removeAuthStateListener(listener) }
+        fun publish() {
+            trySend(auth.currentUser.toSessionState())
+        }
+
+        fun readClaims(user: FirebaseUser) {
+            runCatching {
+                user.getIdToken(false).addOnSuccessListener { token ->
+                    cachedClaims = token.claims ?: emptyMap()
+                    // Published again with the claim now in hand: the first
+                    // emission of a cold start cannot know it, and the second one
+                    // is what the router acts on.
+                    publish()
+                }
+            }.onFailure { error ->
+                android.util.Log.w(TAG, "the ID token's claims could not be read", error)
+            }
+        }
+
+        publish()
+        auth.currentUser?.let { readClaims(it) }
+
+        val authListener = FirebaseAuth.AuthStateListener { updated ->
+            cachedClaims = emptyMap()
+            publish()
+            updated.currentUser?.let { readClaims(it) }
+        }
+        val tokenListener = FirebaseAuth.IdTokenListener { user -> readClaims(user) }
+        auth.addAuthStateListener(authListener)
+        auth.addIdTokenListener(tokenListener)
+        awaitClose {
+            auth.removeAuthStateListener(authListener)
+            auth.removeIdTokenListener(tokenListener)
+        }
     }.distinctUntilChanged()
 
     val isVendor: Flow<Boolean> = state.map { it is SessionState.SignedIn && it.user.isVendorClaim }.distinctUntilChanged()
@@ -85,15 +138,13 @@ class AuthSession @Inject constructor(
                 uid = uid,
                 email = email,
                 emailVerified = isEmailVerified,
-                isVendorClaim = tokenClaims()?.get(VENDOR_CLAIM_KEY) == true
+                isVendorClaim = vendorClaim
             )
         )
     }
 
-    private fun FirebaseUser?.tokenClaims(): Map<String, Any>? =
-        runCatching { this?.getIdToken(false)?.result?.claims ?: emptyMap() }.getOrNull()
-
     companion object {
+        private const val TAG = "UndalSession"
         const val VENDOR_CLAIM_KEY = "vendor"
     }
 }
