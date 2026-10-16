@@ -130,17 +130,58 @@ export interface CouponVerdict {
   discountPaisa: number;
 }
 
-/** Normalises whatever Firestore hands back for a timestamp into epoch millis. */
+/**
+ * Below this a number is seconds since the epoch, not milliseconds: 1e11 ms is
+ * March 1973, while 1e11 s is the year 5138. A coupon typed into the Firebase
+ * console as a number of seconds used to be read as milliseconds — a date in
+ * January 1970 — and every customer was told it had expired.
+ */
+const EPOCH_SECONDS_CEILING = 100_000_000_000;
+const DHAKA_OFFSET_MS = 6 * 60 * 60 * 1000;
+const ONE_DAY_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * Normalises whatever Firestore hands back for a timestamp into epoch millis.
+ *
+ * Every shape the field can arrive in, because a reader that misses one answers
+ * "no expiry" (live forever) or, worse, a date in 1970 (expired forever):
+ *
+ *   · a Timestamp over REST — an RFC 3339 string, nanoseconds and all;
+ *   · `{seconds, nanos}` or `{_seconds, _nanoseconds}` from a JSON-serialised SDK;
+ *   · epoch millis (a cached board entry), or epoch *seconds*;
+ *   · a number written as text;
+ *   · a bare "2026-10-31", which means the whole of that day in Dhaka — the same
+ *     23:59:59 the app's editor stores for a picked date.
+ *
+ * Anything else is 0: no expiry, never an invented date.
+ */
 export function couponExpiryMillis(value: unknown): number {
-  if (typeof value === "number" && Number.isFinite(value)) return value;
-  if (typeof value === "string" && value.length > 0) {
-    const parsed = Date.parse(value);
-    return Number.isFinite(parsed) ? parsed : 0;
+  if (typeof value === "number") {
+    if (!Number.isFinite(value) || value <= 0) return 0;
+    return value < EPOCH_SECONDS_CEILING ? Math.round(value * 1000) : Math.round(value);
+  }
+  if (typeof value === "string") {
+    const text = value.trim();
+    if (text.length === 0) return 0;
+    if (/^\d+(\.\d+)?$/.test(text)) return couponExpiryMillis(Number(text));
+    const dateOnly = /^(\d{4})-(\d{2})-(\d{2})$/.exec(text);
+    if (dateOnly) {
+      const startOfDayUtc = Date.UTC(Number(dateOnly[1]), Number(dateOnly[2]) - 1, Number(dateOnly[3]));
+      return Number.isFinite(startOfDayUtc) ? startOfDayUtc - DHAKA_OFFSET_MS + ONE_DAY_MS - 1000 : 0;
+    }
+    const parsed = Date.parse(text);
+    return Number.isFinite(parsed) && parsed > 0 ? parsed : 0;
+  }
+  if (value instanceof Date) {
+    const time = value.getTime();
+    return Number.isFinite(time) && time > 0 ? time : 0;
   }
   if (value && typeof value === "object") {
-    // A Firestore Timestamp that reached us as `{seconds, nanos}`.
-    const seconds = Number((value as { seconds?: unknown }).seconds ?? Number.NaN);
-    if (Number.isFinite(seconds)) return seconds * 1000;
+    // A Firestore Timestamp that reached us as `{seconds, nanos}`, or as the
+    // Admin SDK's JSON `{_seconds, _nanoseconds}`.
+    const record = value as { seconds?: unknown; _seconds?: unknown };
+    const seconds = Number(record.seconds ?? record._seconds ?? Number.NaN);
+    if (Number.isFinite(seconds) && seconds > 0) return seconds * 1000;
   }
   return 0;
 }
@@ -148,16 +189,8 @@ export function couponExpiryMillis(value: unknown): number {
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 
 /**
- * "16 Oct 2026", in Asia/Dhaka — the label the app prints for the same instant
- * (`TimeDhaka.formatDate`, pattern `d MMM yyyy`), so a customer refused on the
- * web and a customer refused in the app read one sentence rather than two.
- *
- * Dhaka is UTC+6 all year round, so this is arithmetic and a month table rather
- * than a locale lookup: no `Intl`, no timezone database, nothing that could
- * differ between a Worker isolate, a browser and a phone.
- *
- * An empty string means "there is no date to name" — a coupon with no expiry —
- * and the caller then falls back to a sentence that does not invent one.
+ * "16 Oct 2026" — the expiry as a Dhaka date, in the shape the app prints with
+ * `TimeDhaka.formatDate`. "" when there is no expiry to name.
  */
 export function couponExpiryLabel(value: unknown, offsetMinutes = 360): string {
   const millis = couponExpiryMillis(value);
@@ -166,6 +199,25 @@ export function couponExpiryLabel(value: unknown, offsetMinutes = 360): string {
   const month = MONTHS[shifted.getUTCMonth()] ?? "";
   if (!month) return "";
   return `${shifted.getUTCDate()} ${month} ${shifted.getUTCFullYear()}`;
+}
+
+/**
+ * "16 Oct 2026, 11:59 PM" — the date *and* the minute, in Dhaka.
+ *
+ * What a refusal says, because the date alone cannot settle "it is not
+ * expired": an expiry stored at 06:00 and one stored at 23:59 on the same day
+ * print the same date, and only the time shows which one the database holds.
+ * The app's `CouponMath.expiryMoment` prints the same characters.
+ */
+export function couponExpiryMoment(value: unknown, offsetMinutes = 360): string {
+  const millis = couponExpiryMillis(value);
+  const date = couponExpiryLabel(millis, offsetMinutes);
+  if (!date) return "";
+  const shifted = new Date(millis + offsetMinutes * 60_000);
+  const hours = shifted.getUTCHours();
+  const minutes = shifted.getUTCMinutes();
+  const twelve = hours % 12 === 0 ? 12 : hours % 12;
+  return `${date}, ${twelve}:${String(minutes).padStart(2, "0")} ${hours < 12 ? "AM" : "PM"}`;
 }
 
 export function couponTypeOf(value: unknown): CouponType | null {

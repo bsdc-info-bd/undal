@@ -13,18 +13,23 @@
  *                                             was paused, it comes back)
  *   6 – 10 min                                nothing yet: one missed beat is a
  *                                             slow network, not an outage
- *   over 10 min, store open                   the store is paused and the owner
+ *   over 10 min, store taking orders          the store is paused and the owner
  *                                             is told why
- *   over 10 min, store already closed         nothing: a closed kitchen has no
- *                                             orders to lose
+ *   over 10 min, store not taking orders      nothing: a closed kitchen has no
+ *   (switch off, or outside its hours)        orders to lose — and a phone left
+ *                                             off overnight must not pause the
+ *                                             store that opens itself at nine
  *
  * And when the device returns while the store is paused:
  *
  *   away ≤ 30 min and inside opening hours    restored automatically, and the
  *                                             owner is told it happened
- *   anything else                             the owner is asked, once, instead
+ *   outside opening hours                     the pause is lifted: the schedule
+ *                                             keeps the store closed until its
+ *                                             next service and opens it then
+ *   away > 30 min, inside opening hours       the owner is asked, once, instead
  *                                             of a kitchen reopening itself
- *                                             outside the hours it published
+ *                                             mid-service after a long absence
  */
 
 /** The owner's rule: ten minutes of silence while open pauses the store. */
@@ -39,11 +44,11 @@ export const RESTORE_WINDOW_MS = 30 * 60 * 1000;
 export type PresenceAction =
   /** Nothing to decide: sample the day and move on. */
   | "none"
-  /** Open the store: the device is back after a short, in-hours pause. */
+  /** Lift the pause: the device is back after a short in-hours pause, or after hours. */
   | "restore"
   /** Ask the owner: the device is back, but the pause should not undo itself. */
   | "remind"
-  /** Pause the store: the device is gone and the store was open. */
+  /** Pause the store: the device is gone and the store was taking orders. */
   | "auto-offline";
 
 export interface PresenceInput {
@@ -51,7 +56,11 @@ export interface PresenceInput {
   lastSeenMillis: number;
   /** Now, in epoch millis. */
   nowMillis: number;
-  /** `config/store.open`. */
+  /**
+   * Is the store taking orders at this minute — the owner's switch on *and* the
+   * hours covering now? A switched-on store outside its hours has no orders to
+   * lose, so it is not a store the watchdog pauses.
+   */
   storeOpen: boolean;
   /** `config/store.autoClosed`. */
   autoClosed: boolean;
@@ -82,15 +91,17 @@ export function presenceDecision(input: PresenceInput): PresenceDecision {
     }
     const away = input.autoClosedAtMillis > 0 ? input.nowMillis - input.autoClosedAtMillis : 0;
     const awayMinutes = Math.max(0, Math.round(away / 60_000));
-    if (away > 0 && away <= RESTORE_WINDOW_MS && input.insideHours) {
+    if (!input.insideHours) {
+      // Lifting the pause after hours opens nothing: the schedule keeps the store
+      // closed until its next service, and opens it then — which is exactly what
+      // the owner asked for by leaving the switch on. Keeping the pause instead
+      // would leave tomorrow's service shut because tonight's phone blinked.
+      return { action: "restore", reason: "device-returned-after-hours", ageMinutes, awayMinutes };
+    }
+    if (away > 0 && away <= RESTORE_WINDOW_MS) {
       return { action: "restore", reason: "device-returned-within-window", ageMinutes, awayMinutes };
     }
-    return {
-      action: "remind",
-      reason: input.insideHours ? "long-outage" : "outside-hours",
-      ageMinutes,
-      awayMinutes,
-    };
+    return { action: "remind", reason: "long-outage", ageMinutes, awayMinutes };
   }
 
   if (input.autoClosed) {

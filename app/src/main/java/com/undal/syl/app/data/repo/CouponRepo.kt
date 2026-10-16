@@ -208,12 +208,10 @@ class CouponRepo @Inject constructor(
         "switched off" -> "${coupon.code} is switched off right now."
         "not set up correctly" -> "${coupon.code} is not set up correctly — please tell the kitchen."
         "expired" -> {
-            val date = com.undal.syl.app.core.util.TimeDhaka.formatDate(
-                com.undal.syl.app.core.util.TimeDhaka.fromInstant(
-                    java.time.Instant.ofEpochMilli(coupon.expiresAtMillis)
-                ).toLocalDate()
-            )
-            "${coupon.code} expired on $date."
+            // The date and the minute, in Dhaka — the sentence the web checkout
+            // writes. An owner sure the code is live can read what is stored.
+            val ended = CouponMath.expiryMoment(coupon.expiresAtMillis)
+            if (ended.isBlank()) "${coupon.code} has expired." else "${coupon.code} expired on $ended."
         }
         "not today" -> "${coupon.code} only works on ${coupon.daysOfWeek.joinToString(", ")}."
         "outside its hours" -> "${coupon.code} works between ${coupon.startsAt} and ${coupon.endsAt}."

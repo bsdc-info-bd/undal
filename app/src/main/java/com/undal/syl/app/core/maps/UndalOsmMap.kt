@@ -1,10 +1,12 @@
 package com.undal.syl.app.core.maps
 
+import android.content.Context
 import android.graphics.Canvas
 import android.graphics.Color as AndroidColor
 import android.graphics.Paint
 import android.graphics.Path
 import android.graphics.drawable.Drawable
+import android.view.MotionEvent
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -29,10 +31,8 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -540,15 +540,69 @@ fun UndalOsmMap(
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
 
-    var mapView by remember { mutableStateOf<MapView?>(null) }
-    var renderer by remember { mutableStateOf<UndalMapRenderer?>(null) }
-
     // The newest callbacks without re-creating the map: a caller that passes a new
     // lambda on every recomposition must not rebuild the marker diff.
     val dragCallback by rememberUpdatedState(onPinDragged)
     val tapCallback by rememberUpdatedState(onPinTapped)
     val longPressCallback by rememberUpdatedState(onLongPress)
     val recentreCallback by rememberUpdatedState(onRecentre)
+
+    // ONE MapView for the whole life of this composable, created here — not inside
+    // the AndroidView factory — and never replaced.
+    //
+    // This is the blank map. The view used to be created in the factory, which
+    // then wrote it into `mutableStateOf` state; the lifecycle effect below was
+    // keyed on that state. So the moment the map existed the key changed, the
+    // effect's previous instance was disposed, and its onDispose ran
+    // `onDetach()` on the brand-new map — osmdroid's teardown, which shuts the
+    // tile downloader's threads down for good and drops the redraw handler — and
+    // then nulled the renderer. Every map in the app was destroyed the instant it
+    // was built: a grey grid, no pin, zoom buttons that did nothing.
+    val mapView = remember {
+        // The tile cache directory and the identifying user agent have to exist
+        // before the first tile request, which this is.
+        UndalMaps.initialize(context)
+        UndalMapView(context, holdsGestures = interactive).apply {
+            setTileSource(org.osmdroid.tileprovider.tilesource.TileSourceFactory.MAPNIK)
+            setMultiTouchControls(interactive)
+            setBuiltInZoomControls(false)
+            setTilesScaledToDpi(true)
+            minZoomLevel = UndalMaps.MIN_ZOOM
+            maxZoomLevel = UndalMaps.MAX_ZOOM
+            isNestedScrollingEnabled = false
+            isVerticalScrollBarEnabled = false
+            isHorizontalScrollBarEnabled = false
+            controller.setZoom(zoom)
+            controller.setCenter(GeoPoint(latitude, longitude))
+            // Attribution is mandatory under the OpenStreetMap tile policy and is
+            // drawn on the tiles themselves, so it survives every screenshot and
+            // every zoom change.
+            overlays.add(CopyrightOverlay(context))
+            if (showScaleBar) {
+                runCatching {
+                    val scale = ScaleBarOverlay(this)
+                    scale.setAlignBottom(true)
+                    scale.setAlignRight(true)
+                    scale.setUnitsOfMeasure(ScaleBarOverlay.UnitsOfMeasure.metric)
+                    overlays.add(scale)
+                }
+            }
+        }
+    }
+    val renderer = remember(mapView) {
+        UndalMapRenderer(mapView).also { created ->
+            if (interactive && longPressCallback != null) {
+                created.installEvents(object : MapEventsReceiver {
+                    override fun singleTapConfirmedHelper(p: GeoPoint): Boolean = false
+
+                    override fun longPressHelper(p: GeoPoint): Boolean {
+                        longPressCallback?.invoke(p.latitude, p.longitude)
+                        return true
+                    }
+                })
+            }
+        }
+    }
 
     val brandColour = UndalPalette.Brand.toArgb()
     val accentColour = UndalPalette.Accent.toArgb()
@@ -575,56 +629,14 @@ fun UndalOsmMap(
                     .fillMaxWidth()
                     .height(height)
                     .semantics { contentDescription = spokenLabel },
-                factory = { viewContext ->
-                    // The tile cache directory and the identifying user agent have
-                    // to exist before the first tile request, which this is.
-                    UndalMaps.initialize(viewContext)
-                    MapView(viewContext).apply {
-                        setTileSource(org.osmdroid.tileprovider.tilesource.TileSourceFactory.MAPNIK)
-                        setMultiTouchControls(interactive)
-                        setBuiltInZoomControls(false)
-                        setTilesScaledToDpi(true)
-                        minZoomLevel = UndalMaps.MIN_ZOOM
-                        maxZoomLevel = UndalMaps.MAX_ZOOM
-                        isNestedScrollingEnabled = false
-                        isVerticalScrollBarEnabled = false
-                        isHorizontalScrollBarEnabled = false
-                        controller.setZoom(zoom)
-                        controller.setCenter(GeoPoint(latitude, longitude))
-                        // Attribution is mandatory under the OpenStreetMap tile
-                        // policy and is drawn on the tiles themselves, so it
-                        // survives every screenshot and every zoom change.
-                        overlays.add(CopyrightOverlay(viewContext))
-                        if (showScaleBar) {
-                            runCatching {
-                                val scale = ScaleBarOverlay(this)
-                                scale.setAlignBottom(true)
-                                scale.setAlignRight(true)
-                                scale.setUnitsOfMeasure(ScaleBarOverlay.UnitsOfMeasure.metric)
-                                overlays.add(scale)
-                            }
-                        }
-                        val created = UndalMapRenderer(this)
-                        if (interactive && longPressCallback != null) {
-                            created.installEvents(object : MapEventsReceiver {
-                                override fun singleTapConfirmedHelper(p: GeoPoint): Boolean = false
-
-                                override fun longPressHelper(p: GeoPoint): Boolean {
-                                    longPressCallback?.invoke(p.latitude, p.longitude)
-                                    return true
-                                }
-                            })
-                        }
-                        mapView = this
-                        renderer = created
-                    }
-                }
+                // The view already exists; the factory only hands it over.
+                factory = { mapView }
             )
 
             if (showZoomButtons && interactive) {
                 UndalMapZoomControls(
-                    onZoomIn = { mapView?.controller?.zoomIn() },
-                    onZoomOut = { mapView?.controller?.zoomOut() },
+                    onZoomIn = { mapView.controller.zoomIn() },
+                    onZoomOut = { mapView.controller.zoomOut() },
                     modifier = Modifier
                         .align(Alignment.TopEnd)
                         .padding(UndalDimens.sm)
@@ -663,11 +675,10 @@ fun UndalOsmMap(
 
     // Pins, circles and accuracy: rebuilt when the data changes, never because a
     // lambda changed identity.
-    LaunchedEffect(mapView, pins, circle, accuracy) {
-        val target = renderer ?: return@LaunchedEffect
-        target.renderCircle(circle, brandColour)
-        target.renderAccuracy(accuracy, brandColour)
-        target.renderPins(
+    LaunchedEffect(renderer, pins, circle, accuracy) {
+        renderer.renderCircle(circle, brandColour)
+        renderer.renderAccuracy(accuracy, brandColour)
+        renderer.renderPins(
             pins = pins,
             accentColour = accentColour,
             brandColour = brandColour,
@@ -678,34 +689,64 @@ fun UndalOsmMap(
 
     // The camera follows the caller's coordinates — but a position the finger just
     // produced is already on screen, so the renderer skips the animation for it.
-    LaunchedEffect(mapView, latitude, longitude, zoom, fitPins, pins) {
-        val target = renderer ?: return@LaunchedEffect
+    LaunchedEffect(renderer, latitude, longitude, zoom, fitPins, pins) {
         if (fitPins) {
-            target.fitPins(pins)
+            renderer.fitPins(pins)
         } else {
-            target.moveCamera(latitude, longitude, zoom)
+            renderer.moveCamera(latitude, longitude, zoom)
         }
     }
 
-    // osmdroid keeps tile downloads and (with a location provider) a wake lock
-    // alive; the page it is drawn on owns that lifecycle, not the map.
-    DisposableEffect(lifecycleOwner, mapView) {
-        val view = mapView
+    // The page owns the map's resume and pause. Keyed on the lifecycle owner
+    // alone: nothing about the map itself may restart this effect, because
+    // restarting is disposing.
+    DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
             when (event) {
-                Lifecycle.Event.ON_RESUME -> view?.onResume()
-                Lifecycle.Event.ON_PAUSE -> view?.onPause()
+                Lifecycle.Event.ON_RESUME -> mapView.onResume()
+                Lifecycle.Event.ON_PAUSE -> mapView.onPause()
                 else -> Unit
             }
         }
         lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
+
+    // The one teardown, when this map leaves the screen for good. `mapView` is
+    // remembered and never changes, so this runs exactly once — never on a map
+    // that is still being shown.
+    DisposableEffect(mapView) {
         onDispose {
-            lifecycleOwner.lifecycle.removeObserver(observer)
-            view?.onPause()
-            view?.onDetach()
-            mapView = null
-            renderer = null
+            mapView.onPause()
+            mapView.onDetach()
         }
+    }
+}
+
+/**
+ * A MapView that keeps the gesture it was given.
+ *
+ * Every picker in Undal sits inside a screen that scrolls, and osmdroid never
+ * asks its parent not to intercept: after a few pixels of vertical movement the
+ * page's scroll took the gesture, so dragging the pin — or the map — up or down
+ * scrolled the page instead. While a finger is on an interactive map, the parent
+ * is asked to keep its hands off; Compose's interop honours the request.
+ */
+private class UndalMapView(
+    context: Context,
+    private val holdsGestures: Boolean
+) : MapView(context) {
+
+    override fun dispatchTouchEvent(event: MotionEvent): Boolean {
+        if (holdsGestures) {
+            when (event.actionMasked) {
+                MotionEvent.ACTION_DOWN, MotionEvent.ACTION_MOVE ->
+                    parent?.requestDisallowInterceptTouchEvent(true)
+                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL ->
+                    parent?.requestDisallowInterceptTouchEvent(false)
+            }
+        }
+        return super.dispatchTouchEvent(event)
     }
 }
 

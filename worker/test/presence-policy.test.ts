@@ -97,15 +97,42 @@ test("the restore window is exactly half an hour", () => {
   assert.equal(justOutside.reason, "long-outage");
 });
 
-test("a phone that comes back after closing time asks instead of opening", () => {
+test("a phone that comes back after closing time has its pause lifted, which opens nothing", () => {
+  // The schedule is the authority on when: outside the hours the store stays
+  // closed whatever the pause says, so lifting the pause cannot reopen a kitchen
+  // whose owner has gone home. Keeping it would be worse — tomorrow's service,
+  // which the owner left the switch on for, would stay shut because tonight's
+  // phone blinked.
+  for (const away of [5 * MINUTE, 6 * 60 * MINUTE]) {
+    const decision = decide({
+      storeOpen: false,
+      autoClosed: true,
+      autoClosedAtMillis: now - away,
+      insideHours: false,
+    });
+    assert.equal(decision.action, "restore");
+    assert.equal(decision.reason, "device-returned-after-hours");
+  }
+});
+
+test("a long outage in the middle of a service still asks before reopening", () => {
   const decision = decide({
     storeOpen: false,
     autoClosed: true,
-    autoClosedAtMillis: now - 5 * MINUTE,
-    insideHours: false,
+    autoClosedAtMillis: now - 3 * 60 * MINUTE,
+    insideHours: true,
   });
-  assert.equal(decision.action, "remind", "a kitchen whose owner has gone home must not reopen by itself");
-  assert.equal(decision.reason, "outside-hours");
+  assert.equal(decision.action, "remind", "a kitchen whose owner may have gone home must not reopen mid-service by itself");
+  assert.equal(decision.reason, "long-outage");
+});
+
+test("a switched-on store outside its hours is not paused by a silent phone", () => {
+  // The caller passes storeOpen = switch on AND inside the hours. A phone left
+  // off overnight with the switch on is a kitchen asleep, not an outage — and
+  // pausing it would stop the store opening itself in the morning.
+  const decision = decide({ lastSeenMillis: now - 8 * 60 * MINUTE, storeOpen: false, insideHours: false });
+  assert.equal(decision.action, "none");
+  assert.equal(decision.reason, "store-already-closed");
 });
 
 test("a pause with no recorded moment is only ever undone by asking", () => {

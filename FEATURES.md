@@ -36,7 +36,7 @@ Legend: `[x]` shipped and wired · `[ ]` still to ship.
 - [x] C-011 · Runtime permission flow with deny → app settings deep link
 - [x] C-012 · GPS auto-capture with accuracy indicator
 - [x] C-013 · Drag-pin fine adjustment on the osmdroid picker
-- [x] C-014 · The pin is placed on an OpenStreetMap street map drawn by osmdroid in this process — drag the pin, long-press the map, nudge it five metres at a time, or take the GPS fix. There is no embed and no third party between the app and the picture of the street
+- [x] C-014 · The pin is placed on an OpenStreetMap street map drawn by osmdroid in this process — drag the pin, long-press the map, nudge it five metres at a time, or take the GPS fix. There is no embed and no third party between the app and the picture of the street. The map is built once per screen and torn down only when the screen goes (it used to detach itself the instant it was built, which left every map a blank grid), and a drag inside a scrolling screen moves the pin, not the page
 - [x] C-015 · Address title as a required field
 - [x] C-016 · Address description as a required field
 - [x] C-017 · Delivery note as a required field
@@ -44,7 +44,7 @@ Legend: `[x]` shipped and wired · `[ ]` still to ship.
 - [x] C-019 · Save address and enter the store
 - [x] C-020 · Login, forgot-password email flow and persistent session
 - [x] C-021 · Greeting header with the saved address chip
-- [x] C-022 · Live store open/closed banner (schedule + manual + auto-offline aware)
+- [x] C-022 · Live store open/closed banner: the hours decide *when*, the owner's switch *whether*, the watchdog may pause — it turns at the boundary minute with nothing in Firestore changing, and a closed store names its next opening
 - [x] C-023 · Today's hours line derived from weekly and special schedules
 - [x] C-024 · Category chips with single-select and All
 - [x] C-025 · Subcategory filter row
@@ -74,7 +74,7 @@ Legend: `[x]` shipped and wired · `[ ]` still to ship.
 - [x] C-049 · Inline quantity editing
 - [x] C-050 · Swipe to remove with undo
 - [x] C-051 · Clear cart
-- [x] C-052 · Coupon apply through one shared rule (percent, fixed, free delivery, cap, daily window, chosen days, expiry, usage limit) with precise error copy that names the fact — the date a code ended, the days it runs, the taka still short — and the best automatic coupon applied to the basket with no code typed
+- [x] C-052 · Coupon apply through one shared rule (percent, fixed, free delivery, cap, daily window, chosen days, expiry, usage limit) with precise error copy that names the fact — the date a code ended, the days it runs, the taka still short — and the best automatic coupon applied to the basket with no code typed. An expired code is refused with the date *and the minute* it ended, in Dhaka, so "it is not expired" can be settled by reading the sentence; an expiry typed by hand — epoch seconds, a number as text, a bare date — is read the way it was meant, never as 1970
 - [x] C-053 · Subtotal line
 - [x] C-054 · Live km-based delivery fee with a distance caption
 - [x] C-055 · Discount line item
@@ -83,7 +83,7 @@ Legend: `[x]` shipped and wired · `[ ]` still to ship.
 - [x] C-058 · Address card with the OpenStreetMap pin, the coordinates in writing, "open in a map app", "copy coordinates", title, description and note
 - [x] C-059 · Change-address shortcut that re-runs the pin flow
 - [x] C-060 · Checkout guards: store closed, outside radius, below minimum, offline — each with its own reason
-- [x] C-061 · Place order: atomic write of order, shortId counter and coupon usage, RTDB live mirror, Worker notification with WorkManager retry
+- [x] C-061 · Place order: atomic write of order, shortId counter and coupon usage, RTDB live mirror, Worker notification with WorkManager retry; whether the kitchen is taking orders is re-read from the live store document inside the same transaction
 - [x] C-062 · Success screen with the UND-#### order number, celebratory motion and waiting-for-kitchen ETA
 - [x] C-063 · Live timeline stepper (placed → accepted → ready → in delivery → delivered)
 - [x] C-064 · Animated prep-time countdown ring driven by prepEndsAt
@@ -171,7 +171,7 @@ Legend: `[x]` shipped and wired · `[ ]` still to ship.
 - [x] V-062 · Campaign list, edit and disable
 - [x] V-063 · Coupon studio: percent, fixed or free delivery; a maximum discount cap; a minimum basket; a daily window that may cross midnight; chosen days; an expiry and a usage limit — with a live preview of what it costs on a typical basket
 - [x] V-064 · Coupon list showing the headline, conditions, used-against-limit, reach (applies itself or code only, shown on the web store or not) and an active toggle
-- [x] V-065 · Coupon delete guard, keeping the used count across edits and moving a renamed code instead of losing its history
+- [x] V-065 · Coupon delete guard, keeping the used count across edits and moving a renamed code — used count included — instead of losing its history; an expiry can be cleared again (no end date), and the editor says the minute customers stop getting it
 - [x] V-066 · Featured item toggle for the home highlight
 - [x] V-067 · Optional category image through Cloudinary
 - [x] V-068 · Preview-as-customer mode
@@ -181,9 +181,9 @@ Legend: `[x]` shipped and wired · `[ ]` still to ship.
 - [x] V-072 · Schedule templates: 24/7, standard 09–22, lunch and dinner split, weekend special in one tap
 - [x] V-073 · Special dates with a date picker for closed days or custom hours
 - [x] V-074 · Explainer line showing today's derived status
-- [x] V-075 · Manual open/close override with a note customers can see
-- [x] V-076 · Auto-offline: ten minutes without a heartbeat closes the store and pushes a notice saying why; the Worker reopens it by itself when the phone comes back inside thirty minutes
-- [x] V-077 · Reopen and reconnect flow: the Worker restores a blink by itself, and asks the owner to confirm after a long outage or outside the kitchen's hours
+- [x] V-075 · The owner's switch, with a note customers can see: on, the store opens and closes itself on its hours every day with nobody tapping anything; Pause holds it closed until it is opened again. The switch never opens a store outside its hours
+- [x] V-076 · Auto-offline: ten minutes without a heartbeat while the store is taking orders closes it and pushes a notice saying why; the Worker reopens it by itself when the phone comes back inside thirty minutes. A phone left off outside the hours pauses nothing, so tomorrow's service still opens by itself
+- [x] V-077 · Reopen and reconnect flow: the Worker restores a blink by itself, lifts the pause when the phone returns after hours (the schedule keeps the store closed until its next service), and asks the owner to confirm after a long outage mid-service. The opening reminder goes only to a paused store — a switched-on store opens itself
 - [x] V-078 · Presence analytics: heartbeat age, uptime percentage from the Worker's own five-minute samples, the day's offline windows and every automatic pause and restore
 - [x] V-079 · Delivery per-kilometre fee editor
 - [x] V-080 · Delivery radius slider from one to fifteen kilometres with a live circle preview
@@ -268,7 +268,7 @@ Legend: `[x]` shipped and wired · `[ ]` still to ship.
 
 ### The web storefront, the web account and search (P-046 … P-059)
 
-- [x] P-046 · Checkout map: an OpenStreetMap pin the customer drops and ticks before ordering, with a labelled "Use my current location" button and the fix's accuracy said out loud
+- [x] P-046 · Checkout map: an OpenStreetMap pin the customer drops and ticks before ordering, with a labelled "Use my current location" button and the fix's accuracy said out loud. A closed kitchen is said before the address is typed and refused by the order route with its next opening; an ID token that expired on an open page is renewed once instead of answering with its bare code
 - [x] P-047 · Live delivery fee and radius verdict measured from the ticked pin
 - [x] P-048 · Web sign-up against the same Firebase Authentication the app uses
 - [x] P-049 · Web password reset by email, sent by Firebase itself
@@ -278,7 +278,7 @@ Legend: `[x]` shipped and wired · `[ ]` still to ship.
 - [x] P-053 · Web order history: the caller's own orders, newest first, needing no composite index
 - [x] P-054 · Web password change that returns a fresh session
 - [x] P-055 · Web account closure behind a typed confirmation word
-- [x] P-056 · About page with the kitchen's live schedule, delivery economics and FAQ
+- [x] P-056 · About page with the kitchen's live schedule, delivery economics and FAQ; the menu page's open/closed banner follows the same hours rule as the checkout
 - [x] P-057 · `robots.txt` and `sitemap.xml` built from the live catalogue
 - [x] P-058 · Structured data: Restaurant, WebSite, Menu, Product, FAQPage, BreadcrumbList
 - [x] P-059 · Canonical URL, Open Graph and locale metadata on every page

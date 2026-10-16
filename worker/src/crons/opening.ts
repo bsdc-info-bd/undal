@@ -1,12 +1,13 @@
 /**
  * Cron `*​/5 * * * *` — "are you cooking tonight?" (PART I-4 · the owner's rule).
  *
- * A kitchen that opens at 21:00 and forgets to open the store loses the first
- * orders of the night, and the person who finds out is a customer staring at
- * "Closed". This sweep is the reminder that arrives *before* that: thirty
- * minutes before a service the schedule says is about to start, the kitchen's
- * phone is pushed one question — are you taking orders? — with a tap that opens
- * the store screen with the switch already in reach.
+ * A store whose switch is on opens itself when its hours begin — there is
+ * nothing to remind anybody about. A store the owner *paused* does not, and a
+ * kitchen that paused it last night and forgot loses the first orders of the
+ * evening to a customer staring at "Closed". This sweep is the reminder that
+ * arrives *before* that: thirty minutes before a service the schedule says is
+ * about to start, a paused kitchen's phone is pushed one question — are you
+ * taking orders? — with a tap that lands on the switch.
  *
  * Four rules keep it from becoming noise, and each one is load-bearing:
  *
@@ -14,8 +15,8 @@
  *     service's opening minute, written with a twelve-hour life. A sweep every
  *     five minutes therefore reminds once, and tomorrow's identical 21:00 is a
  *     new key.
- *  2. **Only when the store is actually closed.** An owner who already opened is
- *     not asked to open again.
+ *  2. **Only when the store is paused.** A store with its switch on opens on
+ *     the schedule by itself, so its owner is not asked to open it.
  *  3. **Only when the device is actually there.** Pushing a phone that stopped
  *     beating five minutes ago is how a kitchen learns to ignore Undal pushes;
  *     the presence sweep has already closed that store and said why.
@@ -28,7 +29,16 @@ import { fsGet } from "../firestore";
 import { sendToTokens } from "../fcmv1";
 import { rtdbGet } from "../rtdb";
 import { vendorTokens } from "../recipients";
-import { dhakaClock, slotsForDate, parseHhMm, type StoreConfig, type StoreSlot } from "../util/store-hours";
+import {
+  clockMinutes,
+  dhakaClock,
+  prettyMinutes,
+  slotWindow,
+  slotsForDate,
+  switchOn,
+  type StoreConfig,
+  type StoreSlot,
+} from "../util/store-hours";
 import { FRESH_AFTER_MS } from "./presence";
 
 /** How long before a service the kitchen is asked. The owner's example: 20:30 for 21:00. */
@@ -47,7 +57,9 @@ export function serviceInWindow(
   minutesNow: number,
 ): { service: string; minutesUntil: number } | null {
   const candidate = slots
-    .map((slot) => ({ service: slot.open, minutesUntil: parseHhMm(slot.open) - minutesNow }))
+    .map((slot) => ({ slot, window: slotWindow(slot) }))
+    .filter((entry) => entry.window !== null)
+    .map((entry) => ({ service: entry.slot.open, minutesUntil: (entry.window?.open ?? 0) - minutesNow }))
     .filter(
       (entry) => entry.minutesUntil <= REMIND_BEFORE_MINUTES && entry.minutesUntil >= -REMIND_GRACE_MINUTES,
     )
@@ -83,8 +95,9 @@ export async function runOpeningReminder(env: Env, now: Date = new Date()): Prom
     // pushes about the same closed store is the noise this file exists to avoid.
     return { ok: true, reminded: false, reason: "store-auto-closed", service, minutesUntil };
   }
-  if (config.open === true) {
-    return { ok: true, reminded: false, reason: "store-already-open", service, minutesUntil };
+  if (switchOn(config)) {
+    // The switch is on: the store opens itself when the service starts.
+    return { ok: true, reminded: false, reason: "store-opens-by-itself", service, minutesUntil };
   }
 
   // Rule 3: a phone that has stopped beating is a phone that will not ring, and
@@ -111,15 +124,17 @@ export async function runOpeningReminder(env: Env, now: Date = new Date()): Prom
       : minutesUntil === 1
         ? "starts in a minute"
         : `starts in ${minutesUntil} minutes`;
+  const serviceMinutes = clockMinutes(service);
+  const pretty = serviceMinutes === null ? service : prettyMinutes(serviceMinutes);
   const tokens = await vendorTokens(env);
   const outcome = await sendToTokens(env, tokens, {
     data: {
       type: "vendor_self",
       kind: "opening_soon",
-      title: `You open at ${service}`,
+      title: `You open at ${pretty}`,
       body:
-        `Today's service ${when}. Tap to confirm you are taking orders — if you are, the store opens and orders ` +
-        "ring on this phone immediately.",
+        `Today's service ${when}, but your store is paused, so it will not open by itself. Tap to put it back on ` +
+        "your schedule — orders then ring on this phone whenever your hours say open.",
       channelId: "vendor_general",
       clickAction: "vendor/dashboard",
     },

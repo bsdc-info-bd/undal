@@ -4,6 +4,7 @@ import {
   buildCouponBoard,
   couponExpiryLabel,
   couponExpiryMillis,
+  couponExpiryMoment,
   evaluateCoupon,
   type CouponBoardEntry,
   type CouponContext,
@@ -106,11 +107,41 @@ test("a coupon is judged by its expiry in every shape it can arrive in", () => {
   assert.equal(evaluateCoupon(expiredBoard, context()).reason, "expired");
 });
 
+test("an expiry written by hand is read the way a person meant it, never as 1970", () => {
+  // Epoch seconds: typed into the Firebase console as a number, these used to be
+  // read as milliseconds — 21 January 1970 — and every customer heard "expired".
+  assert.equal(couponExpiryMillis(END_OF_16_OCT_DHAKA / 1000), END_OF_16_OCT_DHAKA);
+  assert.equal(couponExpiryMillis(String(END_OF_16_OCT_DHAKA / 1000)), END_OF_16_OCT_DHAKA);
+  assert.equal(couponExpiryMillis(String(END_OF_16_OCT_DHAKA)), END_OF_16_OCT_DHAKA);
+  // The Admin SDK's JSON spelling of a Timestamp.
+  assert.equal(couponExpiryMillis({ _seconds: END_OF_16_OCT_DHAKA / 1000, _nanoseconds: 0 }), END_OF_16_OCT_DHAKA);
+  // A bare date is the whole of that day in Dhaka, as the app's editor stores it.
+  assert.equal(couponExpiryMillis("2026-10-16"), END_OF_16_OCT_DHAKA);
+  // RFC 3339 with the microseconds Firestore keeps.
+  assert.equal(couponExpiryMillis("2026-10-16T17:59:59.000000Z"), END_OF_16_OCT_DHAKA);
+  // Nothing readable is "no expiry", not a date.
+  for (const nothing of [null, undefined, 0, -5, "", "soon", {}, Number.NaN]) {
+    assert.equal(couponExpiryMillis(nothing), 0, String(nothing));
+  }
+
+  const live = evaluateCoupon(coupon({ expiresAt: END_OF_16_OCT_DHAKA / 1000 }), context());
+  assert.equal(live.eligible, true, "a coupon dated in seconds for tomorrow is live today");
+});
+
+test("a refusal prints the minute, so 'it is not expired' can be settled by reading it", () => {
+  assert.equal(couponExpiryMoment(END_OF_16_OCT_DHAKA), "16 Oct 2026, 11:59 PM");
+  assert.equal(couponExpiryMoment("2026-10-16T00:00:00Z"), "16 Oct 2026, 6:00 AM");
+  assert.equal(couponExpiryMoment(START_OF_17_OCT_DHAKA), "17 Oct 2026, 12:00 AM");
+  assert.equal(couponExpiryMoment(undefined), "");
+});
+
 test("a refusal names the fact, so it is an answer rather than a dead end", () => {
   const expired = coupon({ expiresAt: "2026-10-14T17:59:59Z" });
+  // The date and the minute: an owner who believes the code is live can compare
+  // this with the date they picked and see what the database actually holds.
   assert.equal(
     couponSentence("EID20", expired as Record<string, unknown>, "expired", taka),
-    "EID20 expired on 14 Oct 2026.",
+    "EID20 expired on 14 Oct 2026, 11:59 PM.",
   );
 
   // A coupon with no date to name still gets a sentence — just not an invented one.

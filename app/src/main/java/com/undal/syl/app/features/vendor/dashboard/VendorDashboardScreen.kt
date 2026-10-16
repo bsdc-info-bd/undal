@@ -191,8 +191,11 @@ fun VendorDashboardScreen(
                 }
 
                 // The question the opening reminder asks, in the place the tap
-                // lands: one button between "we are closed" and orders ringing.
-                if (!state.openState.serviceable && !state.loading) {
+                // lands: one button between "paused" and orders ringing. Only for a
+                // store that is paused (by the owner or the watchdog) — a store
+                // closed merely by its hours opens by itself, and offering to
+                // "take orders now" there would promise something it cannot do.
+                if ((!state.openState.switchOn || state.store.autoClosed) && !state.loading) {
                     item {
                         VendorSection(
                             title = "Are you taking orders?",
@@ -202,10 +205,12 @@ fun VendorDashboardScreen(
                                 Text(
                                     text = if (state.store.autoClosed) {
                                         "Undal paused the store because this phone stopped checking in. " +
-                                            "Confirming starts the heartbeat again and opens the store."
+                                            "Confirming starts the heartbeat again and puts the store back on " +
+                                            "your hours."
                                     } else {
-                                        "Confirming takes you online right now: customers can order and this " +
-                                            "phone rings for them."
+                                        "Your store is paused, so it will not open by itself. Confirming puts " +
+                                            "it back on your schedule: customers can order whenever your hours " +
+                                            "say open, and this phone rings for them."
                                     },
                                     style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
@@ -689,6 +694,18 @@ private fun StoreHero(
                         containerColour = MaterialTheme.undalSemantics.warningContainer,
                         contentColour = MaterialTheme.undalSemantics.onWarningContainer
                     )
+                } else if (!state.openState.switchOn) {
+                    UndalStatusPill(
+                        text = "Paused",
+                        containerColour = MaterialTheme.undalSemantics.warningContainer,
+                        contentColour = MaterialTheme.undalSemantics.onWarningContainer
+                    )
+                } else {
+                    UndalStatusPill(
+                        text = "On schedule",
+                        containerColour = MaterialTheme.undalSemantics.successContainer,
+                        contentColour = MaterialTheme.undalSemantics.onSuccessContainer
+                    )
                 }
             }
             Spacer(Modifier.height(UndalDimens.xs))
@@ -706,6 +723,14 @@ private fun StoreHero(
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
+            if (state.openState.switchOn && !state.store.autoClosed) {
+                // The switch is on: the hours do the rest, every day.
+                Text(
+                    text = "Opens and closes by itself on your hours · ${state.openState.nextOpeningLine}",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.primary
+                )
+            }
             Spacer(Modifier.height(UndalDimens.sm))
             UndalTextField(
                 value = state.note,
@@ -716,18 +741,21 @@ private fun StoreHero(
             )
             Spacer(Modifier.height(UndalDimens.sm))
             Row(horizontalArrangement = Arrangement.spacedBy(UndalDimens.xs)) {
+                // "Open" switches the store onto its schedule (open now, or by itself
+                // at the next opening); "Pause" holds it closed until opened again.
+                val paused = !state.openState.switchOn || state.store.autoClosed
                 UndalPrimaryButton(
                     text = "Open the store",
                     onClick = onOpen,
-                    enabled = !state.busy && !state.openState.serviceable,
-                    loading = state.busy && !state.openState.serviceable,
+                    enabled = !state.busy && paused,
+                    loading = state.busy && paused,
                     icon = Icons.Filled.Home,
                     modifier = Modifier.weight(1f)
                 )
                 UndalSecondaryButton(
-                    text = "Close",
+                    text = "Pause",
                     onClick = onClose,
-                    enabled = !state.busy && state.openState.serviceable,
+                    enabled = !state.busy && state.openState.switchOn,
                     modifier = Modifier.weight(1f)
                 )
             }

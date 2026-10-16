@@ -17,11 +17,26 @@
  * **2. Open it again when the device comes back.** A phone that returns a
  * minute later was a blink, not a night off, so the store is restored — and the
  * owner is told, with the reason, rather than quietly discovering it. A phone
- * that returns after a long absence, or outside the kitchen's own opening hours,
- * gets a reminder instead: reopening a kitchen whose owner has gone home would
- * be worse than leaving it closed. Both cases are reported once per episode.
+ * that returns after hours has its pause lifted too, because lifting it opens
+ * nothing: the schedule keeps the store closed until the next service and opens
+ * it then. A phone that returns mid-service after a long absence gets a reminder
+ * instead, once per episode: reopening a kitchen whose owner has gone home would
+ * be worse than leaving it closed.
  *
- * **3. Keep the honest record.** Every sweep appends one sample to today's
+ * Only a store that is *taking orders* is ever paused — switch on and inside its
+ * hours. A phone switched off overnight, with the store's switch left on, is a
+ * kitchen asleep, not an outage, and pausing it would stop the store opening
+ * itself in the morning.
+ *
+ * **3. Keep `open` in step with the schedule.** The store's switch
+ * (`acceptingOrders`) says whether the owner is taking orders at all; the hours
+ * say when. Every schedule-aware surface works that out for itself, but builds
+ * older than the schedule-aware ones read only `open`. So every quiet sweep
+ * writes `open` to what the schedule says right now (`syncedOpenFlag`), which is
+ * what makes a store left switched on close at closing time and open at opening
+ * time on every phone, old or new, within five minutes.
+ *
+ * **4. Keep the honest record.** Every sweep appends one sample to today's
  * `presenceDays/{date}` document — online or offline, plus any outage window
  * this sweep opened or closed. Five-minute samples over a day are a real
  * uptime figure, and they are what the vendor dashboard's offline/online
@@ -33,7 +48,15 @@ import { fsGet, fsPatchWithServerTimestamps } from "../firestore";
 import { sendToTokens } from "../fcmv1";
 import { rtdbGet } from "../rtdb";
 import { vendorTokens } from "../recipients";
-import { dhakaClock, slotsForDate, isWithinAnySlot, storeStatus, type StoreConfig } from "../util/store-hours";
+import {
+  dhakaClock,
+  isOpenAt,
+  nextOpening,
+  storeStatus,
+  switchOn,
+  syncedOpenFlag,
+  type StoreConfig,
+} from "../util/store-hours";
 import {
   FRESH_AFTER_MS,
   RESTORE_WINDOW_MS,
@@ -83,6 +106,12 @@ export interface PresenceSweepResult {
   reason: string;
   ageMinutes: number;
   notified: number;
+  /**
+   * What the schedule step wrote to `open` on a quiet sweep: "opened" or
+   * "closed" at a service boundary, "synced" for bookkeeping only. Absent when
+   * nothing needed writing.
+   */
+  schedule?: "opened" | "closed" | "synced";
 }
 
 /** The sweep's own word for a policy action. */
@@ -105,13 +134,15 @@ export async function runPresenceSweep(env: Env, now: Date = new Date()): Promis
   const lastSeen = typeof presence?.lastSeen === "number" ? presence.lastSeen : 0;
   const clock = dhakaClock(now);
   const dateKey = clock.dateKey;
-  const slots = slotsForDate(config, clock);
-  const insideHours = isWithinAnySlot(slots, clock.minutes);
+  const insideHours = isOpenAt(config, now);
+  const switchedOn = switchOn(config);
 
   const decision = presenceDecision({
     lastSeenMillis: lastSeen,
     nowMillis: now.getTime(),
-    storeOpen: config.open === true,
+    // Taking orders, not merely switched on: outside its hours a store has no
+    // orders to lose, and a silent phone there is a kitchen asleep.
+    storeOpen: switchedOn && insideHours,
     autoClosed: config.autoClosed === true,
     autoClosedAtMillis: toMillis(config.autoClosedAt),
     insideHours,
@@ -119,7 +150,7 @@ export async function runPresenceSweep(env: Env, now: Date = new Date()): Promis
   const ageMinutes = decision.ageMinutes;
 
   if (decision.action === "restore" || decision.action === "remind") {
-    const recovery = await recover(env, config, now, dateKey, lastSeen, decision.action, insideHours, slots);
+    const recovery = await recover(env, config, now, dateKey, lastSeen, decision.action, insideHours);
     return recovery;
   }
 
@@ -131,7 +162,15 @@ export async function runPresenceSweep(env: Env, now: Date = new Date()): Promis
       lastSeen,
       now: now.getTime(),
     });
-    return { ok: true, action: "none", reason: decision.reason, ageMinutes, notified: 0 };
+    const schedule = await syncSchedule(env, config, now);
+    return {
+      ok: true,
+      action: "none",
+      reason: decision.reason,
+      ageMinutes,
+      notified: 0,
+      ...(schedule ? { schedule } : {}),
+    };
   }
 
   // ---- close the store ----------------------------------------------------
@@ -140,6 +179,10 @@ export async function runPresenceSweep(env: Env, now: Date = new Date()): Promis
     "config/store",
     {
       open: false,
+      openSynced: false,
+      // The switch was on — that is the only store the watchdog pauses — and it
+      // stays on, so the pause is all that has to be undone later.
+      ...(config.acceptingOrders !== switchedOn ? { acceptingOrders: switchedOn } : {}),
       autoClosed: true,
       autoClosedReason: "device-unreachable",
       autoClosedAt: now,
@@ -182,6 +225,30 @@ export async function runPresenceSweep(env: Env, now: Date = new Date()): Promis
 }
 
 /**
+ * Writes `open` (and its bookkeeping) to what the schedule says right now, for
+ * the builds that read nothing else. Returns what changed, or null.
+ *
+ * A failure here is swallowed: the schedule-aware surfaces never needed this
+ * write, and the next sweep five minutes later tries again.
+ */
+async function syncSchedule(
+  env: Env,
+  config: StoreConfig,
+  now: Date,
+): Promise<PresenceSweepResult["schedule"] | null> {
+  const patch = syncedOpenFlag(config, now);
+  if (Object.keys(patch).length === 0) return null;
+  try {
+    await fsPatchWithServerTimestamps(env, "config/store", { ...patch, scheduleSyncedAt: now }, ["updatedAt"]);
+  } catch {
+    return null;
+  }
+  if (patch.open === true) return "opened";
+  if (patch.open === false) return "closed";
+  return "synced";
+}
+
+/**
  * The device is beating again after an auto-close. Either undo the pause or ask
  * the owner to, and never both twice.
  */
@@ -193,38 +260,60 @@ async function recover(
   lastSeen: number,
   action: "restore" | "remind",
   insideHours: boolean,
-  slots: ReturnType<typeof slotsForDate>,
 ): Promise<PresenceSweepResult> {
   const closedAt = toMillis(config.autoClosedAt);
   const awayMs = closedAt > 0 ? now.getTime() - closedAt : 0;
   const tokens = await vendorTokens(env);
+  const switchedOn = switchOn(config);
 
   if (action === "restore") {
-    // A pause of half an hour or less, inside the kitchen's own hours: the
-    // device only blinked. Restoring it is the least surprising thing to do —
-    // a store that stays closed all evening because a router rebooted is a
-    // worse failure than one that comes back and says so.
+    // Inside the hours, a pause of half an hour or less means the device only
+    // blinked: restoring it is the least surprising thing to do — a store that
+    // stays closed all evening because a router rebooted is a worse failure than
+    // one that comes back and says so. Outside the hours, lifting the pause
+    // opens nothing; the schedule opens the store at its next service.
+    const takingOrders = switchedOn && insideHours;
     await fsPatchWithServerTimestamps(
       env,
       "config/store",
       {
-        open: true,
+        open: takingOrders,
+        openSynced: takingOrders,
+        ...(config.acceptingOrders !== switchedOn ? { acceptingOrders: switchedOn } : {}),
         autoClosed: false,
-        autoClosedReason: "device-restored",
+        autoClosedReason: insideHours ? "device-restored" : "device-returned-after-hours",
         autoRestoredAt: now,
         autoClosedSilentMinutes: 0,
       },
       ["updatedAt"],
     );
+    const next = nextOpening(config, now);
+    const message = takingOrders
+      ? {
+          title: "Back online — taking orders",
+          body:
+            `Your phone is back (${Math.max(1, Math.round(awayMs / 60_000))} minute(s) away), so the store is open and ` +
+            "orders ring again. Tap if you would rather stay closed.",
+        }
+      : !switchedOn
+        ? {
+            title: "You are back online",
+            body: "Your phone is back online. The store stays paused, as you left it — open it from Undal when you are ready.",
+          }
+        : {
+            title: "You are back online",
+            body:
+              "Your phone is back online. Your hours say the kitchen is closed now, so the store stays closed" +
+              (next ? ` and opens by itself ${next.label}.` : ".") +
+              " Nothing to do — keep this phone on.",
+          };
     const outcome = await sendToTokens(env, tokens, {
       data: {
         type: "vendor_self",
         kind: "store_back_online",
-        title: "Back online — taking orders",
-        body:
-          `Your phone is back (${Math.max(1, Math.round(awayMs / 60_000))} minute(s) away), so the store is open and ` +
-          "orders ring again. Tap if you would rather stay closed.",
-        channelId: "vendor_new_order",
+        title: message.title,
+        body: message.body,
+        channelId: takingOrders ? "vendor_new_order" : "vendor_general",
         clickAction: "vendor/dashboard",
       },
       ttl: "86400s",
@@ -233,23 +322,21 @@ async function recover(
     return {
       ok: true,
       action: "restored",
-      reason: "device-returned-within-window",
+      reason: insideHours ? "device-returned-within-window" : "device-returned-after-hours",
       ageMinutes: 0,
       notified: outcome.sent,
     };
   }
 
-  // Either the outage was long, or the kitchen's hours say it is not service
-  // time. The store stays paused; the owner is asked, once per episode.
+  // A long outage in the middle of a service. The store stays paused; the owner
+  // is asked, once per episode.
   const prompted = await promptOnce(env, dateKey, closedAt);
   if (!prompted) {
     await recordSample(env, dateKey, { online: true, autoOffline: false, restored: false, lastSeen, now: now.getTime() });
     return { ok: true, action: "none", reason: "recovery-already-prompted", ageMinutes: 0, notified: 0 };
   }
 
-  const body = insideHours
-    ? "Your phone is back online. Tap to confirm you are taking orders again — the store is still paused."
-    : `Your phone is back online, but your hours say the kitchen is closed (${slots.length === 0 ? "closed today" : `opens at ${slots[0]?.open ?? ""}`}). Tap to open early if you are cooking.`;
+  const body = "Your phone is back online. Tap to confirm you are taking orders again — the store is still paused.";
   const outcome = await sendToTokens(env, tokens, {
     data: {
       type: "vendor_self",
@@ -265,7 +352,7 @@ async function recover(
   return {
     ok: true,
     action: actionWord("remind", outcome.sent),
-    reason: insideHours ? "long-outage" : "outside-hours",
+    reason: "long-outage",
     ageMinutes: 0,
     notified: outcome.sent,
   };

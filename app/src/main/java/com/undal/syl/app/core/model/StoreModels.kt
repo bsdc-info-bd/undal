@@ -12,9 +12,17 @@ import java.time.LocalDate
  * The document is world-readable and vendor-writable, so a customer app reads it
  * live: when the owner closes the store from the kitchen, every open customer app
  * shows Closed within a second, with the note the owner wrote.
+ *
+ * Whether the store is taking orders is [StoreHours]' question, not a field: the
+ * owner's switch ([switchOn]), the watchdog's pause ([autoClosed]) and the hours.
  */
 data class StoreConfig(
     val storeName: String,
+    /**
+     * The effective state — "taking orders right now" — and the only field older
+     * builds read. The Worker's presence cron keeps it in step with the hours, so
+     * those builds keep the schedule too. Not the switch: see [switchOn].
+     */
     val open: Boolean,
     val autoClosed: Boolean,
     val manualOverrideNote: String,
@@ -28,8 +36,34 @@ data class StoreConfig(
     val storeAddressText: String,
     val bannerUrl: String,
     val logoUrl: String,
-    val updatedAt: Timestamp? = null
+    val updatedAt: Timestamp? = null,
+    /**
+     * The owner's switch, when a schedule-aware build recorded it: on means "take
+     * orders whenever my hours say so", off means "paused until I say otherwise".
+     * Null on a document no such build has written yet.
+     */
+    val acceptingOrders: Boolean? = null,
+    /**
+     * The value of [open] the last schedule-aware writer set. When [open] no
+     * longer matches it, an older build pressed Open or Close since, and that
+     * press is the owner's latest word.
+     */
+    val openSynced: Boolean? = null
 ) {
+
+    /**
+     * The owner's switch — mirrored by `switchOn` in `worker/src/util/store-hours.ts`.
+     *
+     * [acceptingOrders] when it was recorded, unless an older build has written
+     * [open] by hand since; on a document from before the switch existed, [open]
+     * was the switch.
+     */
+    val switchOn: Boolean
+        get() {
+            val recorded = acceptingOrders ?: return open
+            val legacyWrite = openSynced != null && openSynced != open
+            return if (legacyWrite) open else recorded
+        }
 
     /** True when the kitchen pin has been published (not the 0,0 placeholder seed). */
     val hasPublishedPin: Boolean
@@ -90,7 +124,9 @@ data class StoreConfig(
                 storeAddressText = (map["storeAddressText"] as? String).orEmpty(),
                 bannerUrl = (map["bannerUrl"] as? String).orEmpty(),
                 logoUrl = (map["logoUrl"] as? String).orEmpty(),
-                updatedAt = map["updatedAt"] as? Timestamp
+                updatedAt = map["updatedAt"] as? Timestamp,
+                acceptingOrders = map["acceptingOrders"] as? Boolean,
+                openSynced = map["openSynced"] as? Boolean
             )
         }
     }
@@ -139,7 +175,9 @@ data class StoreSpecialDate(
             val date = map["date"] as? String ?: return null
             return StoreSpecialDate(
                 date = date,
-                closed = map["closed"] as? Boolean ?: false,
+                // `closed: true` is what this app writes; `mode: "closed"` is the
+                // older spelling the Worker has always honoured. Both are a day off.
+                closed = map["closed"] == true || map["mode"] == "closed",
                 slots = StoreSlot.listFrom(map["slots"]),
                 note = (map["note"] as? String).orEmpty()
             )
@@ -150,73 +188,111 @@ data class StoreSpecialDate(
 /**
  * The live answer to "can this customer order right now?" (C-022 · C-023).
  *
- * Manual switch first, auto-offline second, schedule third — because the person
- * running the kitchen is the authority, and the schedule is what the app shows
- * when nobody has touched anything.
+ * The watchdog's pause first, the owner's switch second, the hours third — and
+ * all three must agree before anybody can order. The hours used to be advice:
+ * a switched-on store said "Open outside the published hours — the kitchen is
+ * cooking right now anyway", around the clock, and took the orders. Now a store
+ * whose switch is on opens and closes itself on its schedule ([StoreHours]),
+ * and a store whose switch is off is paused until the owner turns it back on.
  */
 data class StoreOpenState(
     val serviceable: Boolean,
     val headline: String,
     val detail: String,
     val todayLine: String,
-    val nextOpeningLine: String
+    /** "Opens tomorrow at 9:00 AM" while closed; "Open until 10:00 PM" while open. */
+    val nextOpeningLine: String,
+    val reason: Reason = if (serviceable) Reason.OPEN else Reason.PAUSED,
+    /** The owner's switch: on = the store follows its hours by itself; off = paused. */
+    val switchOn: Boolean = serviceable
 ) {
 
+    /** Why the store is open or closed — what the owner's screens explain. */
+    enum class Reason {
+        OPEN,
+        /** The watchdog paused it: the kitchen phone stopped checking in. */
+        AUTO_CLOSED,
+        /** The owner turned the switch off. */
+        PAUSED,
+        /** The kitchen pin is not published, so no fee can be measured. */
+        SETTING_UP,
+        /** The switch is on, but no opening hours are published at all. */
+        NO_HOURS,
+        /** The switch is on and the hours say closed: it opens by itself later. */
+        OUTSIDE_HOURS
+    }
+
     val closed: Boolean get() = !serviceable
+
+    /** Closed only by the clock — the switch is on, and the store opens by itself. */
+    val opensByItself: Boolean get() = reason == Reason.OUTSIDE_HOURS
 
     companion object {
 
         fun of(config: StoreConfig, now: java.time.ZonedDateTime = TimeDhaka.now()): StoreOpenState {
-            val today = now.toLocalDate()
-            val dateKey = TimeDhaka.dateKey(today)
-            val weekdayKey = TimeDhaka.weekdayKey(today)
-            val minutesNow = TimeDhaka.minutesOfDay(now.toLocalTime())
-
-            val special = config.specialDates.firstOrNull { it.date == dateKey }
-            val slots = when {
-                special == null -> config.weekly[weekdayKey].orEmpty()
-                special.closed -> emptyList()
-                else -> special.slots
-            }
+            val local = now.withZoneSameInstant(TimeDhaka.zone)
+            val today = local.toLocalDate()
+            val special = StoreHours.specialOn(config, today)
+            val slots = StoreHours.slotsOn(config, today).filter { StoreHours.window(it) != null }
+            val dayOffNote = special?.note?.takeIf { it.isNotBlank() }
             val todayLine = when {
-                special?.closed == true -> "Closed today" + special.note.takeIf { it.isNotBlank() }?.let { " · $it" }.orEmpty()
+                special?.closed == true -> "Closed today" + dayOffNote?.let { " · $it" }.orEmpty()
                 slots.isEmpty() -> "No service hours published for today"
                 else -> slots.joinToString(" · ") { it.pretty() }
             }
-            val insideHours = slots.any { it.contains(minutesNow) }
+            val next = StoreHours.nextOpening(config, local)
+            val opensLine = next?.let { "Opens ${it.label}" } ?: "Opening hours are being republished"
 
-            // The next opening, searched over the coming week.
-            val nextOpeningLine = nextOpening(config, now)
-
-            val (serviceable, headline, detail) = when {
+            val (reason, headline, detail) = when {
                 config.autoClosed -> Triple(
-                    false,
+                    Reason.AUTO_CLOSED,
                     "Closed · kitchen offline",
                     "The kitchen phone went quiet, so Undal closed the store automatically to protect you " +
                         "from orders nobody can cook. It reopens as soon as the kitchen is back online."
                 )
 
-                !config.open -> Triple(
-                    false,
+                !config.switchOn -> Triple(
+                    Reason.PAUSED,
                     "Closed",
-                    config.manualOverrideNote.ifBlank { "The kitchen has closed the store for now." }
+                    config.manualOverrideNote.ifBlank { "The kitchen has paused orders for now." }
                 )
 
                 !config.hasPublishedPin -> Triple(
-                    false,
+                    Reason.SETTING_UP,
                     "Closed · setting up",
                     "The kitchen is finishing its setup. Ordering opens very soon."
                 )
 
-                else -> Triple(
-                    true,
-                    "Open now",
-                    if (insideHours) {
-                        "Cooking today: $todayLine"
-                    } else {
-                        "Open outside the published hours — the kitchen is cooking right now anyway."
+                !StoreHours.hasAnyHours(config) -> Triple(
+                    Reason.NO_HOURS,
+                    "Closed",
+                    "The kitchen has not published its opening hours yet."
+                )
+
+                !StoreHours.isOpenAt(config, local) -> Triple(
+                    Reason.OUTSIDE_HOURS,
+                    "Closed now",
+                    buildString {
+                        if (special?.closed == true) {
+                            append("Closed today")
+                            dayOffNote?.let { append(" — ").append(it) }
+                            append(". ")
+                        }
+                        append(
+                            next?.let { "We open ${it.label}. Your cart is kept until then." }
+                                ?: "Please check back later."
+                        )
                     }
                 )
+
+                else -> Triple(Reason.OPEN, "Open now", "Cooking today: $todayLine")
+            }
+
+            val serviceable = reason == Reason.OPEN
+            val nextOpeningLine = if (serviceable) {
+                StoreHours.closingLabel(config, local)?.let { "Open until $it" } ?: opensLine
+            } else {
+                opensLine
             }
 
             return StoreOpenState(
@@ -224,33 +300,10 @@ data class StoreOpenState(
                 headline = headline,
                 detail = detail,
                 todayLine = todayLine,
-                nextOpeningLine = nextOpeningLine
+                nextOpeningLine = nextOpeningLine,
+                reason = reason,
+                switchOn = config.switchOn
             )
-        }
-
-        private fun nextOpening(config: StoreConfig, now: java.time.ZonedDateTime): String {
-            val minutesNow = TimeDhaka.minutesOfDay(now.toLocalTime())
-            for (offset in 0..7) {
-                val date = now.toLocalDate().plusDays(offset.toLong())
-                val special = config.specialDates.firstOrNull { it.date == TimeDhaka.dateKey(date) }
-                if (special?.closed == true) continue
-                val slots = when {
-                    special != null -> special.slots
-                    else -> config.weekly[TimeDhaka.weekdayKey(date)].orEmpty()
-                }
-                val candidate = slots
-                    .mapNotNull { slot -> slot.openMinutes?.let { it to slot } }
-                    .filter { (openMinutes, _) -> offset > 0 || openMinutes > minutesNow }
-                    .minByOrNull { it.first }
-                    ?: continue
-                val dayLabel = when (offset) {
-                    0 -> "today"
-                    1 -> "tomorrow"
-                    else -> TimeDhaka.weekdayLabel(date)
-                }
-                return "Opens $dayLabel at ${TimeDhaka.prettyHhMm(candidate.second.open)}"
-            }
-            return "Opening hours are being republished"
         }
     }
 }
