@@ -210,26 +210,33 @@ jobs:
       # convenience, not a dependency: the cleanup route falls back to an
       # index-free scan when the index is missing, and says so in its response, so
       # a failure here is a warning rather than a broken deploy.
-      - name: Deploy the Firestore indexes this Worker queries
+      #
+      # The security rules ship here too, for the same reason: a rule and the code
+      # it guards are one change. The coupon rule that refused every unlimited
+      # coupon in the app sat fixed in the repository while the deployed copy kept
+      # refusing, because only the hand-run seed-config workflow published rules.
+      # The CLI compiles the rules before it deploys them, so a rule that does not
+      # compile is refused there and the deployed rules stay as they were.
+      - name: Deploy the Firestore rules and the indexes this Worker queries
         env:
           FIREBASE_SA_JSON: ${{ secrets.FIREBASE_SA_JSON }}
         run: |
           set -uo pipefail
           if [ -z "$FIREBASE_SA_JSON" ]; then
-            echo "FIREBASE_SA_JSON is not set — skipping the index deploy."
+            echo "FIREBASE_SA_JSON is not set — skipping the rules and index deploy."
             echo "The Worker still works: the history cleanup falls back to an index-free scan."
             exit 0
           fi
           printf '%s' "$FIREBASE_SA_JSON" > "$RUNNER_TEMP/undal-sa.json"
           project=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["project_id"])' "$RUNNER_TEMP/undal-sa.json")
-          echo "Deploying firebase/firestore.indexes.json to $project"
+          echo "Deploying firebase/firestore.rules and firebase/firestore.indexes.json to $project"
           export GOOGLE_APPLICATION_CREDENTIALS="$RUNNER_TEMP/undal-sa.json"
           npm install --global firebase-tools@13 >/dev/null 2>&1
-          if firebase deploy --only firestore:indexes --project "$project" --non-interactive; then
-            echo "Indexes submitted. Firestore builds them in the background; the cleanup route"
+          if firebase deploy --only firestore:rules,firestore:indexes --project "$project" --non-interactive; then
+            echo "Rules published. Indexes submitted: Firestore builds them in the background; the cleanup route"
             echo "uses its index-free scan until they are ready, so nothing is blocked."
           else
-            echo "::warning::The Firestore indexes could not be deployed. Run the seed-config workflow by hand. Undal falls back to an index-free scan in the meantime."
+            echo "::warning::The Firestore rules or indexes could not be deployed. Run the seed-config workflow by hand (it only creates documents that are missing, never overwrites them)."
           fi
           rm -f "$RUNNER_TEMP/undal-sa.json"
 

@@ -36,7 +36,7 @@ import {
 import {
   couponClock,
   couponDays,
-  couponExpiryLabel,
+  couponExpiryMoment,
   couponHeadline,
   couponTypeOf,
   evaluateCoupon,
@@ -44,6 +44,7 @@ import {
   type CouponDocument,
 } from "../web/coupons";
 import { menuItem, toStoreConfig, webMenu } from "../web/store-data";
+import { closedSentence } from "../util/store-hours";
 
 const ORDER_ALERT_TTL = "300s";
 const COUNTER_START = 1000;
@@ -509,6 +510,15 @@ export async function createWebOrder(env: Env, input: WebOrderInput): Promise<We
   const menu = await webMenu(env, { force: true });
   const store = menu.store ?? toStoreConfig(await fsGet(env, "config/store").catch(() => null));
 
+  // ---- is the kitchen taking orders at all? -------------------------------
+  // The one rule every surface asks (util/store-hours.ts, StoreHours.kt): the
+  // owner's switch, the watchdog's pause, and the published hours. This line is
+  // the difference between a kitchen that keeps its schedule and one that takes
+  // a web order at 3 a.m. because somebody pressed Open last Tuesday — the page
+  // already said "Closed", and the order went through anyway.
+  const closedRefusal = closedSentence(store);
+  if (closedRefusal) throw new HttpError(409, "store-closed", closedRefusal);
+
   const priced = lines.map((line: CartLine) => {
     const live = menuItem(menu, line.id);
     if (!live) {
@@ -567,7 +577,18 @@ export async function createWebOrder(env: Env, input: WebOrderInput): Promise<We
   let couponAutomatic = false;
   let couponUpdateTime: string | null = null;
   let couponUsedCount = 0;
-  const requestedCode = normalizeCoupon(str(input.couponCode));
+  const typedCode = str(input.couponCode).trim();
+  const requestedCode = normalizeCoupon(typedCode);
+  if (typedCode && !requestedCode) {
+    // A code that cannot exist used to be dropped without a word, and the
+    // customer paid full price believing the discount was on the bill.
+    throw new HttpError(
+      409,
+      "coupon-invalid",
+      `"${typedCode.slice(0, 24)}" is not a coupon code — codes are 3 to 24 letters, digits, dashes or underscores, ` +
+        "with no spaces. Check it against the offer, or clear the box to order without one.",
+    );
+  }
   if (requestedCode) {
     const coupon = await fsGet(env, `coupons/${requestedCode}`);
     if (!coupon) throw new HttpError(409, "coupon-missing", `Coupon ${requestedCode} no longer exists.`);
@@ -768,7 +789,9 @@ export function couponSentence(code: string, coupon: Record<string, unknown>, re
   const minimum = num(coupon.minSubtotalAmountPaisa);
   switch (reason) {
     case "expired": {
-      const ended = couponExpiryLabel(coupon.expiresAt ?? coupon.expiresAtMillis);
+      // The date *and* the minute, in Dhaka: "expired" with only a day leaves an
+      // owner who set tomorrow's date unable to see what the database holds.
+      const ended = couponExpiryMoment(coupon.expiresAt ?? coupon.expiresAtMillis);
       return ended ? `${code} expired on ${ended}.` : `${code} has expired.`;
     }
     case "used up": {

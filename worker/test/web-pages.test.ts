@@ -247,3 +247,47 @@ test("the account pages park honestly when accounts are switched off", async () 
     assert.doesNotMatch(html, /role="tablist"/, "no form that cannot submit");
   }
 });
+
+// ----------------------------------------------------- the schedule, on the page
+
+const allDay = [{ open: "00:00", close: "23:59" }];
+const everyDay = { sun: allDay, mon: allDay, tue: allDay, wed: allDay, thu: allDay, fri: allDay, sat: allDay };
+const dhakaToday = (): string => new Date(Date.now() + 6 * 3_600_000).toISOString().slice(0, 10);
+
+test("the menu says Closed outside the hours, whatever the switch says", async () => {
+  // The switch is on — the state every store was left in — and today is a day
+  // off. The banner used to read the switch alone and say "Open now".
+  const closedToday: WebMenu = {
+    ...fullMenu,
+    store: { ...storeConfig, open: true, weekly: everyDay, specialDates: [{ date: dhakaToday(), closed: true, slots: [] }] },
+  };
+  const html = await (await handleStoreFront(withKey(closedToday), new Request("https://undal.test/store"))).text();
+  assert.match(html, /<span class="pill closed">Closed now<\/span>/);
+  assert.match(html, /You can still browse the menu and fill your basket\./);
+
+  const openAllDay: WebMenu = { ...fullMenu, store: { ...storeConfig, open: true, weekly: everyDay, specialDates: [] } };
+  const openHtml = await (await handleStoreFront(withKey(openAllDay), new Request("https://undal.test/store"))).text();
+  assert.match(openHtml, /<span class="pill open">Open now<\/span>/);
+});
+
+test("the checkout says the kitchen is closed before the customer types an address", async () => {
+  const closedToday: WebMenu = {
+    ...fullMenu,
+    store: { ...storeConfig, open: true, weekly: everyDay, specialDates: [{ date: dhakaToday(), closed: true, slots: [] }] },
+  };
+  const html = await (await handleCheckout(withKey(closedToday), checkoutRequest())).text();
+  assert.match(html, /id="undal-store-closed"/);
+  assert.match(html, /The kitchen is closed right now — it opens tomorrow at 12:00 AM\./);
+  assert.ok(html.indexOf("undal-store-closed") < html.indexOf("Where should the rider go?"), "before the form, not after it");
+
+  const openAllDay: WebMenu = { ...fullMenu, store: { ...storeConfig, open: true, weekly: everyDay, specialDates: [] } };
+  const openHtml = await (await handleCheckout(withKey(openAllDay), checkoutRequest())).text();
+  assert.doesNotMatch(openHtml, /id="undal-store-closed"/);
+});
+
+test("an expired sign-in at the order button is renewed once, not shown as a bare code", async () => {
+  const html = await (await handleCheckout(withKey(fullMenu), checkoutRequest())).text();
+  assert.match(html, /response\.status === 401 && !retried && window\.undalRenewSession/);
+  assert.match(html, /window\.undalRenewSession = function/);
+  assert.match(html, /Your sign-in on this page ran out\./);
+});

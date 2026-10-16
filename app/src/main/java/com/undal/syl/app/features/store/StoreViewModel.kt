@@ -134,7 +134,8 @@ class StoreViewModel @Inject constructor(
                 filter to quantities
             }
             combine(
-                storeRepo.observeStore(),
+                // On the clock, so "Open now" turns into "Closed now" at closing time.
+                storeRepo.observeStoreOnTheClock(),
                 menuRepo.observeMenu(),
                 cartRepo.cart,
                 addressFlow,

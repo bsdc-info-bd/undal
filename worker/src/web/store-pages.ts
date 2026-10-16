@@ -10,7 +10,7 @@
 import type { Env } from "../env";
 import { escapeHtml } from "../util/http";
 import { formatPaisa } from "../util/money";
-import { dhakaClock, storeStatus } from "../util/store-hours";
+import { closedSentence, dhakaClock, storeStatus } from "../util/store-hours";
 import { CART_SCRIPT } from "./cart-client";
 import { couponConditionLine, couponHeadline, type CouponBoardEntry } from "./coupons";
 import { readCookieCart, type CookieCart } from "./forms";
@@ -133,16 +133,22 @@ function statusBanner(store: WebStoreConfig | null): string {
   if (!store) {
     return `<div class="notice">The kitchen has not published its store document yet. Browsing works; ordering will be refused until it does.</div>`;
   }
-  const open = store.open && !store.autoClosed;
+  // The schedule-aware rule the checkout enforces (util/store-hours.ts). This
+  // banner used to read `open && !autoClosed` alone, so a kitchen that pressed
+  // Open once said "Open now" to the whole city at three in the morning.
+  const status = storeStatus(store);
+  const open = status.openNow;
+  const note = (store.manualOverrideNote ?? "").trim();
+  const line = open
+    ? note || status.detail
+    : status.reason === "paused"
+      ? `${status.detail} You can still browse the menu.`
+      : `${status.detail} You can still browse the menu and fill your basket.`;
   return `<div class="card">
-  <span class="pill ${open ? "open" : "closed"}">${open ? "Open now" : "Closed right now"}</span>
+  <span class="pill ${open ? "open" : "closed"}">${escapeHtml(status.headline)}</span>
   <h2 style="margin-top:10px">${escapeHtml(store.storeName)}</h2>
   <p class="muted" style="margin-top:0">${escapeHtml(store.storeAddressText)}</p>
-  ${
-    store.manualOverrideNote
-      ? `<p>${escapeHtml(store.manualOverrideNote)}</p>`
-      : `<p>${open ? "The kitchen is taking orders." : "The kitchen is not taking orders at this moment. You can still browse the menu."}</p>`
-  }
+  <p>${escapeHtml(line)}</p>
   <dl>
     <dt>Delivery</dt><dd>${formatPaisa(store.deliveryPerKmAmountPaisa)} per km, rounded up</dd>
     <dt>Radius</dt><dd>${store.radiusKm} km from the kitchen</dd>
@@ -618,6 +624,11 @@ export async function handleCheckout(env: Env, request: Request): Promise<Respon
   const noticeBlock = notice
     ? `<div class="notice ${noticeKind}">${escapeHtml(notice)} <a href="/basket">Check the basket</a></div>`
     : "";
+  // Said before the form, not after it: a customer who fills in a whole address
+  // only to be told the kitchen is closed has been made to waste their time.
+  // The order route refuses with the same sentence (routes/store.ts).
+  const closedNotice = closedSentence(store);
+  const closedBlock = closedNotice ? `<div class="notice error" id="undal-store-closed">${escapeHtml(closedNotice)}</div>` : "";
   const prefill = {
     name: (url.searchParams.get("v_name") ?? "").slice(0, 80),
     phone: (url.searchParams.get("v_phone") ?? "").slice(0, 24),
@@ -631,6 +642,7 @@ export async function handleCheckout(env: Env, request: Request): Promise<Respon
 
   const body = `
 ${noticeBlock}
+${closedBlock}
 <section class="card">
   <h2>Where should the rider go?</h2>
   <p class="muted">Move the map until the green pin is on your door, then <strong>tick it</strong>. The delivery fee is
@@ -831,26 +843,40 @@ ${noticeBlock}
     button.textContent = "Telling the kitchen…";
     resultHost.innerHTML = "";
 
-    window.undalSession()
-      .then(function (session) {
-        return fetch("/api/store/order", {
-          method: "POST",
-          headers: { "content-type": "application/json", authorization: "Bearer " + session.idToken },
-          body: JSON.stringify({
-            lines: lines,
-            couponCode: field("coupon").toUpperCase(),
-            note: field("cartnote"),
-            customerName: name,
-            phone: localPhone,
-            address: { lat: position.lat, lng: position.lng, title: title, desc: desc, note: note }
-          })
+    var orderBody = JSON.stringify({
+      lines: lines,
+      couponCode: field("coupon").toUpperCase(),
+      note: field("cartnote"),
+      customerName: name,
+      phone: localPhone,
+      address: { lat: position.lat, lng: position.lng, title: title, desc: desc, note: note }
+    });
+    // A sign-in token lives an hour. A checkout left open over lunch used to
+    // answer the tap with the server's bare code, "id-token-expired" — which reads
+    // exactly like "your coupon code expired". Now an expired token is renewed
+    // once, silently, and only a second refusal is put into words.
+    function postOrder(session, retried) {
+      return fetch("/api/store/order", {
+        method: "POST",
+        headers: { "content-type": "application/json", authorization: "Bearer " + session.idToken },
+        body: orderBody
+      }).then(function (response) {
+        return response.json().then(null, function () { return {}; }).then(function (payload) {
+          if (response.status === 401 && !retried && window.undalRenewSession) {
+            return window.undalRenewSession().then(function (renewed) { return postOrder(renewed, true); });
+          }
+          return { ok: response.ok, status: response.status, payload: payload || {} };
         });
-      })
-      .then(function (response) {
-        return response.json().then(function (payload) { return { ok: response.ok, payload: payload }; });
-      })
+      });
+    }
+
+    window.undalSession()
+      .then(function (session) { return postOrder(session, false); })
       .then(function (outcome) {
         if (!outcome.ok || !outcome.payload.ok) {
+          if (outcome.status === 401) {
+            throw new Error("Your sign-in on this page ran out. Refresh the page and tap the button again — your basket is kept.");
+          }
           throw new Error(outcome.payload.message || "The order did not go through.");
         }
         window.undalClear();

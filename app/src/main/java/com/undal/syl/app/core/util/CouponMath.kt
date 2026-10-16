@@ -163,12 +163,72 @@ object CouponMath {
     fun expiryMillis(value: Any?): Long = when (value) {
         null -> 0L
         is com.google.firebase.Timestamp -> value.toDate().time
-        is java.util.Date -> value.time
-        is Number -> value.toLong()
-        is String -> runCatching { Instant.parse(value).toEpochMilli() }.getOrDefault(0L)
-        is Map<*, *> -> (value["seconds"] as? Number)?.toLong()?.times(1_000L) ?: 0L
+        is java.util.Date -> value.time.coerceAtLeast(0L)
+        is Number -> numberMillis(value.toDouble())
+        is String -> textMillis(value.trim())
+        is Map<*, *> -> ((value["seconds"] ?: value["_seconds"]) as? Number)
+            ?.toLong()
+            ?.takeIf { it > 0L }
+            ?.times(1_000L)
+            ?: 0L
         else -> 0L
     }
+
+    /**
+     * Below this a number is epoch *seconds*, not milliseconds: 1e11 ms is March
+     * 1973, 1e11 s is the year 5138. A coupon dated by hand in the Firebase
+     * console as a number of seconds was read as milliseconds — January 1970 —
+     * and refused to every customer as expired. `couponExpiryMillis` in the Worker
+     * applies the same ceiling.
+     */
+    private const val EPOCH_SECONDS_CEILING = 100_000_000_000.0
+
+    private val DIGITS_ONLY = Regex("^\\d+(\\.\\d+)?$")
+    private val DATE_ONLY = Regex("^\\d{4}-\\d{2}-\\d{2}$")
+
+    private fun numberMillis(number: Double): Long = when {
+        number.isNaN() || number <= 0.0 -> 0L
+        number < EPOCH_SECONDS_CEILING -> Math.round(number * 1_000.0)
+        else -> Math.round(number)
+    }
+
+    /**
+     * Text, in every form a person or a REST call writes it: a number, a bare
+     * date — the whole of that day in Dhaka, the 23:59:59 the editor stores — or
+     * an ISO-8601 instant with `Z` or an offset. Anything else is 0: no expiry.
+     */
+    private fun textMillis(text: String): Long {
+        if (text.isEmpty()) return 0L
+        if (DIGITS_ONLY.matches(text)) return numberMillis(text.toDouble())
+        val dhaka = ZoneOffset.ofTotalSeconds(DHAKA_OFFSET_MINUTES * 60)
+        if (DATE_ONLY.matches(text)) {
+            return runCatching {
+                java.time.LocalDate.parse(text).plusDays(1).atStartOfDay(dhaka).toInstant().toEpochMilli() - 1_000L
+            }.getOrDefault(0L)
+        }
+        return runCatching { Instant.parse(text).toEpochMilli() }
+            .recoverCatching { java.time.OffsetDateTime.parse(text).toInstant().toEpochMilli() }
+            .getOrDefault(0L)
+            .coerceAtLeast(0L)
+    }
+
+    private val EXPIRY_MOMENT = java.time.format.DateTimeFormatter.ofPattern("d MMM yyyy, h:mm a", Locale.ENGLISH)
+
+    /**
+     * "16 Oct 2026, 11:59 PM" in Dhaka — the date *and* the minute a coupon ends,
+     * or "" when it has no end. What a refusal prints: the date alone cannot
+     * settle "it is not expired", because an expiry stored at 06:00 and one stored
+     * at 23:59 print the same date. `couponExpiryMoment` in the Worker prints the
+     * same characters.
+     */
+    fun expiryMoment(expiresAtMillis: Long): String =
+        if (expiresAtMillis <= 0L) {
+            ""
+        } else {
+            Instant.ofEpochMilli(expiresAtMillis)
+                .atOffset(ZoneOffset.ofTotalSeconds(DHAKA_OFFSET_MINUTES * 60))
+                .format(EXPIRY_MOMENT)
+        }
 
     private val HH_MM = Regex("^([01]?\\d|2[0-3]):([0-5]\\d)$")
 

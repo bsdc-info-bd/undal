@@ -8,6 +8,7 @@ import androidx.datastore.preferences.core.stringPreferencesKey
 import com.google.firebase.firestore.FieldValue
 import com.google.firebase.firestore.FirebaseFirestore
 import com.undal.syl.app.core.model.StoreConfig
+import com.undal.syl.app.core.model.StoreHours
 import com.undal.syl.app.core.model.StoreOpenState
 import com.undal.syl.app.core.model.StoreSlot
 import com.undal.syl.app.core.model.StoreSpecialDate
@@ -50,12 +51,28 @@ class VendorStoreRepo @Inject constructor(
 
     // ------------------------------------------------------------------ status
 
-    /** One-tap open or close, with the note customers read (V-017, V-075, V-077). */
-    suspend fun setOpen(open: Boolean, note: String): UndalResult<Unit> = runCatching {
+    /**
+     * The owner's switch, with the note customers read (V-017, V-075, V-077).
+     *
+     * On means "take orders whenever my hours say so": the store then opens and
+     * closes itself on the schedule, every day, with nobody tapping anything. Off
+     * pauses it until the owner turns it back on. The switch no longer opens a
+     * store outside its hours — that is what let a kitchen with published hours
+     * take orders at three in the morning.
+     *
+     * Three fields carry it: `acceptingOrders` is the switch itself; `open`, the
+     * only field older builds read, is written as what the hours say *right now*
+     * (the Worker's presence cron keeps it there afterwards); `openSynced` records
+     * that this write was schedule-aware. See [StoreHours] and `StoreConfig`.
+     */
+    suspend fun setOpen(open: Boolean, note: String, store: StoreConfig): UndalResult<Unit> = runCatching {
         val trimmed = note.trim().take(140)
+        val takingOrders = open && StoreHours.isOpenAt(store)
         val payload = if (open) {
             mapOf(
-                "open" to true,
+                "acceptingOrders" to true,
+                "open" to takingOrders,
+                "openSynced" to takingOrders,
                 // Opening by hand clears the auto-offline flag the cron set, so the
                 // store is not closed again by the next heartbeat sweep.
                 "autoClosed" to false,
@@ -65,7 +82,9 @@ class VendorStoreRepo @Inject constructor(
             )
         } else {
             mapOf(
+                "acceptingOrders" to false,
                 "open" to false,
+                "openSynced" to false,
                 "manualOverrideNote" to trimmed,
                 "updatedAt" to FieldValue.serverTimestamp()
             )
@@ -82,12 +101,18 @@ class VendorStoreRepo @Inject constructor(
         decode(preferences[SCHEDULE_SNAPSHOT])
     }
 
+    /**
+     * Publishes the week and its special dates. Given the [store] as it stands,
+     * the new hours also move `open` at once — an owner who adds today's evening
+     * hours at 18:59 opens at 19:00 on every phone, not at the next cron sweep.
+     */
     suspend fun saveSchedule(
         weekly: Map<String, List<StoreSlot>>,
-        specialDates: List<StoreSpecialDate>
+        specialDates: List<StoreSpecialDate>,
+        store: StoreConfig? = null
     ): UndalResult<Unit> = runCatching {
         val current = dataStore.data.first()[SCHEDULE_SNAPSHOT]
-        val payload = mapOf(
+        val payload = mutableMapOf<String, Any>(
             "weekly" to weekly.mapValues { (_, slots) ->
                 slots.map { slot -> mapOf("open" to slot.open, "close" to slot.close) }
             },
@@ -101,6 +126,15 @@ class VendorStoreRepo @Inject constructor(
             },
             "updatedAt" to FieldValue.serverTimestamp()
         )
+        // Only from a store that has really loaded: the placeholder shown before the
+        // first snapshot has its switch off, and recording that would pause the store.
+        if (store != null && store.updatedAt != null) {
+            val withNewHours = store.copy(weekly = weekly, specialDates = specialDates)
+            val takingOrders = StoreHours.isTakingOrders(withNewHours)
+            payload["acceptingOrders"] = withNewHours.switchOn
+            payload["open"] = takingOrders
+            payload["openSynced"] = takingOrders
+        }
         firestore.collection(CONFIG).document(STORE).update(payload).await()
         if (current != null) {
             dataStore.edit { preferences -> preferences[PREVIOUS_SNAPSHOT] = current }
@@ -115,10 +149,10 @@ class VendorStoreRepo @Inject constructor(
     }
 
     /** Undo the last schedule change from the local snapshot (V-093). */
-    suspend fun undoLastSchedule(): UndalResult<ScheduleSnapshot> {
+    suspend fun undoLastSchedule(store: StoreConfig? = null): UndalResult<ScheduleSnapshot> {
         val previous = decode(dataStore.data.first()[PREVIOUS_SNAPSHOT])
             ?: return UndalResult.Failure("There is no earlier schedule on this phone to go back to.")
-        return when (val written = saveSchedule(previous.weekly, previous.specialDates)) {
+        return when (val written = saveSchedule(previous.weekly, previous.specialDates, store)) {
             is UndalResult.Success -> UndalResult.Success(previous)
             is UndalResult.Failure -> written
         }

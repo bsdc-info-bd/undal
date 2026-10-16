@@ -583,13 +583,9 @@ data class VendorCoupon(
             else -> "Live · ends $expiryLabel"
         }
 
+    /** "31 Oct 2026, 11:59 PM" — the minute customers stop getting it, as the checkout prints it. */
     val expiryLabel: String
-        get() = expiresAtMillis
-            ?.let { com.undal.syl.app.core.util.TimeDhaka.formatDate(
-                com.undal.syl.app.core.util.TimeDhaka
-                    .fromInstant(java.time.Instant.ofEpochMilli(it)).toLocalDate()
-            ) }
-            .orEmpty()
+        get() = expiresAtMillis?.let { CouponMath.expiryMoment(it) }.orEmpty()
 
     companion object {
         fun fromDocument(id: String, map: Map<String, Any?>): VendorCoupon = VendorCoupon(

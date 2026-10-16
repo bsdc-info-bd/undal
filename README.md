@@ -129,7 +129,12 @@ Firestore rules, the composite indexes and the Realtime Database rules.
 ### 3d · `deploy-worker`
 
 Typechecks the Worker, creates or reuses the `undal-kv` namespace, pushes the
-Worker secrets, deploys and smoke-tests `https://<your-worker>/healthz`.
+Worker secrets, publishes the **Firestore security rules** and the indexes from
+`firebase/`, deploys and smoke-tests `https://<your-worker>/healthz`. It runs on
+every push to `main` that touches `worker/` or `firebase/`, so a rule fixed in
+the repository is the rule in force — not only after someone remembers to run
+`seed-config` by hand (which stays safe to re-run: it only ever creates missing
+documents).
 
 ### 3e · `android-build`
 
@@ -200,6 +205,10 @@ or a kill. On the server side, ten minutes of silence while the store is open
 closes the store automatically — and when the phone comes back inside half an
 hour the Worker reopens it and says so, so a sleeping phone can never quietly
 take orders it does not see, and a blink never costs the kitchen an evening.
+"Open" here means *taking orders*: switched on **and** inside the published
+hours. A phone switched off overnight, with the store's switch left on, pauses
+nothing — the store is already closed by its hours, and it opens by itself in
+the morning.
 
 Every rung of that ladder — the data-only payload, the OAuth2 minting, the topic
 fallback, the re-alert windows, the alarm channel, the looping player, the
@@ -296,17 +305,17 @@ Steering the build with the task owner's command phrases: `Continue`,
 
 ## 11 · Acceptance table (PART R)
 
-Nineteen things that have to be true before this is called finished. The **result**
+Twenty things that have to be true before this is called finished. The **result**
 column is what was actually run for this build; the **your phone** column is the
 step only you can do, because it needs your own Firebase project.
 
 | # | What is checked | How | Result |
 | --- | --- | --- | --- |
 | 1 | The Worker compiles | `cd worker && npx tsc --noEmit` | **0 errors** |
-| 2 | The Android sources hang together without a compiler | `python3 tools/check_kotlin_shape.py` and `check_import_contracts.py` | **145 files**: balanced, no split strings, every `com.undal.syl.app` import and member call resolves, 334 cross-package names indexed |
-| 3 | No unfinished markers anywhere | `bash tools/check_no_placeholders.sh` | **clean across 210 files** |
+| 2 | The Android sources hang together without a compiler | `python3 tools/check_kotlin_shape.py` and `check_import_contracts.py` | **148 files**: balanced, no split strings, every `com.undal.syl.app` import and member call resolves, 339 cross-package names indexed |
+| 3 | No unfinished markers anywhere | `bash tools/check_no_placeholders.sh` | **clean across 213 files** |
 | 4 | The web prices food exactly like the app | `node tools/check-web-rules.mjs` | **20 rule families · 220 comparisons**, all from the app's own test vectors (140 assertions shared, app-only rules declared out loud) |
-| 5 | Every page renders and every route has a handler | `cd worker && npm test` | **144 tests across 11 files**; `/ /store /item/{id} /about /basket /checkout /login /account /track /order/{id} /download /robots.txt /sitemap.xml /manifest.webmanifest /sw.js /icons/* /healthz /api/store/* /api/account/*` are asserted by name, and the rendered pages are asserted as HTML |
+| 5 | Every page renders and every route has a handler | `cd worker && npm test` | **176 tests across 13 files**; `/ /store /item/{id} /about /basket /checkout /login /account /track /order/{id} /download /robots.txt /sitemap.xml /manifest.webmanifest /sw.js /icons/* /healthz /api/store/* /api/account/*` are asserted by name, and the rendered pages are asserted as HTML |
 | 6 | The API refuses politely | `curl` probes | no web key → a sentence, not a stack trace; order without a token → `missing-id-token`; rate buckets 90/120/300 per minute per IP |
 | 7 | Icons and QR codes are real images | decoded with `pngjs`; QR matrix compared with `qrcode@1.5.4` | icons **1744 / 5868 / 4054 bytes**, QR **exact match on 43 URLs** |
 | 8 | The web store installs as an app | manifest + service worker + `/download` with two QR codes and the unknown-sources guide | shipped (P-014, P-016) |
@@ -320,7 +329,8 @@ step only you can do, because it needs your own Firebase project.
 | 16 | Nothing here costs money | Spark plan, Cloudinary free, Workers free, OpenStreetMap tiles, Actions free — see §7 | no billing account anywhere |
 | 17 | The order alert leaves the Worker in the only shape that can ring a phone | `worker/test/fcm-alert.test.ts` | **14 tests**: data-only with no `notification` block anywhere, `android.priority HIGH`, `ttl 300s`, APNs headers at a priority Apple permits, topic fallback when the device list is empty, dead tokens purged |
 | 18 | The web account is the app's account, and only its owner can touch it | `worker/test/account.test.ts` against a fake Firebase that signs real RS256 tokens | **27 tests**: a uid only ever comes from a verified ID token, a forged one is refused by the real signature check, a profile is written only in the shape the Firestore rules accept, the history needs no composite index |
-| 19 | Nothing in the app breaks a promise to Android, and the crash guard cannot loop | `python3 tools/check_foreground_contract.py` and `CrashRecoveryPolicyTest` | **145 files**: every foreground-service call goes through `UndalForeground`, every `onStartCommand` takes the foreground before it decides anything, and no `Task` is read as though `getResult()` waited; **12 tests** pin one startup reopen then the honest screen, three ordinary reopens then the honest screen, two honest screens then the platform |
+| 19 | Nothing in the app breaks a promise to Android, and the crash guard cannot loop | `python3 tools/check_foreground_contract.py` and `CrashRecoveryPolicyTest` | **148 files**: every foreground-service call goes through `UndalForeground`, every `onStartCommand` takes the foreground before it decides anything, and no `Task` is read as though `getResult()` waited; **12 tests** pin one startup reopen then the honest screen, three ordinary reopens then the honest screen, two honest screens then the platform |
+| 20 | The store keeps its hours on every surface, and a live coupon is honoured | `worker/test/store-hours.test.ts`, `web-order.test.ts`, `StoreHoursTest`, `CouponExpiryTest` | **25 Worker tests + 15 JVM tests** on one fixture week: a switched-on store at 3 a.m. is closed, a service past midnight belongs to the day it started, the web checkout refuses a closed kitchen with its next opening, the cron closes and reopens `open` for older builds without undoing an older build's Close, a phone off overnight pauses nothing; an app-written coupon with a future, empty or seconds-based expiry is honoured and an expired one names the date and minute |
 
 **What only your project can prove.** Four checks need your real Firebase project,
 your Cloudinary account and a signed keystore, so run them once after §3e:
@@ -374,6 +384,35 @@ Three decisions are worth knowing about:
   only once a pin exists, because the app reads a missing `users/{uid}` as
   "onboarding not finished" and a half-written document would lie to it.
 
+### When the kitchen is open
+
+**The hours decide *when*; the owner's switch decides *whether*.** A customer can
+order when, and only when, the switch is on, the presence watchdog has not paused
+the store, and the published hours (weekly slots, with special dates on top)
+cover this minute. Leave the switch on and the store opens and closes itself on
+its schedule, every day; tap **Pause** and it stays closed until **Open the
+store** is tapped again. The switch no longer opens a store outside its hours —
+that is what let a kitchen with published hours take orders at three in the
+morning, because nothing ever closed it.
+
+One rule, two copies proven equal: `worker/src/util/store-hours.ts` (the menu
+banner, the about page, the checkout, the crons) and
+`app/…/core/model/StoreHours.kt` (every screen of the app), held to the same
+fixture week by `worker/test/store-hours.test.ts` and `StoreHoursTest.kt` — a
+service that runs past midnight belongs to the day it started, a special date
+marked closed is a day off in either spelling (`closed: true` or
+`mode: "closed"`), `9:00` and Bengali digits are read as written, and the 24/7
+template's `23:59` means midnight.
+
+It is enforced, not just displayed: the web order route refuses with the time
+the kitchen opens, the app re-reads the live store document inside the order
+transaction, and screens re-evaluate at every minute boundary rather than
+waiting for the document to change. Builds older than this rule read only the
+`open` field, so the Worker's five-minute presence cron keeps `open` in step with
+the hours (`acceptingOrders` holds the switch itself, and `openSynced` lets a
+Close pressed on an older vendor build win over the schedule instead of being
+undone by it).
+
 ### The offers a customer sees
 
 A promotion the kitchen creates in the app reaches the website with no second
@@ -403,24 +442,38 @@ coupon document before it writes an order, so a browser that lies about a
 discount changes nothing: the price the kitchen sees is the price the server
 computed.
 
-**One expiry, four shapes.** `coupons.expiresAt` is written by the app as a
+**One expiry, every shape.** `coupons.expiresAt` is written by the app as a
 Firestore timestamp, and each surface meets it differently: the Worker gets an
 ISO string over REST, the phone gets a `Timestamp` object from the SDK, and a
-cached offer board carries it already normalised as `expiresAtMillis`. Every
-reader accepts all four — `couponExpiryMillis` in the Worker,
-`CouponMath.expiryMillis` in the app, pinned by `worker/test/coupons.test.ts` and
-`CouponMathTest`. A reader that knows only one shape answers "no expiry" for the
-others, and "no expiry" reads as "live forever": that is how a phone came to
-accept a code the website refused as expired, with the owner certain the coupon
-was switched on.
+cached offer board carries it already normalised as `expiresAtMillis`. A person
+can also type one into the Firebase console — as epoch *seconds*, as a number in
+text, or as a bare date. Every reader accepts all of them — `couponExpiryMillis`
+in the Worker, `CouponMath.expiryMillis` in the app, pinned by
+`worker/test/coupons.test.ts`, `CouponMathTest` and `CouponExpiryTest`. A number
+below 10¹¹ is seconds (read as milliseconds it is January 1970, and every
+customer is told the code expired), and a bare date is the whole of that day in
+Dhaka. A reader that misses a shape answers either "no expiry" (live forever) or
+1970 (expired forever) — both of which reached customers before.
+
+**Unlimited means unlimited.** A coupon's `usageLimit` of 0 is "no limit", which
+is how every coupon is created. The Firestore rule that lets a customer's order
+spend one use demanded `usedCount < usageLimit` — `0 < 0` — so every unlimited
+coupon refused the whole order transaction in the app, and a coupon renamed by an
+older build (which lost its `usedCount`) refused it too. The rule now treats 0 or
+absent as unlimited and a missing count as 0, and a rename carries its count.
 
 **A refusal names its fact.** "EID20 has expired" is a dead end at the checkout;
-"EID20 expired on 14 Oct 2026" is an answer, and it is the same sentence in
-Dhaka time on both surfaces — the Worker's `couponSentence` and the app's
-`CouponRepo.describe`. The kitchen's own coupon list says it too, with a state
-line under the switch (*Live · ends 16 Oct 2026*, *Expired on 13 Oct 2026 · not
+"EID20 expired on 14 Oct 2026, 11:59 PM" is an answer — and the minute matters,
+because it is what shows whether the database holds the date the owner picked.
+It is the same sentence in Dhaka time on every surface: the Worker's
+`couponSentence`, the app's `CouponRepo.describe` and its order transaction. The
+kitchen's own coupon list says it too, with a state line under the switch
+(*Live · ends 16 Oct 2026, 11:59 PM*, *Expired on 13 Oct 2026, 11:59 PM · not
 running*, *All 40 uses spent · not running*), because a toggle shows what the
-owner asked for and not what a customer will get. The editor refuses to save a
+owner asked for and not what a customer will get. A code that cannot exist
+(spaces, symbols) is refused out loud instead of being dropped from the bill, and
+a checkout whose sign-in token ran out renews it once instead of printing
+`id-token-expired` — which reads exactly like "your code expired". The editor refuses to save a
 date that has already passed, and the offer strip re-judges every banner against
 the clock of the request that is rendering it, so a cached board cannot advertise
 an offer the order is about to refuse.

@@ -15,6 +15,7 @@ import com.undal.syl.app.core.maps.UndalLocation
 import com.undal.syl.app.core.telemetry.UndalTelemetry
 import com.undal.syl.app.core.model.MenuSnapshot
 import com.undal.syl.app.core.model.StoreConfig
+import com.undal.syl.app.core.model.StoreOpenState
 import com.undal.syl.app.core.util.CouponMath
 import com.undal.syl.app.core.util.Money
 import com.undal.syl.app.core.util.OrderStateMachine
@@ -179,6 +180,16 @@ class OrderRepo @Inject constructor(
 
         val outcome = runCatching {
             firestore.runTransaction<PlacedOrder> { transaction ->
+                // Is the kitchen taking orders — decided now, from the live store
+                // document, not when the cart screen was last drawn. A cart left
+                // open across closing time, or a phone holding a store snapshot
+                // from before the owner paused, must not slip an order in.
+                val liveStore = transaction.get(firestore.collection(CONFIG).document(STORE)).data
+                    ?.let { StoreConfig.fromMap(it) }
+                    ?: StoreConfig.unloaded()
+                val openState = StoreOpenState.of(liveStore)
+                if (!openState.serviceable) throw OrderBlocked(closedSentence(openState))
+
                 val counterReference = firestore.collection(COUNTERS).document(ORDERS)
                 val counterSnapshot = transaction.get(counterReference)
                 val nextCounterValue = (counterSnapshot.getLong("value") ?: 1000L) + 1L
@@ -250,7 +261,11 @@ class OrderRepo @Inject constructor(
                         description = couponSnapshot.getString("description").orEmpty(),
                         minSubtotalAmountPaisa = couponSnapshot.getLong("minSubtotalAmountPaisa") ?: 0L,
                         maxDiscountPaisa = couponSnapshot.getLong("maxDiscountPaisa") ?: 0L,
-                        expiresAtMillis = CouponMath.expiryMillis(couponSnapshot.getTimestamp("expiresAt")),
+                        // `get`, not `getTimestamp`: the latter throws for any other
+                        // shape, and a coupon dated by hand failed the whole order.
+                        expiresAtMillis = CouponMath.expiryMillis(
+                            couponSnapshot.get("expiresAt") ?: couponSnapshot.get("expiresAtMillis")
+                        ),
                         startsAt = couponSnapshot.getString("startsAt").orEmpty(),
                         endsAt = couponSnapshot.getString("endsAt").orEmpty(),
                         daysOfWeek = CouponMath.days(couponSnapshot.get("daysOfWeek")),
@@ -585,7 +600,8 @@ class OrderRepo @Inject constructor(
             "switched off" -> "was switched off. Remove it to continue."
             "not set up correctly" -> "is not set up correctly — please tell the kitchen."
             "expired" -> {
-                val ended = expiryDate(coupon.expiresAtMillis)
+                // The date and the minute, in Dhaka — what the web checkout prints.
+                val ended = CouponMath.expiryMoment(coupon.expiresAtMillis)
                 if (ended.isBlank()) "expired. Remove it to continue."
                 else "expired on $ended. Remove it to continue."
             }
@@ -599,13 +615,19 @@ class OrderRepo @Inject constructor(
             else -> "does not change this total."
         }
 
-    /** "16 Oct 2026" in Dhaka, or "" when the coupon carries no expiry to name. */
-    private fun expiryDate(expiresAtMillis: Long): String =
-        if (expiresAtMillis <= 0L) {
-            ""
-        } else {
-            TimeDhaka.formatDate(TimeDhaka.fromInstant(java.time.Instant.ofEpochMilli(expiresAtMillis)).toLocalDate())
-        }
+    /**
+     * The refusal when the kitchen is not taking orders, with the time it opens —
+     * the sentence `closedSentence` in the Worker gives the web checkout.
+     */
+    private fun closedSentence(state: StoreOpenState): String = when (state.reason) {
+        StoreOpenState.Reason.AUTO_CLOSED ->
+            "The kitchen's phone is offline, so orders are paused for a few minutes. Your cart is saved — " +
+                "please try again shortly."
+        StoreOpenState.Reason.OUTSIDE_HOURS ->
+            "The kitchen is closed right now — ${state.nextOpeningLine.replaceFirstChar { it.lowercase() }}. " +
+                "Your cart is saved until then."
+        else -> "The kitchen is not taking orders right now: ${state.detail} Your cart is saved."
+    }
 
     private companion object {
         const val ORDERS = "orders"
@@ -613,6 +635,8 @@ class OrderRepo @Inject constructor(
         const val COMBOS = "combos"
         const val COUPONS = "coupons"
         const val COUNTERS = "counters"
+        const val CONFIG = "config"
+        const val STORE = "store"
         const val CHATS = "chats"
         const val LIVE = "orderLive"
         const val CHAT_NODE = "chats"
