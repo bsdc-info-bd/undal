@@ -62,6 +62,7 @@ import com.undal.syl.app.core.model.CouponDraft
 import com.undal.syl.app.core.model.MenuDraft
 import com.undal.syl.app.core.theme.UndalDimens
 import com.undal.syl.app.core.theme.undalSemantics
+import com.undal.syl.app.core.util.CouponMath
 import com.undal.syl.app.core.util.Money
 import com.undal.syl.app.core.util.TimeDhaka
 import com.undal.syl.app.core.util.UndalDigits
@@ -207,13 +208,19 @@ private fun SwitchRow(label: String, detail: String, checked: Boolean, onChange:
     }
 }
 
-/** A date field backed by the platform picker; stored as epoch millis. */
+/**
+ * A date field backed by the platform picker; stored as epoch millis. With
+ * [onClear], a set date can be taken away again — "no end date" is a choice,
+ * and without the button a wrongly dated coupon could only be re-dated, never
+ * made open-ended.
+ */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 internal fun VendorDateField(
     label: String,
     millis: Long?,
-    onPicked: (Long) -> Unit
+    onPicked: (Long) -> Unit,
+    onClear: (() -> Unit)? = null
 ) {
     var open by rememberSaveable { mutableStateOf(false) }
     val shown = millis?.let { TimeDhaka.formatDate(TimeDhaka.fromInstant(Instant.ofEpochMilli(it)).toLocalDate()) }
@@ -228,6 +235,9 @@ internal fun VendorDateField(
             )
         }
         UndalTextButton(text = if (shown.isBlank()) "Pick" else "Change", onClick = { open = true })
+        if (onClear != null && shown.isNotBlank()) {
+            UndalTextButton(text = "Clear", onClick = onClear)
+        }
     }
     if (open) {
         val pickerState = androidx.compose.material3.rememberDatePickerState(
@@ -944,8 +954,18 @@ fun CouponEditorSheet(
                         expiresAtMillis = LocalDate.ofEpochDay(picked / 86_400_000L).endOfDayMillis()
                     )
                 )
-            }
+            },
+            onClear = { viewModel.onCouponDraftChange(draft.copy(expiresAtMillis = null)) }
         )
+        if (draft.expiresAtMillis != null && draft.expiryError == null) {
+            // The minute it stops, as the checkout will say it — the whole chosen
+            // day in Dhaka, never the morning of it.
+            Text(
+                text = "Customers can use it until ${CouponMath.expiryMoment(draft.expiresAtMillis)}.",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
         // Said here, at the field, rather than only when Save is tapped: a coupon
         // dated into the past is the mistake behind "the web says Expired but it
         // is switched on", and the owner can only avoid it if the sheet objects

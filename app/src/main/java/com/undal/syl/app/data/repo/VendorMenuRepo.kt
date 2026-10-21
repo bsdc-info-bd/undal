@@ -386,7 +386,13 @@ class VendorMenuRepo @Inject constructor(
             fields.remove("usedCount")
         }
         if (draft.originalCode != null && draft.originalCode != code) {
-            // Renaming a code creates the new one and retires the old one.
+            // Renaming a code creates the new one and retires the old one — and
+            // carries the uses already spent. The new document used to be written
+            // with no `usedCount` at all: its limit started again from zero, and the
+            // rule that adds one to `usedCount` refused every app order using it.
+            val spent = firestore.collection(COUPONS).document(draft.originalCode).get().await()
+                .getLong("usedCount") ?: 0L
+            fields["usedCount"] = spent
             firestore.collection(COUPONS).document(code).set(fields).await()
             firestore.collection(COUPONS).document(draft.originalCode).delete().await()
             return@runCatching code

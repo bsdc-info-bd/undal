@@ -313,14 +313,26 @@ service cloud.firestore {
       allow get: if signedIn();
       allow list: if isVendor();
       allow create, delete: if isVendor();
+      // A customer's order spends one use: `usedCount` goes up by exactly one
+      // and nothing else changes.
+      //
+      // `usageLimit` 0 — or absent — means UNLIMITED. That is the default every
+      // coupon is created with, and this rule used to demand
+      // `usedCount < usageLimit`, i.e. `0 < 0`: every unlimited coupon refused the
+      // whole order transaction in the app. A coupon renamed by an older build
+      // carries no `usedCount` at all, which made `usedCount + 1` an error and
+      // refused it too. The expiry is only judged here when it is a timestamp;
+      // the order path judges every other shape with the shared coupon rule.
       allow update: if isVendor()
         || (signedIn()
              && code == code.upper()
              && onlyChanged(['usedCount'])
              && resource.data.active == true
-             && request.resource.data.usedCount == resource.data.usedCount + 1
-             && resource.data.usedCount < resource.data.usageLimit
-             && (resource.data.expiresAt == null || resource.data.expiresAt > request.time));
+             && request.resource.data.usedCount == resource.data.get('usedCount', 0) + 1
+             && (resource.data.get('usageLimit', 0) <= 0
+                 || resource.data.get('usedCount', 0) < resource.data.get('usageLimit', 0))
+             && (!(resource.data.get('expiresAt', null) is timestamp)
+                 || resource.data.expiresAt > request.time));
     }
 
     // ======================================================================

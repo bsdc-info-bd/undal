@@ -269,7 +269,8 @@ class VendorScheduleViewModel @Inject constructor(
         }
         _state.value = state.copy(busy = true)
         viewModelScope.launch(guard) {
-            val result = vendorStoreRepo.saveSchedule(state.weekly, state.specialDates)
+            // With the store as it stands, so new hours open or close it this minute.
+            val result = vendorStoreRepo.saveSchedule(state.weekly, state.specialDates, state.store)
             _state.value = _state.value.copy(
                 busy = false,
                 dirty = false,
@@ -286,7 +287,7 @@ class VendorScheduleViewModel @Inject constructor(
     fun undoLastSave() {
         _state.value = _state.value.copy(busy = true)
         viewModelScope.launch(guard) {
-            when (val result = vendorStoreRepo.undoLastSchedule()) {
+            when (val result = vendorStoreRepo.undoLastSchedule(_state.value.store)) {
                 is UndalResult.Success -> {
                     val snapshot = result.value
                     _state.value = _state.value.copy(

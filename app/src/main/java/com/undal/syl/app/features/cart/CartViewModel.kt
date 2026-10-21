@@ -148,7 +148,9 @@ class CartViewModel @Inject constructor(
         viewModelScope.launch(guard) { refreshAddress() }
         viewModelScope.launch(guard) {
             val inputs = combine(
-                storeRepo.observeStore(),
+                // On the clock: the store closes at closing time with nothing in
+                // Firestore changing, and the bill must stop offering to order.
+                storeRepo.observeStoreOnTheClock(),
                 menuRepo.observeMenu(),
                 cartRepo.cart,
                 addressFlow,
@@ -292,10 +294,14 @@ class CartViewModel @Inject constructor(
     ): List<String> = buildList {
         if (!openState.serviceable) {
             add(
-                if (store.autoClosed) {
-                    "The kitchen is offline, so it is not taking orders. Your cart is saved."
-                } else {
-                    "The kitchen is closed: ${store.manualOverrideNote.ifBlank { "check back soon" }}"
+                when (openState.reason) {
+                    StoreOpenState.Reason.AUTO_CLOSED ->
+                        "The kitchen is offline, so it is not taking orders. Your cart is saved."
+                    StoreOpenState.Reason.OUTSIDE_HOURS ->
+                        "The kitchen is closed right now · ${openState.nextOpeningLine}. Your cart is saved until then."
+                    StoreOpenState.Reason.PAUSED ->
+                        "The kitchen is closed: ${store.manualOverrideNote.ifBlank { "check back soon" }}"
+                    else -> "${openState.headline}: ${openState.detail}"
                 }
             )
         }

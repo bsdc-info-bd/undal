@@ -42,7 +42,22 @@ object TimeDhaka {
 
     fun minutesNow(): Int = minutesOfDay(now().toLocalTime())
 
-    fun parseHhMm(value: String): LocalTime? = runCatching { LocalTime.parse(value) }.getOrNull()
+    /**
+     * "09:00", "9:00", "09:00:00" or "০৯:০০" → a time of day; null for anything else.
+     *
+     * `LocalTime.parse` alone refused a single-digit hour and Bengali digits, so a
+     * slot typed that way vanished from the phone's schedule while the Worker
+     * still honoured it — two surfaces, two different opening hours.
+     */
+    fun parseHhMm(value: String): LocalTime? {
+        val match = HH_MM.matchEntire(UndalDigits.toAscii(value.trim())) ?: return null
+        val hours = match.groupValues[1].toInt()
+        val minutes = match.groupValues[2].toInt()
+        if (hours > 23 || minutes > 59) return null
+        return LocalTime.of(hours, minutes)
+    }
+
+    private val HH_MM = Regex("^(\\d{1,2}):(\\d{2})(?::\\d{2})?$")
 
     fun minutesFromHhMm(value: String): Int? = parseHhMm(value)?.let(::minutesOfDay)
 

@@ -12,6 +12,7 @@ import com.undal.syl.app.core.background.PresenceHeartbeatWorker
 import com.undal.syl.app.core.background.TokenRefreshWorker
 import com.undal.syl.app.core.fcm.TokenRegistrar
 import com.undal.syl.app.core.model.StoreConfig
+import com.undal.syl.app.core.model.StoreHours
 import com.undal.syl.app.core.model.StoreOpenState
 import com.undal.syl.app.core.model.VendorDayPoint
 import com.undal.syl.app.core.model.VendorDayStats
@@ -160,7 +161,8 @@ class VendorDashboardViewModel @Inject constructor(
 
     private fun observeStore() {
         viewModelScope.launch(guard) {
-            storeRepo.observeStore().collect { store ->
+            // On the clock: the owner watches the store open and close on its hours.
+            storeRepo.observeStoreOnTheClock().collect { store ->
                 _state.value = _state.value.copy(
                     store = store,
                     openState = StoreOpenState.of(store)
@@ -250,15 +252,22 @@ class VendorDashboardViewModel @Inject constructor(
         _state.value = _state.value.copy(note = value.take(140))
     }
 
-    /** One-tap open or close, carrying the note customers read (V-017, V-075). */
+    /**
+     * The owner's switch, carrying the note customers read (V-017, V-075).
+     *
+     * On puts the store on its schedule — open now if the hours say so, and by
+     * itself at the next opening if they do not. Off pauses it until it is turned
+     * back on. The message says which of those just happened, with the time.
+     */
     fun setOpen(context: Context, open: Boolean) {
         if (_state.value.busy) return
         _state.value = _state.value.copy(busy = true)
         viewModelScope.launch(guard) {
+            val store = _state.value.store
             val note = _state.value.note.trim().ifBlank {
                 if (open) "The kitchen is taking orders now." else "The kitchen is closed for now."
             }
-            val result = vendorStoreRepo.setOpen(open = open, note = note)
+            val result = vendorStoreRepo.setOpen(open = open, note = note, store = store)
             if (open && result is UndalResult.Success) {
                 PresenceHeartbeat.startService(context)
                 PresenceHeartbeatWorker.ensureScheduled(context)
@@ -267,7 +276,12 @@ class VendorDashboardViewModel @Inject constructor(
                 busy = false,
                 note = "",
                 infoMessage = when (result) {
-                    is UndalResult.Success -> if (open) "The store is open. Customers see it now." else "The store is closed."
+                    is UndalResult.Success -> when {
+                        !open -> "The store is paused. It stays closed until you open it again."
+                        StoreHours.isOpenAt(store) -> "The store is open. Customers can order now."
+                        else -> "The store is on your schedule. It is closed now and opens by itself " +
+                            (StoreHours.nextOpening(store)?.label ?: "when your hours begin") + "."
+                    }
                     is UndalResult.Failure -> result.message
                 }
             )

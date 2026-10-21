@@ -89,4 +89,16 @@ class TimeDhakaTest {
         assertEquals(1350, TimeDhaka.minutesFromHhMm("22:30"))
         assertEquals(null, TimeDhaka.parseHhMm("25:00"))
     }
+
+    @Test
+    fun readsASlotTheWayTheOwnerTypedIt() {
+        // A single-digit hour and a Bangla keyboard's digits are the same 9:30 the
+        // Worker reads; refusing them made the slot vanish from the phone only.
+        assertEquals(LocalTime.of(9, 0), TimeDhaka.parseHhMm("9:00"))
+        assertEquals(LocalTime.of(9, 30), TimeDhaka.parseHhMm("০৯:৩০"))
+        assertEquals(LocalTime.of(21, 15), TimeDhaka.parseHhMm(" 21:15:00 "))
+        assertEquals("9:00 AM", TimeDhaka.prettyHhMm("9:00"))
+        assertEquals(null, TimeDhaka.parseHhMm("9.30"))
+        assertEquals(null, TimeDhaka.parseHhMm("12:60"))
+    }
 }

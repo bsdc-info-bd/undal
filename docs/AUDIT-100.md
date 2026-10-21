@@ -12,7 +12,7 @@ the count below is the honest count at the time of writing.
 
 | Ledger | Count |
 | --- | --- |
-| Closed, with a fix and a gate in this repository | **66** |
+| Closed, with a fix and a gate in this repository | **85** |
 | Recorded as deliberate, or checked and already correct (not counted) | 3 |
 | Open leads (identified, not yet fixed) | 3 |
 | Waiting on a real phone, a real card in a hand (owner's acceptance list) | 5 |
@@ -532,6 +532,158 @@ a time, and the pick button is disabled while one is running. *Proof.* Kotlin
 shape guard and the import contract over all 145 files; the SDK's own
 `MediaManager.cancelRequest` and `ErrorInfo.REQUEST_CANCELLED` were read from
 `cloudinary_android` 3.1.3's source rather than assumed.
+
+## J. The three reported failures — the map, the coupon, the hours
+
+Reported from the phone as three sentences: *the OSM map for the location does
+not show*, *every active coupon code says expired*, *the store opens 24 hours and
+ignores the schedule*. Earlier rounds closed real defects near each of them and
+the sentences stayed true, so each was traced again from the symptom to a line
+of code, and nothing below is counted until a test or a gate holds it.
+
+**067 — Every map in the app destroyed itself the instant it was built.**
+*Symptom.* The location picker, the address card, the tracking card and the
+kitchen's order map showed a grey grid: no streets, no pin, zoom buttons that did
+nothing. *Cause.* `UndalOsmMap` created its `MapView` inside the `AndroidView`
+factory and wrote it into `mutableStateOf` state, and the lifecycle
+`DisposableEffect` was keyed on that state. The first composition registered the
+effect; the factory then set the state, the key changed, Compose disposed the
+previous effect — and its `onDispose` called `onPause()` and **`onDetach()`** on
+the map that had just been created, then nulled the renderer. In osmdroid 6.1.20
+`onDetach()` detaches the tile provider (`mExecutor.shutdown()` on every tile
+module) and destroys the redraw handler, so the view could never draw a tile
+again. *Fix.* the `MapView` is created once in `remember` and handed to the
+factory; resume and pause are forwarded by an effect keyed on the lifecycle owner
+alone; `onDetach()` runs in its own effect keyed on the never-changing view, i.e.
+only when the map leaves the screen. *Proof.* Kotlin shape guard and import
+contract (148 files); osmdroid 6.1.20's `MapView.onDetach()` and
+`MapTileModuleProviderBase.detach()` were read from its source, not assumed;
+android-build compiles it.
+
+**068 — A pin dragged up or down on a picker scrolled the page instead.**
+*Cause.* osmdroid never calls `requestDisallowInterceptTouchEvent`, and every
+picker sits in a `verticalScroll` screen, so after the touch slop the scroll took
+the gesture. *Fix.* `UndalMapView` asks its parent to keep its hands off while a
+finger is on an interactive map; Compose's interop filter honours the request.
+*Proof.* Kotlin shape guard; android-build.
+
+**069 — The rule that spends a coupon use refused every unlimited coupon.**
+*Symptom.* In the app, any order carrying a coupon — typed or applied
+automatically — failed with "The database refused that…". *Cause.*
+`firestore.rules` let a customer's order add one to `usedCount` only if
+`usedCount < usageLimit`; `usageLimit` 0 means *unlimited* and is the default, so
+the rule demanded `0 < 0`. *Fix.* 0 or absent is unlimited, a missing
+`usedCount` counts as 0, and the expiry is judged in the rule only when it is a
+timestamp. *Proof.* the rule text; deployed by `deploy-worker` (085).
+
+**070 — A renamed coupon lost its used count, and with it every app order.**
+*Cause.* `VendorMenuRepo.saveCoupon` removed `usedCount` from the fields of an
+edited coupon (right for a merge) and then wrote a renamed one with `set()`
+without merge: the new document had no `usedCount`, its limit restarted at zero,
+and the rule's `usedCount + 1` was an error. *Fix.* a rename reads the old count
+and carries it. *Proof.* Kotlin shape guard; android-build.
+
+**071 — An expiry typed in seconds meant January 1970, and a bare date meant 06:00.**
+*Symptom.* A coupon dated by hand in the Firebase console was refused as expired
+to every customer. *Cause.* `couponExpiryMillis` (Worker), the storefront's
+script and `CouponMath.expiryMillis` (app) read every number as milliseconds, a
+bare `2026-10-31` as UTC midnight, and only `seconds` — never the Admin SDK's
+`_seconds`. *Fix.* below 10¹¹ a number is epoch seconds, numeric text is a
+number, a bare date is the whole of that day in Dhaka, `_seconds` is read, ISO
+offsets parse. *Proof.* `worker/test/coupons.test.ts` and `CouponExpiryTest`
+(7 tests) on the same instants; `check-coupon-parity` and `check-web-rules`.
+
+**072 — The order transaction failed outright on any expiry that was not a Timestamp.**
+*Cause.* `OrderRepo` read `couponSnapshot.getTimestamp("expiresAt")`, which
+throws for a string or a number. *Fix.* `get(…)` through the shared reader.
+*Proof.* Kotlin shape guard; android-build.
+
+**073 — A refusal printed the day, not the minute.** An expiry stored at 06:00
+and one stored at 23:59 print the same date, so "EID20 expired on 14 Oct 2026"
+could not settle "it is not expired". *Fix.* `couponExpiryMoment` /
+`CouponMath.expiryMoment` — "14 Oct 2026, 11:59 PM", Dhaka — in the Worker's
+`couponSentence`, `CouponRepo.describe`, the order transaction's refusal and the
+kitchen's coupon list; the editor says the minute customers stop getting it, and
+an expiry can be cleared again. *Proof.* `coupons.test.ts`, `CouponExpiryTest`.
+
+**074 — A code that cannot exist was dropped from the bill in silence.**
+*Cause.* `createWebOrder` normalised the typed code to `null` when it failed the
+pattern (a space, a symbol) and carried on without it. *Fix.* a typed code that
+cannot exist is refused, out loud, with what a code looks like. *Proof.*
+`worker/test/web-order.test.ts`.
+
+**075 — An expired sign-in at the order button read as an expired code.**
+*Cause.* the checkout's submit used the cached session and, on a 401, printed the
+server's bare code: `id-token-expired`. *Fix.* one silent renewal
+(`undalRenewSession`) and retry; a second 401 is a sentence. *Proof.* driven in
+a real DOM (jsdom) against the rendered checkout — first POST 401, renewal, retry,
+order placed — and pinned in `web-pages.test.ts`.
+
+**076 — The switch overrode the hours: a store with published hours was open around the clock.**
+*Symptom.* The customer screen said "Open outside the published hours — the
+kitchen is cooking right now anyway" at any hour, and took the order. *Cause.*
+`StoreOpenState.of` returned serviceable whenever `open` was true. *Fix.* the
+hours decide *when* and the switch *whether*: serviceable is switch on ∧ not
+auto-closed ∧ pin ∧ inside the hours (`StoreHours.kt`); a closed store names its
+next opening, an open one when it closes; the dashboard's switch reads "Open the
+store" / "Pause" and explains that a switched-on store opens and closes itself.
+*Proof.* `StoreHoursTest` (8 tests; the 22-vector fixture week is shared with the Worker).
+
+**077 — The web checkout never asked whether the kitchen was open, and the menu banner read the switch alone.**
+*Cause.* `createWebOrder` checked the basket, the pin, the radius and the coupon,
+never the store; `statusBanner` printed "Open now" from `open && !autoClosed`.
+*Fix.* `closedSentence(store)` refuses with the next opening (409
+`store-closed`), the checkout says so before the address is typed, and the banner
+uses `storeStatus`. *Proof.* `web-order.test.ts` (paused, auto-closed, outside
+the hours, a document from before the switch existed), `web-pages.test.ts`.
+
+**078 — Nothing closed a store at closing time for the builds that read only `open`.**
+*Cause.* `open` was written by the switch and the watchdog, never by the clock.
+*Fix.* the presence cron keeps `open` in step with the hours every five minutes;
+`acceptingOrders` holds the switch and `openSynced` lets a Close pressed on an
+older vendor build win instead of being reopened over. The app re-reads the live
+store document inside the order transaction. *Proof.* `store-hours.test.ts`
+(`syncedOpenFlag`) and `web-order.test.ts` (closes at the end of the hours, opens
+at the start, never reopens over an older build's Close, twice).
+
+**079 — A phone switched off overnight paused the store that was meant to open itself.**
+*Cause.* the watchdog paused any store with `open` true, inside its hours or not,
+and a pause lifted only by asking. *Fix.* only a store *taking orders* is paused;
+a phone back after hours has its pause lifted (the hours keep the store closed
+until its next service); the opening reminder goes only to a paused store.
+*Proof.* `presence-policy.test.ts`, `web-order.test.ts`.
+
+**080 — A day off written by the app was open on the web, and an open special date with no hours was closed everywhere.**
+*Cause.* the Worker honoured only `mode: "closed"`, the app writes
+`closed: true`; both engines treated "open, no hours" as closed while the builder
+promised it "behaves like a normal day". *Fix.* both spellings are a day off in
+both engines; open-without-hours falls back to the weekly hours. *Proof.*
+`store-hours.test.ts`, `StoreHoursTest`.
+
+**081 — A service that ran past midnight was judged by the wrong day.** 00:30 on
+Saturday belongs to Friday's 20:00–01:00, whatever Saturday says; both engines
+asked Saturday. *Fix.* today's windows from their opening minute, plus
+yesterday's after-midnight tail. *Proof.* the shared fixture week.
+
+**082 — "9:00" and Bengali digits vanished from the phone's schedule, and garbage became midnight on the web.**
+*Cause.* `TimeDhaka.parseHhMm` was `LocalTime.parse`; the Worker read anything
+unparseable as 0. *Fix.* one lenient-but-strict reader on both sides. *Proof.*
+`TimeDhakaTest`, `StoreHoursTest`, `store-hours.test.ts`.
+
+**083 — The 24/7 template closed the store for one minute every midnight.**
+`00:00–23:59` excluded 23:59. *Fix.* a close of 23:59, 24:00 or 00:00 means
+midnight. *Proof.* the shared fixture week (Sunday).
+
+**084 — Screens said "Open now" after closing time until the document changed.**
+*Cause.* the store, cart and dashboard recomputed only on a Firestore change.
+*Fix.* `StoreRepo.observeStoreOnTheClock()` also emits at each minute boundary.
+*Proof.* Kotlin shape guard; android-build.
+
+**085 — A fixed rule sat in the repository while the deployed one kept refusing.**
+*Cause.* only the hand-run `seed-config` workflow published Firestore rules.
+*Fix.* `deploy-worker` publishes `firestore:rules` with the indexes on every push
+that touches `worker/` or `firebase/`; the CLI compiles them first. *Proof.* the
+workflow; README §3d.
 
 ---
 

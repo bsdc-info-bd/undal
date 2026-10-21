@@ -286,6 +286,8 @@ export const CART_SCRIPT = `
       return { eligible: false, discountPaisa: 0, reason: "not set up correctly" };
     }
     var expires = Number(coupon.expiresAtMillis || coupon.expiresAt || 0);
+    // Seconds, not milliseconds, below 1e11 — the same rule as couponExpiryMillis.
+    if (expires > 0 && expires < 100000000000) expires = expires * 1000;
     if (expires > 0 && expires <= Date.now()) return { eligible: false, discountPaisa: 0, reason: "expired" };
     var days = coupon.daysOfWeek || [];
     if (days.length > 0) {
@@ -548,6 +550,17 @@ export const CART_SCRIPT = `
     if (fresh(cached)) return Promise.resolve(cached);
     if (cached && cached.refreshToken) return renewSession(cached);
     if (cached && cached.idToken && !cached.guest) return renewSession(cached);
+    return guestSession();
+  };
+
+  /**
+   * A new ID token whatever the cached one claims — for the request the server
+   * just refused with 401. An account renews with its refresh token; a guest
+   * (or an account that has none) starts a new guest session.
+   */
+  window.undalRenewSession = function () {
+    var cached = readSession();
+    if (cached && cached.refreshToken) return renewSession(cached);
     return guestSession();
   };
 

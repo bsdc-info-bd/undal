@@ -18,11 +18,17 @@ export interface WebStoreSlot {
 
 export interface WebStoreConfig {
   storeName: string;
+  /** The effective flag older builds read; see `StoreConfig.open` in util/store-hours. */
   open: boolean;
+  /** The owner's switch, when a schedule-aware writer recorded it. Absent ≠ false. */
+  acceptingOrders?: boolean;
+  /** Bookkeeping for `open`; see `StoreConfig.openSynced`. */
+  openSynced?: boolean;
   autoClosed: boolean;
   manualOverrideNote: string;
   weekly?: Record<string, WebStoreSlot[]>;
-  specialDates?: Array<{ date: string; mode: "closed" | "custom"; slots?: WebStoreSlot[]; note?: string }>;
+  /** `closed: true` is what the app writes for a day off; `mode: "closed"` is the older spelling. */
+  specialDates?: Array<{ date: string; closed?: boolean; mode?: "closed" | "custom"; slots?: WebStoreSlot[]; note?: string }>;
   deliveryPerKmAmountPaisa: number;
   radiusKm: number;
   minOrderAmountPaisa: number;
@@ -178,6 +184,8 @@ export function toStoreConfig(record: FsRecord | null): WebStoreConfig | null {
   return {
     storeName: str(record.storeName, "Undal HomeKitchen"),
     open: bool(record.open),
+    ...(typeof record.acceptingOrders === "boolean" ? { acceptingOrders: record.acceptingOrders } : {}),
+    ...(typeof record.openSynced === "boolean" ? { openSynced: record.openSynced } : {}),
     autoClosed: bool(record.autoClosed),
     manualOverrideNote: str(record.manualOverrideNote),
     weekly: record.weekly as Record<string, WebStoreSlot[]> | undefined,
