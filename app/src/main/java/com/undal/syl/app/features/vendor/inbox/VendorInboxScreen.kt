@@ -1,5 +1,6 @@
 package com.undal.syl.app.features.vendor.inbox
 
+import androidx.compose.runtime.getValue
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues

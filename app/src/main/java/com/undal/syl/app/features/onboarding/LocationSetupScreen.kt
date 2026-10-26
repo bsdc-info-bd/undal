@@ -1,5 +1,7 @@
 package com.undal.syl.app.features.onboarding
 
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
 import android.Manifest
 import android.content.Intent
 import android.net.Uri

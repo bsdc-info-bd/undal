@@ -62,6 +62,31 @@ APP_PACKAGE = "com.undal.syl.app"
 
 EXTENSION_CONTRACTS = (
     {
+        "symbol": "getValue",
+        "import": "androidx.compose.runtime.getValue",
+        "package": "androidx.compose.runtime",
+        "use": re.compile(r"\b(?:val|var)\s+\w+(?:\s*:\s*[\w.<>?]+)?\s+by\s"),
+        "scope": re.compile(r"^import\s+androidx\.compose\.runtime\.", re.MULTILINE),
+        "why": "Compose State delegates invoke getValue implicitly; it cannot be removed as an unused name",
+    },
+    {
+        "symbol": "setValue",
+        "import": "androidx.compose.runtime.setValue",
+        "package": "androidx.compose.runtime",
+        "use": re.compile(r"\bvar\s+\w+(?:\s*:\s*[\w.<>?]+)?\s+by\s"),
+        "scope": re.compile(r"^import\s+androidx\.compose\.runtime\.", re.MULTILINE),
+        "why": "mutable Compose State delegates invoke setValue implicitly",
+    },
+    {
+        "symbol": "dp",
+        "import": "androidx.compose.ui.unit.dp",
+        "package": "androidx.compose.ui.unit",
+        "use": re.compile(r"\b\d+(?:\.\d+)?\.dp\b"),
+        "scope": None,
+        "why": "numeric dp literals use the Compose unit extension",
+    },
+
+    {
         "symbol": "await",
         "import": "kotlinx.coroutines.tasks.await",
         "package": "kotlinx.coroutines.tasks",
