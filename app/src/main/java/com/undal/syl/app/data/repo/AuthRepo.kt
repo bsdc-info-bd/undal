@@ -1,6 +1,7 @@
 package com.undal.syl.app.data.repo
 
 import com.google.firebase.auth.ActionCodeSettings
+import com.google.firebase.auth.GoogleAuthProvider
 import com.google.firebase.auth.EmailAuthProvider
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.auth.FirebaseAuthInvalidCredentialsException
@@ -76,6 +77,35 @@ class AuthRepo @Inject constructor(
         onSuccess = { UndalResult.Success(Unit) },
         onFailure = { UndalResult.Failure(UndalErrors.auth(it), it) }
     )
+
+    /** Firebase verifies the Google token; Google identity never grants the vendor role. */
+    suspend fun signInWithGoogle(idToken: String): UndalResult<Unit> {
+        if (idToken.isBlank()) return UndalResult.Failure("Google returned an empty credential. Please try again.")
+        return try {
+            // Clear drafts before Firebase emits its signed-in callback: the role
+            // router can open onboarding immediately. Never let a previous
+            // account's delivery pin appear in a new Google account's setup.
+            progress.clearDraftAddress()
+            progress.clearDraftProfile()
+            val result = auth.signInWithCredential(GoogleAuthProvider.getCredential(idToken, null)).await()
+            checkNotNull(result.user) { "Firebase returned no signed-in user" }
+            // Name/email come from FirebaseUser in onboarding; phone/address
+            // are requested explicitly, never guessed from the Google account.
+            UndalResult.Success(Unit)
+        } catch (cancelled: kotlinx.coroutines.CancellationException) {
+            throw cancelled
+        } catch (error: Exception) {
+            val message = when ((error as? com.google.firebase.auth.FirebaseAuthException)?.errorCode) {
+                "ERROR_OPERATION_NOT_ALLOWED" -> "Google sign-in is not enabled for this build's Firebase project. Check the Google provider and rebuild with the updated Firebase configuration."
+                "ERROR_ACCOUNT_EXISTS_WITH_DIFFERENT_CREDENTIAL", "ERROR_CREDENTIAL_ALREADY_IN_USE" ->
+                    "Use the original sign-in method for this email. Your accounts have not been merged."
+                "ERROR_INVALID_CREDENTIAL", "ERROR_INVALID_IDP_RESPONSE" ->
+                    "Google could not verify this sign-in. Check this build's Web OAuth client, Firebase project and signing fingerprints, then try again."
+                else -> UndalErrors.auth(error)
+            }
+            UndalResult.Failure(message, error)
+        }
+    }
 
     suspend fun sendPasswordReset(email: String): UndalResult<Unit> = runCatching {
         auth.sendPasswordResetEmail(email.trim()).await()

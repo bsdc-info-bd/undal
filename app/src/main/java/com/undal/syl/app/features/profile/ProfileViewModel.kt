@@ -49,6 +49,7 @@ class ProfileViewModel @Inject constructor(
 
     data class State(
         val loading: Boolean = true,
+        val loadFailed: Boolean = false,
         val name: String = "",
         val email: String = "",
         val phone: String = "",
@@ -93,7 +94,11 @@ class ProfileViewModel @Inject constructor(
      * shows messages.
      */
     private val guard = com.undal.syl.app.core.util.UndalGuards.viewModel("reading your profile") { message ->
-        _state.value = _state.value.copy(notice = message, noticeIsError = true)
+        _state.value = _state.value.copy(
+            notice = message, noticeIsError = true,
+            loadFailed = _state.value.loading || _state.value.loadFailed,
+            loading = false
+        )
     }
 
     init {

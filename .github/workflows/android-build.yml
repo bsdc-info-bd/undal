@@ -77,6 +77,8 @@ jobs:
         run: |
           python3 tools/check_kotlin_shape.py
           python3 tools/check_import_contracts.py
+          python3 tools/test_import_contracts.py
+          python3 tools/check-design-contrast.py
 
       # The two mistakes that compile, pass every test, and then kill the process
       # from a thread nobody is watching: a foreground service that stops without
@@ -137,6 +139,20 @@ jobs:
           ./gradlew :app:testReleaseUnitTest --no-daemon --stacktrace \
             -PundalVersionCode=${{ github.run_number }} \
             -PundalVersionName=1.0.${{ github.run_number }} 2>&1 | tee "$RUNNER_TEMP/undal-build.log"
+
+      - name: Compile adaptive previews and instrumentation tests
+        run: |
+          set -o pipefail
+          # Offline, compile-only fixture: never copy production credentials into
+          # the unregistered .debug app. This step does not produce/run a debug APK.
+          # Keep the real task graph intact: excluding GoogleServices breaks AGP's
+          # generated-resource providers. Remove the fixture before release build.
+          trap 'rm -f app/src/debug/google-services.json' EXIT
+          cat > app/src/debug/google-services.json <<'JSON'
+          {"project_info":{"project_number":"0","project_id":"undal-ci-compile-only"},"client":[{"client_info":{"mobilesdk_app_id":"1:0:android:0000000000000000","android_client_info":{"package_name":"com.undal.syl.app.debug"}},"api_key":[{"current_key":"CI_COMPILE_ONLY_NOT_A_CREDENTIAL"}]}],"configuration_version":"1"}
+          JSON
+          ./gradlew :app:compileDebugAndroidTestKotlin \
+            --no-daemon --stacktrace 2>&1 | tee -a "$RUNNER_TEMP/undal-build.log"
 
       - name: Assemble signed-ready release APK
         run: |

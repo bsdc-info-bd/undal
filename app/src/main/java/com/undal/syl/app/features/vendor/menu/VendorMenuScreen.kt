@@ -1,7 +1,10 @@
+@file:OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
+
 package com.undal.syl.app.features.vendor.menu
 
 import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -103,7 +106,7 @@ fun VendorMenuScreen(
         }
     ) { _ ->
         Column(modifier = Modifier.fillMaxSize()) {
-            Row(
+            FlowRow(
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(horizontal = UndalDimens.screenPadding, vertical = UndalDimens.xs),
@@ -116,8 +119,7 @@ fun VendorMenuScreen(
                         onClick = {
                             haptics.tick()
                             viewModel.onTab(tab)
-                        },
-                        modifier = Modifier.weight(1f)
+                        }
                     )
                 }
             }
@@ -207,7 +209,7 @@ private fun DishesTab(
                 leadingIcon = Icons.Filled.List
             )
             Spacer(Modifier.height(UndalDimens.xs))
-            Row(horizontalArrangement = Arrangement.spacedBy(UndalDimens.xs)) {
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(UndalDimens.xs)) {
                 state.menu.categories.sortedBy { it.order }.forEach { category ->
                     VendorChip(
                         label = "${category.name} · ${viewModel.countFor(category.id)}",
@@ -217,7 +219,7 @@ private fun DishesTab(
                 }
             }
             Spacer(Modifier.height(UndalDimens.xs))
-            Row(horizontalArrangement = Arrangement.spacedBy(UndalDimens.xs)) {
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(UndalDimens.xs)) {
                 MenuSort.entries.forEach { sort ->
                     VendorChip(
                         label = sort.label,
@@ -251,7 +253,7 @@ private fun DishesTab(
                             style = MaterialTheme.typography.titleSmall
                         )
                         Spacer(Modifier.height(UndalDimens.xs))
-                        Row(horizontalArrangement = Arrangement.spacedBy(UndalDimens.xs)) {
+                        FlowRow(horizontalArrangement = Arrangement.spacedBy(UndalDimens.xs)) {
                             UndalTextButton(text = "Select all", onClick = viewModel::selectAllVisible)
                             UndalTextButton(text = "Clear", onClick = viewModel::clearSelection)
                         }
@@ -461,7 +463,7 @@ private fun SectionsTab(
                         onDelete = { viewModel.askDeleteSection(category) },
                         extra = {
                             Spacer(Modifier.height(UndalDimens.xs))
-                            Row(horizontalArrangement = Arrangement.spacedBy(UndalDimens.xs)) {
+                            FlowRow(horizontalArrangement = Arrangement.spacedBy(UndalDimens.xs)) {
                                 UndalTextButton(
                                     text = "Add subcategory",
                                     onClick = { viewModel.startNewSubcategory(category.id) }
@@ -585,7 +587,7 @@ private fun SectionCard(
                 )
             }
             Spacer(Modifier.height(UndalDimens.xs))
-            Row(horizontalArrangement = Arrangement.spacedBy(UndalDimens.xs)) {
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(UndalDimens.xs)) {
                 UndalTextButton(text = "Edit", onClick = onEdit, icon = Icons.Filled.Edit)
                 UndalTextButton(text = "Delete", onClick = onDelete, icon = Icons.Filled.Delete)
             }
@@ -656,7 +658,7 @@ private fun CombosTab(
                                 )
                             }
                             Spacer(Modifier.height(UndalDimens.xs))
-                            Row(horizontalArrangement = Arrangement.spacedBy(UndalDimens.xs)) {
+                            FlowRow(horizontalArrangement = Arrangement.spacedBy(UndalDimens.xs)) {
                                 UndalTextButton(
                                     text = "Edit",
                                     onClick = { viewModel.editCombo(combo) },
@@ -764,7 +766,7 @@ private fun OffersTab(
                                     onCheckedChange = { viewModel.toggleCoupon(coupon) }
                                 )
                             }
-                            Row(horizontalArrangement = Arrangement.spacedBy(UndalDimens.xs)) {
+                            FlowRow(horizontalArrangement = Arrangement.spacedBy(UndalDimens.xs)) {
                                 UndalTextButton(
                                     text = "Edit",
                                     onClick = { viewModel.editCoupon(coupon) },
@@ -830,7 +832,7 @@ private fun OffersTab(
                                     }
                                 )
                             }
-                            Row(horizontalArrangement = Arrangement.spacedBy(UndalDimens.xs)) {
+                            FlowRow(horizontalArrangement = Arrangement.spacedBy(UndalDimens.xs)) {
                                 UndalTextButton(
                                     text = "Edit",
                                     onClick = { viewModel.editCampaign(campaign) },
@@ -866,8 +868,8 @@ private fun OffersTab(
                     )
                     Spacer(Modifier.width(UndalDimens.xs))
                     Text(
-                        text = "Every write here lands on the customer app within a second, because the store " +
-                            "reads these same documents live.",
+                        text = "Saved changes are shared with the customer menu when connected. Preview the menu " +
+                            "to check your changes.",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )

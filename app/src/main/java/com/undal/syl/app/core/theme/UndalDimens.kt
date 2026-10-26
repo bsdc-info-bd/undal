@@ -17,9 +17,9 @@ object UndalDimens {
     val xl: Dp = 24.dp
     val xxl: Dp = 32.dp
 
-    val screenPadding: Dp = 16.dp
+    val screenPadding: Dp = 20.dp
     val sectionGap: Dp = 20.dp
-    val cardPadding: Dp = 16.dp
+    val cardPadding: Dp = 20.dp
     val rowGap: Dp = 10.dp
 
     val touchTarget: Dp = 48.dp
@@ -28,12 +28,12 @@ object UndalDimens {
     val iconLg: Dp = 32.dp
 
     val radiusSm: Dp = 10.dp
-    val radiusMd: Dp = 14.dp
-    val radiusLg: Dp = 20.dp
+    val radiusMd: Dp = 16.dp
+    val radiusLg: Dp = 24.dp
     val radiusPill: Dp = 999.dp
 
     val elevationFlat: Dp = 0.dp
-    val elevationCard: Dp = 2.dp
+    val elevationCard: Dp = 1.dp
     val elevationRaised: Dp = 6.dp
 
     /** Bottom bars and sheets: raised enough to read as a separate surface. */

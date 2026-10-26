@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.width
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
@@ -30,6 +31,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.undal.syl.app.core.theme.UndalDimens
 
@@ -51,6 +53,7 @@ fun UndalScaffold(
     snackbarHostState: SnackbarHostState? = null,
     floatingActionButton: @Composable () -> Unit = {},
     bottomBar: @Composable () -> Unit = {},
+    contentMaxWidth: Dp = 840.dp,
     content: @Composable (PaddingValues) -> Unit
 ) {
     val hostState = snackbarHostState ?: remember { SnackbarHostState() }
@@ -69,7 +72,11 @@ fun UndalScaffold(
         containerColor = MaterialTheme.colorScheme.background,
         snackbarHost = { SnackbarHost(hostState) },
         floatingActionButton = floatingActionButton,
-        bottomBar = bottomBar,
+        bottomBar = {
+            Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
+                Box(Modifier.widthIn(max = contentMaxWidth).fillMaxWidth()) { bottomBar() }
+            }
+        },
         topBar = {
             if (title != null) {
                 TopAppBar(
@@ -120,8 +127,12 @@ fun UndalScaffold(
             }
         }
     ) { padding ->
-        Box(modifier = Modifier.fillMaxSize().padding(padding)) {
-            content(padding)
+        // Insets are consumed here. The argument remains for compatibility;
+        // screen bodies must not apply it a second time.
+        Box(modifier = Modifier.fillMaxSize().padding(padding), contentAlignment = Alignment.TopCenter) {
+            Box(modifier = Modifier.widthIn(max = contentMaxWidth).fillMaxSize()) {
+                content(padding)
+            }
         }
     }
 }

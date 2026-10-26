@@ -7,6 +7,7 @@ import com.undal.syl.app.core.model.VendorQueueFilter
 import com.undal.syl.app.data.repo.VendorOrderRepo
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -76,10 +77,20 @@ class VendorOrdersViewModel @Inject constructor(
 
     init {
         viewModelScope.launch(guard) {
-            refreshKey.flatMapLatest { vendorOrderRepo.observeWeek() }.collect { feed ->
+            refreshKey.flatMapLatest {
+                vendorOrderRepo.observeWeek().catch { error ->
+                    // Keep the outer refresh stream alive: a Retry button cannot
+                    // restart a collector that already died on a listener error.
+                    _state.value = _state.value.copy(
+                        loading = false,
+                        message = com.undal.syl.app.core.util.UndalErrors.firestore(error, operation = "reading kitchen orders")
+                    )
+                }
+            }.collect { feed ->
                 week = feed.orders
                 _state.value = _state.value.copy(
                     loading = false,
+                    message = null,
                     fromCache = feed.fromCache,
                     counts = VendorQueueFilter.entries.associateWith { filter ->
                         feed.orders.count { filter.matches(it.status) }
@@ -97,6 +108,7 @@ class VendorOrdersViewModel @Inject constructor(
 
     /** Restarts the listener, which forces a server read (V-022). */
     fun refresh() {
+        _state.value = _state.value.copy(message = null, loading = _state.value.visible.isEmpty())
         refreshKey.value += 1
     }
 

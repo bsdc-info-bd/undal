@@ -27,6 +27,8 @@ class VendorInboxViewModel @Inject constructor(
 
     data class State(
         val loading: Boolean = true,
+        val loadFailed: Boolean = false,
+        val busy: Boolean = false,
         val items: List<NotifInboxRepo.InboxItem> = emptyList(),
         val unread: Int = 0,
         val message: String? = null
@@ -45,7 +47,8 @@ class VendorInboxViewModel @Inject constructor(
      * shows messages.
      */
     private val guard = com.undal.syl.app.core.util.UndalGuards.viewModel("reading the kitchen's notifications") { message ->
-        _state.value = _state.value.copy(message = message)
+        _state.value = _state.value.copy(message = message, loading = false, busy = false,
+            loadFailed = _state.value.loading || _state.value.loadFailed)
     }
 
     init {
@@ -57,6 +60,7 @@ class VendorInboxViewModel @Inject constructor(
                 notifInboxRepo.observe(uid).collect { items ->
                     _state.value = _state.value.copy(
                         loading = false,
+                        loadFailed = false,
                         items = items,
                         unread = items.count { !it.read }
                     )
@@ -71,11 +75,15 @@ class VendorInboxViewModel @Inject constructor(
     }
 
     fun markAllRead() {
+        if (_state.value.busy) return
         val uid = auth.currentUser?.uid ?: return
+        _state.value = _state.value.copy(busy = true)
         viewModelScope.launch(guard) {
             val result = notifInboxRepo.markAllRead(uid)
             _state.value = _state.value.copy(
-                message = if (result.isSuccess) "Everything in the history is marked as read." else null
+                busy = false,
+                message = if (result.isSuccess) "Everything in the history is marked as read."
+                    else "Some alerts could not be marked read. Try again."
             )
         }
     }

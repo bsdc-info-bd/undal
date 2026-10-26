@@ -80,6 +80,7 @@ class DiagnosticsViewModel @Inject constructor(
 
     data class State(
         val checks: List<Check> = emptyList(),
+        val alertEvents: List<String> = emptyList(),
         val tokenTail: String = "",
         val heartbeatAgeLabel: String = "checking…",
         val sessionSummary: String = "checking…",
@@ -102,7 +103,7 @@ class DiagnosticsViewModel @Inject constructor(
         val notice: String? = null
     ) {
         /** Every check that would lose an order is passing. */
-        val armed: Boolean get() = checks.none { it.blocking && it.status != Status.OK }
+        val armed: Boolean get() = checks.isNotEmpty() && notice == null && checks.none { it.blocking && it.status != Status.OK }
 
         val blockingFailures: Int get() = checks.count { it.blocking && it.status != Status.OK }
 
@@ -131,6 +132,7 @@ class DiagnosticsViewModel @Inject constructor(
     private var soundContext: Context? = null
 
     fun refresh(context: Context) {
+        _state.value = _state.value.copy(alertEvents = com.undal.syl.app.core.fcm.AlertDeliveryJournal.lines(context))
         viewModelScope.launch(guard) {
             val checks = buildChecks(context)
             val token = tokenRegistrar.currentToken()
@@ -483,14 +485,20 @@ class DiagnosticsViewModel @Inject constructor(
             val outcome = workerApi.testAlert()
             _state.value = _state.value.copy(
                 test = outcome.fold(
-                    onSuccess = { body -> TestAlert(running = false, ok = true, message = describeTest(body)) },
+                    onSuccess = { body ->
+                        val accepted = runCatching {
+                            val reply = org.json.JSONObject(body)
+                            reply.optInt("sent", 0) > 0 || reply.optBoolean("topicSent", false)
+                        }.getOrDefault(false)
+                        TestAlert(running = false, ok = accepted, message = describeTest(body))
+                    },
                     onFailure = { error ->
                         TestAlert(
                             running = false,
                             ok = false,
                             message = "The relay could not be reached: " +
                                 (error.message ?: "unknown error") +
-                                ". This phone will still ring from its own watcher — the push route is the one that is down."
+                                ". The live watcher may still recover orders, but push delivery is not verified. Check the local timeline and try again."
                         )
                     }
                 )
@@ -504,7 +512,7 @@ class DiagnosticsViewModel @Inject constructor(
 
     /** Turns the relay's JSON into one sentence a person can act on. */
     private fun describeTest(body: String): String {
-        if (body.isBlank()) return "The relay accepted the test. The phone should be ringing now."
+        if (body.isBlank()) return "The relay response could not be verified. Check the delivery timeline and listen for the sound."
         return runCatching {
             val json = org.json.JSONObject(body)
             val devices = json.optInt("devices", 0)
@@ -512,14 +520,14 @@ class DiagnosticsViewModel @Inject constructor(
             val topicSent = json.optBoolean("topicSent", false)
             val warning = json.optString("warning").takeIf { it.isNotBlank() && it != "null" }
             when {
-                sent > 0 && topicSent -> "Sent to $devices device(s) and to the kitchen topic. The phone should ring now."
-                sent > 0 -> "Sent to $sent of $devices device(s). The topic fan-out failed, so a second " +
+                sent > 0 && topicSent -> "FCM accepted sends for $devices device(s) and the kitchen topic. This is not a delivery receipt: check the timeline for FCM data received and listen for the sound."
+                sent > 0 -> "FCM accepted sends for $sent of $devices device(s). The topic fan-out failed, so a second " +
                     "kitchen phone might not have been reached."
-                topicSent -> "Sent to the kitchen topic. " +
+                topicSent -> "FCM accepted the kitchen-topic send; device delivery is not confirmed. " +
                     (warning ?: "If the phone does not ring, its token is missing.")
                 else -> warning ?: "The relay could not reach any device — this is why the kitchen is silent."
             }
-        }.getOrElse { "The relay accepted the test. The phone should be ringing now." }
+        }.getOrElse { "The relay response could not be verified. Check the delivery timeline and listen for the sound." }
     }
 
     suspend fun reRegisterDevice(): String {

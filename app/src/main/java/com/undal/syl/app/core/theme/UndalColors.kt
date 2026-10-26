@@ -20,7 +20,7 @@ object UndalPalette {
     val BrandMid = Color(0xFF137A3B)
 
     val Accent = Color(0xFFE8871E)
-    val AccentDark = Color(0xFFB8650F)
+    val AccentDark = Color(0xFF97510B)
     val AccentLight = Color(0xFFFFF1DE)
 
     val Danger = Color(0xFFB3261E)
@@ -30,11 +30,11 @@ object UndalPalette {
     val Warning = Color(0xFF9A6700)
     val WarningLight = Color(0xFFFFF4DC)
 
-    val Paper = Color(0xFFFFFBF4)
+    val Paper = Color(0xFFFAF8F2)
     val Ink = Color(0xFF14261B)
     val Muted = Color(0xFF5B6B60)
-    val Outline = Color(0xFFD8DED6)
-    val OutlineStrong = Color(0xFFB8C1B8)
+    val Outline = Color(0xFF737D72)
+    val OutlineSoft = Color(0xFFDFE5D9)
 
     val NightSurface = Color(0xFF101613)
     val NightSurfaceHigh = Color(0xFF1A211C)
@@ -49,7 +49,7 @@ val UndalLightScheme: ColorScheme = lightColorScheme(
     onPrimary = Color.White,
     primaryContainer = UndalPalette.BrandLight,
     onPrimaryContainer = UndalPalette.BrandDark,
-    secondary = UndalPalette.Accent,
+    secondary = UndalPalette.AccentDark,
     onSecondary = Color.White,
     secondaryContainer = UndalPalette.AccentLight,
     onSecondaryContainer = UndalPalette.AccentDark,
@@ -62,7 +62,7 @@ val UndalLightScheme: ColorScheme = lightColorScheme(
     surfaceVariant = Color(0xFFF1F4EE),
     onSurfaceVariant = UndalPalette.Muted,
     outline = UndalPalette.Outline,
-    outlineVariant = UndalPalette.OutlineStrong,
+    outlineVariant = UndalPalette.OutlineSoft,
     error = UndalPalette.Danger,
     onError = Color.White,
     errorContainer = UndalPalette.DangerLight,
@@ -86,8 +86,8 @@ val UndalDarkScheme: ColorScheme = darkColorScheme(
     onSurface = UndalPalette.NightInk,
     surfaceVariant = Color(0xFF232B24),
     onSurfaceVariant = UndalPalette.NightMuted,
-    outline = Color(0xFF3A443B),
-    outlineVariant = Color(0xFF4B564C),
+    outline = Color(0xFF8C998D),
+    outlineVariant = Color(0xFF3C483E),
     error = Color(0xFFFFB4AB),
     onError = Color(0xFF690005),
     errorContainer = Color(0xFF8C1D18),

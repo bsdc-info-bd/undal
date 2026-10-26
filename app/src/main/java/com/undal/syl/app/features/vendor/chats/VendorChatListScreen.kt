@@ -1,15 +1,17 @@
+@file:OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
+
 package com.undal.syl.app.features.vendor.chats
 
+import androidx.compose.runtime.getValue
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
-import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
@@ -20,13 +22,13 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import androidx.compose.runtime.getValue
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
+import com.undal.syl.app.core.design.ShimmerListRow
+import com.undal.syl.app.core.design.UndalSectionHeader
 import com.undal.syl.app.core.design.UndalAlertBanner
 import com.undal.syl.app.core.design.UndalCard
 import com.undal.syl.app.core.design.UndalScaffold
@@ -58,66 +60,46 @@ fun VendorChatListScreen(
     UndalScaffold(
         title = "Chats",
         subtitle = "Text only, one thread per order · ${state.rows.size} thread(s) in the last week",
-        onBack = onBack
+        onBack = onBack, contentMaxWidth = 760.dp
     ) { _ ->
-        Column(modifier = Modifier.fillMaxSize()) {
+        LazyColumn(
+            modifier = Modifier.fillMaxSize(), contentPadding = PaddingValues(UndalDimens.screenPadding),
+            verticalArrangement = Arrangement.spacedBy(UndalDimens.md)
+        ) {
+            item(key = "chat-intro") {
+                UndalSectionHeader("Conversations", subtitle = "${state.rows.count { it.unread > 0 }} thread(s) with unread messages · unread first")
+            }
             if (state.fromCache) {
-                UndalAlertBanner(
-                    text = "Showing the threads this phone already knows about. New messages arrive as soon " +
-                        "as the signal does.",
-                    icon = Icons.Filled.Info,
-                    modifier = Modifier.fillMaxWidth()
-                )
+                item(key = "cache") { UndalAlertBanner("Showing saved threads. Reconnect to check for new messages.", icon = Icons.Filled.Info) }
             }
-
-            // A failed read has to be said, because an empty list is also what a
-            // kitchen with no conversations looks like — and "no threads" is the
-            // wrong sentence when the truth is "the signal went".
             if (state.notice != null) {
-                UndalAlertBanner(
-                    text = state.notice.orEmpty(),
-                    icon = Icons.Filled.Info,
-                    modifier = Modifier.fillMaxWidth()
-                )
+                item(key = "notice") { UndalAlertBanner(state.notice.orEmpty(), icon = Icons.Filled.Info) }
             }
-
-            if (state.rows.isEmpty() && !state.loading) {
-                VendorEmptyState(
-                    icon = Icons.Filled.Email,
-                    title = "No conversation yet",
-                    message = "When a customer writes about an order, the thread appears here with an unread " +
-                        "count — and the push lands on this phone.",
-                    actionLabel = null,
-                    onAction = null
-                )
+            if (state.loading && state.rows.isEmpty()) {
+                items(3, key = { "loading-$it" }) { ShimmerListRow() }
+            } else if (state.rows.isEmpty()) {
+                item(key = "empty") {
+                    VendorEmptyState(icon = Icons.Filled.Email,
+                        title = if (state.notice != null) "Conversations unavailable" else "No conversations yet",
+                        message = if (state.notice != null) "Check your connection and reopen chats to try again." else
+                            "Order conversations appear here with their unread count when available.",
+                        actionLabel = null, onAction = null)
+                }
             } else {
-                LazyColumn(
-                    modifier = Modifier.fillMaxSize(),
-                    contentPadding = PaddingValues(UndalDimens.screenPadding),
-                    verticalArrangement = Arrangement.spacedBy(UndalDimens.xs)
-                ) {
-                    items(state.rows, key = { it.order.id }) { row ->
+
+                    items(state.rows, key = { "thread-${it.order.id}" }) { row ->
                         UndalCard(modifier = Modifier.fillMaxWidth(), onClick = {
                             haptics.tick()
                             onOpenChat(row.order.id)
                         }) {
                             Column(modifier = Modifier.padding(UndalDimens.sm)) {
-                                Row(verticalAlignment = Alignment.CenterVertically) {
-                                    Text(
-                                        text = row.order.shortId.ifBlank { row.order.id.takeLast(4) },
-                                        style = MaterialTheme.typography.titleSmall
-                                    )
-                                    Spacer(Modifier.width(UndalDimens.xs))
-                                    Text(
-                                        text = row.order.customerName.ifBlank { "Customer" },
-                                        style = MaterialTheme.typography.bodySmall,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                        modifier = Modifier.weight(1f),
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis
-                                    )
+                                FlowRow(horizontalArrangement = Arrangement.spacedBy(UndalDimens.sm),
+                                    verticalArrangement = Arrangement.spacedBy(UndalDimens.xs)) {
+                                    Text(row.order.shortId.ifBlank { row.order.id.takeLast(4) }, style = MaterialTheme.typography.titleMedium)
                                     VendorStatusPill(status = row.order.status)
                                 }
+                                Text(row.order.customerName.ifBlank { "Customer" }, style = MaterialTheme.typography.bodyMedium,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant)
                                 Spacer(Modifier.height(UndalDimens.xs))
                                 Text(
                                     text = when {
@@ -133,7 +115,8 @@ fun VendorChatListScreen(
                                     overflow = TextOverflow.Ellipsis
                                 )
                                 Spacer(Modifier.height(UndalDimens.xs))
-                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                FlowRow(horizontalArrangement = Arrangement.spacedBy(UndalDimens.sm),
+                                    verticalArrangement = Arrangement.spacedBy(UndalDimens.xs)) {
                                     if (row.unread > 0) {
                                         UndalStatusPill(
                                             text = "${row.unread} unread",
@@ -147,7 +130,6 @@ fun VendorChatListScreen(
                                             color = MaterialTheme.colorScheme.onSurfaceVariant
                                         )
                                     }
-                                    Spacer(Modifier.weight(1f))
                                     UndalTextButton(
                                         text = "Open the order",
                                         onClick = { onOpenOrder(row.order.id) },
@@ -157,7 +139,7 @@ fun VendorChatListScreen(
                             }
                         }
                     }
-                }
+
             }
         }
     }

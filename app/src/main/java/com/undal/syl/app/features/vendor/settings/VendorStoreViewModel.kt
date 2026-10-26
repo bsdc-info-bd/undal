@@ -42,6 +42,7 @@ class VendorStoreViewModel @Inject constructor(
 
     data class State(
         val loading: Boolean = true,
+        val loadFailed: Boolean = false,
         val store: StoreConfig = StoreConfig.unloaded(),
         val openState: StoreOpenState = StoreOpenState.of(StoreConfig.unloaded()),
         val perKmText: String = "",
@@ -78,7 +79,8 @@ class VendorStoreViewModel @Inject constructor(
      * shows messages.
      */
     private val guard = com.undal.syl.app.core.util.UndalGuards.viewModel("reading the store settings") { message ->
-        _state.value = _state.value.copy(message = message, busy = false)
+        _state.value = _state.value.copy(message = message, busy = false, loading = false,
+            loadFailed = _state.value.loading || _state.value.loadFailed)
     }
 
     private var player: MediaPlayer? = null
@@ -95,6 +97,7 @@ class VendorStoreViewModel @Inject constructor(
                 _state.value = if (!editing) {
                     state.copy(
                         loading = false,
+                        loadFailed = false,
                         store = store,
                         openState = StoreOpenState.of(store),
                         perKmText = Money.formatPlain(store.deliveryPerKmAmountPaisa),
@@ -110,7 +113,7 @@ class VendorStoreViewModel @Inject constructor(
                         pinLabel = store.storeAddressText
                     )
                 } else {
-                    state.copy(loading = false, store = store, openState = StoreOpenState.of(store))
+                    state.copy(loading = false, loadFailed = false, store = store, openState = StoreOpenState.of(store))
                 }
             }
         }

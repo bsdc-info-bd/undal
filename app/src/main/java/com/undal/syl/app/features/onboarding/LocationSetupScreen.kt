@@ -1,11 +1,14 @@
 package com.undal.syl.app.features.onboarding
 
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
 import android.Manifest
 import android.content.Intent
 import android.net.Uri
 import android.provider.Settings
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -17,24 +20,26 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.Phone
 import androidx.compose.material.icons.filled.Place
 import androidx.compose.material.icons.filled.Done
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
+import androidx.compose.ui.unit.dp
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.hilt.navigation.compose.hiltViewModel
+import com.undal.syl.app.core.design.UndalAdaptivePair
+import com.undal.syl.app.core.design.UndalSecondaryButton
 import com.undal.syl.app.core.design.UndalAlertBanner
 import com.undal.syl.app.core.design.UndalCard
 import com.undal.syl.app.core.design.UndalConfirmDialog
@@ -97,7 +102,16 @@ fun LocationSetupScreen(
 
     UndalScaffold(
         title = "Your delivery address",
-        subtitle = "Pin the exact spot so the rider finds you first time"
+        subtitle = "Your door, not just your neighbourhood",
+        contentMaxWidth = 1100.dp,
+        bottomBar = {
+            UndalPrimaryButton(
+                text = "Save delivery address", onClick = { viewModel.save(onSaved) },
+                enabled = state.canSaveAddress, loading = state.busy,
+                icon = Icons.Filled.Done,
+                modifier = Modifier.padding(horizontal = UndalDimens.screenPadding, vertical = UndalDimens.sm)
+            )
+        }
     ) { _ ->
         Column(
             modifier = Modifier
@@ -115,142 +129,178 @@ fun LocationSetupScreen(
                 Spacer(Modifier.height(UndalDimens.md))
             }
 
-            UndalCard {
-                Text("1 · Where is the food going?", style = MaterialTheme.typography.titleMedium)
-                Spacer(Modifier.height(UndalDimens.xs))
-                Text(
-                    text = "Drag the pin onto your building. The kitchen uses this point to know whether " +
-                        "you are inside the delivery area and how much the ride costs.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-                Spacer(Modifier.height(UndalDimens.md))
+            UndalAdaptivePair(primary = {
+                Column {
+                    UndalCard {
+                        Text("1 · Where is the food going?", style = MaterialTheme.typography.titleMedium)
+                        Spacer(Modifier.height(UndalDimens.xs))
+                        Text(
+                            text = "Drag the pin onto your building. The kitchen uses this point to know whether " +
+                                "you are inside the delivery area and how much the ride costs.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Spacer(Modifier.height(UndalDimens.md))
 
-                UndalOsmPicker(
-                    latitude = state.lat,
-                    longitude = state.lng,
-                    onPicked = viewModel::onPinMoved,
-                    accuracyMeters = state.accuracyMeters,
-                    recentreLabel = "Use my current location",
-                    onRecentre = {
-                        if (viewModel.state.value.permissionNeeded) {
-                            showRationale = true
-                        } else {
-                            permissionLauncher.launch(Manifest.permission.ACCESS_FINE_LOCATION)
+                        UndalOsmPicker(
+                            latitude = state.lat,
+                            longitude = state.lng,
+                            onPicked = viewModel::onPinMoved,
+                            accuracyMeters = state.accuracyMeters,
+                            recentreLabel = "Use my current location",
+                            onRecentre = {
+                                if (viewModel.state.value.permissionNeeded) {
+                                    showRationale = true
+                                } else {
+                                    permissionLauncher.launch(Manifest.permission.ACCESS_FINE_LOCATION)
+                                }
+                            }
+                        )
+                        Spacer(Modifier.height(UndalDimens.xs))
+                        UndalMapToolRow(
+                            latitude = state.lat,
+                            longitude = state.lng,
+                            title = state.title.ifBlank { "My delivery point" }
+                        )
+
+                        Spacer(Modifier.height(UndalDimens.sm))
+
+                        UndalSecondaryButton(
+                            text = if (state.locating) "Finding your location…" else "Use my current location",
+                            onClick = {
+                                if (viewModel.state.value.permissionNeeded) {
+                                    showRationale = true
+                                } else {
+                                    permissionLauncher.launch(Manifest.permission.ACCESS_FINE_LOCATION)
+                                }
+                            },
+                            loading = state.locating,
+                            icon = Icons.Filled.Place
+                        )
+
+                        Spacer(Modifier.height(UndalDimens.sm))
+                        UndalPickedPointLabel(
+                            label = state.label.ifBlank { "Drag the pin onto your building to set the exact spot." }
+                        )
+                        Row {
+                            Checkbox(checked = state.pinConfirmed,
+                                onCheckedChange = viewModel::confirmPin,
+                                enabled = !state.busy && !state.locating)
+                            Text("I checked this pin. This is my delivery point.",
+                                style = MaterialTheme.typography.bodyMedium,
+                                modifier = Modifier.weight(1f).padding(top = UndalDimens.sm))
+                        }
+                        if (state.accuracyNote.isNotBlank()) {
+                            Text(
+                                text = state.accuracyNote,
+                                style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.colorScheme.primary
+                            )
                         }
                     }
-                )
-                Spacer(Modifier.height(UndalDimens.xs))
-                UndalMapToolRow(
-                    latitude = state.lat,
-                    longitude = state.lng,
-                    title = state.title.ifBlank { "My delivery point" }
-                )
 
-                Spacer(Modifier.height(UndalDimens.sm))
+                    Spacer(Modifier.height(UndalDimens.md))
 
-                UndalPrimaryButton(
-                    text = if (state.locating) "Finding your location…" else "Use my current location",
+                }
+            }, secondary = {
+                Column {
+                    UndalCard {
+                        Text("2 · How should we describe it?", style = MaterialTheme.typography.titleMedium)
+                        Spacer(Modifier.height(UndalDimens.xs))
+                        Text(
+                            text = "The number is how the rider reaches you; the three lines below are what they " +
+                                "read on the way. Confirm your name too so the kitchen knows who to ask for.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Spacer(Modifier.height(UndalDimens.md))
+                        UndalTextField(
+                            value = state.name,
+                            onValueChange = viewModel::onNameChange,
+                            label = "Full name",
+                            error = state.nameError,
+                            helper = "Check the name shared by Google or enter the name on your order.",
+                            leadingIcon = Icons.Filled.Person,
+                            imeAction = ImeAction.Next,
+                            enabled = !state.busy
+                        )
+                        Spacer(Modifier.height(UndalDimens.md))
+                        UndalTextField(
+                            value = state.phone,
+                            onValueChange = viewModel::onPhoneChange,
+                            label = "Mobile number the rider will call",
+                            hint = "01XXXXXXXXX",
+                            error = state.phoneError,
+                            helper = "The phone in your pocket when the food is at the door.",
+                            leadingIcon = Icons.Filled.Phone,
+                            keyboardType = KeyboardType.Phone,
+                            imeAction = ImeAction.Next,
+                            enabled = !state.busy
+                        )
+                        Spacer(Modifier.height(UndalDimens.md))
+                        UndalTextField(
+                            value = state.title,
+                            onValueChange = viewModel::onTitleChange,
+                            label = "Title",
+                            hint = "Home",
+                            error = state.titleError,
+                            helper = "One short word you will recognise in your address list.",
+                            leadingIcon = Icons.Filled.Home,
+                            imeAction = ImeAction.Next,
+                            enabled = !state.busy
+                        )
+                        Spacer(Modifier.height(UndalDimens.md))
+                        UndalTextField(
+                            value = state.desc,
+                            onValueChange = viewModel::onDescChange,
+                            label = "Description",
+                            hint = "Flat 4B, green building beside the mosque",
+                            error = state.descError,
+                            helper = "Building, floor and a landmark the rider can see.",
+                            imeAction = ImeAction.Next,
+                            maxLines = 2,
+                            singleLine = false,
+                            enabled = !state.busy
+                        )
+                        Spacer(Modifier.height(UndalDimens.md))
+                        UndalTextField(
+                            value = state.note,
+                            onValueChange = viewModel::onNoteChange,
+                            label = "Delivery note for the rider",
+                            hint = "Call when you reach the gate",
+                            error = state.noteError,
+                            helper = "Exactly what the rider should do when they arrive.",
+                            imeAction = ImeAction.Done,
+                            maxLines = 2,
+                            singleLine = false,
+                            enabled = !state.busy,
+                            onImeAction = { viewModel.save(onSaved) }
+                        )
+                    }
+
+                    Spacer(Modifier.height(UndalDimens.lg))
+
+                }
+            })
+
+            // A refusal — including "don't ask again" — is answered with a real path into
+            // the system settings, never with a dead button (C-011).
+            if (state.permissionNeeded) {
+                UndalTextButton(
+                    text = "Open app settings to allow location",
                     onClick = {
-                        if (viewModel.state.value.permissionNeeded) {
-                            showRationale = true
-                        } else {
-                            permissionLauncher.launch(Manifest.permission.ACCESS_FINE_LOCATION)
+                        runCatching {
+                            context.startActivity(
+                                Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
+                                    data = Uri.parse("package:${context.packageName}")
+                                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                                }
+                            )
                         }
                     },
-                    loading = state.locating,
-                    icon = Icons.Filled.Place
-                )
-
-                Spacer(Modifier.height(UndalDimens.sm))
-                UndalPickedPointLabel(
-                    label = state.label.ifBlank { "Drag the pin onto your building to set the exact spot." }
-                )
-                if (state.accuracyNote.isNotBlank()) {
-                    Text(
-                        text = state.accuracyNote,
-                        style = MaterialTheme.typography.labelMedium,
-                        color = MaterialTheme.colorScheme.primary
-                    )
-                }
-            }
-
-            Spacer(Modifier.height(UndalDimens.md))
-
-            UndalCard {
-                Text("2 · How should we describe it?", style = MaterialTheme.typography.titleMedium)
-                Spacer(Modifier.height(UndalDimens.xs))
-                Text(
-                    text = "The number is how the rider reaches you; the three lines below are what they " +
-                        "read on the way. All four are required.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-                Spacer(Modifier.height(UndalDimens.md))
-                UndalTextField(
-                    value = state.phone,
-                    onValueChange = viewModel::onPhoneChange,
-                    label = "Mobile number the rider will call",
-                    hint = "01XXXXXXXXX",
-                    error = state.phoneError,
-                    helper = "The phone in your pocket when the food is at the door.",
-                    leadingIcon = Icons.Filled.Phone,
-                    keyboardType = KeyboardType.Phone,
-                    imeAction = ImeAction.Next,
-                    enabled = !state.busy
-                )
-                Spacer(Modifier.height(UndalDimens.md))
-                UndalTextField(
-                    value = state.title,
-                    onValueChange = viewModel::onTitleChange,
-                    label = "Title",
-                    hint = "Home",
-                    error = state.titleError,
-                    helper = "One short word you will recognise in your address list.",
-                    leadingIcon = Icons.Filled.Home,
-                    imeAction = ImeAction.Next,
-                    enabled = !state.busy
-                )
-                Spacer(Modifier.height(UndalDimens.md))
-                UndalTextField(
-                    value = state.desc,
-                    onValueChange = viewModel::onDescChange,
-                    label = "Description",
-                    hint = "Flat 4B, green building beside the mosque",
-                    error = state.descError,
-                    helper = "Building, floor and a landmark the rider can see.",
-                    imeAction = ImeAction.Next,
-                    maxLines = 2,
-                    singleLine = false,
-                    enabled = !state.busy
-                )
-                Spacer(Modifier.height(UndalDimens.md))
-                UndalTextField(
-                    value = state.note,
-                    onValueChange = viewModel::onNoteChange,
-                    label = "Delivery note for the rider",
-                    hint = "Call when you reach the gate",
-                    error = state.noteError,
-                    helper = "Exactly what the rider should do when they arrive.",
-                    imeAction = ImeAction.Done,
-                    maxLines = 2,
-                    singleLine = false,
-                    enabled = !state.busy,
-                    onImeAction = { viewModel.save(onSaved) }
+                    modifier = Modifier.fillMaxWidth()
                 )
             }
-
-            Spacer(Modifier.height(UndalDimens.lg))
-
-            UndalPrimaryButton(
-                text = "Save address and start ordering",
-                onClick = { viewModel.save(onSaved) },
-                loading = state.busy,
-                icon = Icons.Filled.Done
-            )
-
-            Spacer(Modifier.height(UndalDimens.sm))
-
             UndalTextButton(
                 text = "Sign out",
                 onClick = { showSignOutConfirm = true },
@@ -297,22 +347,5 @@ fun LocationSetupScreen(
         )
     }
 
-    // A refusal — including "don't ask again" — is answered with a real path into
-    // the system settings, never with a dead button (C-011).
-    if (state.permissionNeeded) {
-        UndalTextButton(
-            text = "Open app settings to allow location",
-            onClick = {
-                runCatching {
-                    context.startActivity(
-                        Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
-                            data = Uri.parse("package:${context.packageName}")
-                            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                        }
-                    )
-                }
-            },
-            modifier = Modifier.fillMaxWidth()
-        )
-    }
+
 }

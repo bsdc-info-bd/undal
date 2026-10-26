@@ -108,6 +108,7 @@ class OrderTrackingViewModel @Inject constructor(
      * shows messages.
      */
     private val guard = com.undal.syl.app.core.util.UndalGuards.viewModel("following your order") { message ->
+        noticeFlow.value = message
         _state.value = _state.value.copy(notice = message)
     }
 
@@ -130,6 +131,7 @@ class OrderTrackingViewModel @Inject constructor(
     }
 
     private var boundOrderId: String = ""
+    private val detailLoadedFlow = MutableStateFlow(false)
     private val detailFlow = MutableStateFlow<OrderRepo.OrderDetail?>(null)
     private val messagesFlow = MutableStateFlow<List<ChatRepo.Message>>(emptyList())
     private val lastReadFlow = MutableStateFlow(0L)
@@ -190,8 +192,8 @@ class OrderTrackingViewModel @Inject constructor(
                 combine(chatOpenFlow, draftFlow, typingFlow, tickFlow) { open, draft, typing, tick ->
                     ChatView(open = open, draft = draft, typing = typing, tick = tick)
                 },
-                combine(sendingFlow, reorderingFlow, noticeFlow) { sending, reordering, notice ->
-                    WorkView(sending = sending, reordering = reordering, notice = notice)
+                combine(sendingFlow, reorderingFlow, noticeFlow, detailLoadedFlow) { sending, reordering, notice, loaded ->
+                    WorkView(sending = sending, reordering = reordering, notice = notice, detailLoaded = loaded)
                 }
             ) { detail, messages, lastRead, chat, work ->
                 buildState(detail, messages, lastRead, chat, work)
@@ -201,7 +203,7 @@ class OrderTrackingViewModel @Inject constructor(
 
     private data class ChatView(val open: Boolean, val draft: String, val typing: Boolean, val tick: Long)
 
-    private data class WorkView(val sending: Boolean, val reordering: Boolean, val notice: String?)
+    private data class WorkView(val sending: Boolean, val reordering: Boolean, val notice: String?, val detailLoaded: Boolean)
 
     fun bind(orderId: String) {
         if (boundOrderId == orderId) return
@@ -211,6 +213,7 @@ class OrderTrackingViewModel @Inject constructor(
         viewModelScope.launch(guard) {
             orderRepo.observeOrder(orderId).collect { detail ->
                 detailFlow.value = detail
+                detailLoadedFlow.value = true
                 if (detail != null) {
                     // The moment the screen opens, this phone has seen the chat.
                     markReadFor(messagesFlow.value)
@@ -267,7 +270,7 @@ class OrderTrackingViewModel @Inject constructor(
         val span = if (prepEndsAt != null) (prepEndsAt.toEpochMilli() - startMillis).coerceAtLeast(1L) else 1L
 
         return State(
-            loading = detail == null,
+            loading = !work.detailLoaded,
             orderId = boundOrderId,
             detail = detail,
             liveStatus = liveStatus,

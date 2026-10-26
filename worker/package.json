@@ -17,5 +17,8 @@
     "tsx": "^4.23.15",
     "typescript": "^5.9.0",
     "wrangler": "^4.0.0"
+  },
+  "overrides": {
+    "undici": "^7.30.1"
   }
 }

@@ -26,6 +26,8 @@ crashlyticsPlugin = "3.0.3"
 perfPlugin = "1.4.2"
 firebaseBom = "33.16.0"
 playServicesLocation = "21.3.0"
+credentials = "1.5.0"
+googleId = "1.1.1"
 
 # --- androidx / compose -----------------------------------------------------
 composeBom = "2025.06.01"
@@ -58,6 +60,9 @@ desugarJdkLibs = "2.1.5"
 junit = "4.13.2"
 
 [libraries]
+androidx-credentials = { group = "androidx.credentials", name = "credentials", version.ref = "credentials" }
+androidx-credentials-play-services-auth = { group = "androidx.credentials", name = "credentials-play-services-auth", version.ref = "credentials" }
+google-identity-googleid = { group = "com.google.android.libraries.identity.googleid", name = "googleid", version.ref = "googleId" }
 # --- androidx core ----------------------------------------------------------
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
 androidx-core-splashscreen = { group = "androidx.core", name = "core-splashscreen", version.ref = "splashscreen" }

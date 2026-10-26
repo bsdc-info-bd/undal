@@ -1,10 +1,12 @@
 package com.undal.syl.app.features.profile
 
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.unit.dp
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
-import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -36,10 +38,8 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.layout.ContentScale
@@ -48,6 +48,9 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.hilt.navigation.compose.hiltViewModel
 import coil3.compose.AsyncImage
+import com.undal.syl.app.core.design.UndalFullScreenLoader
+import com.undal.syl.app.core.design.UndalEmptyState
+import com.undal.syl.app.core.design.UndalActionGroup
 import com.undal.syl.app.core.design.UndalAlertBanner
 import com.undal.syl.app.core.design.UndalCard
 import com.undal.syl.app.core.design.UndalConfirmDialog
@@ -124,19 +127,18 @@ fun ProfileScreen(
         title = "Your account",
         subtitle = state.displayName,
         onBack = onBack,
-        actions = {
-            UndalSecondaryButton(
-                text = if (state.photoUrl.isBlank()) "Add photo" else "Change photo",
-                onClick = {
-                    photoPicker.launch(
-                        PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
-                    )
-                },
-                enabled = !state.uploading,
-                icon = Icons.Filled.Person
-            )
-        }
+        contentMaxWidth = 760.dp
     ) { _ ->
+        if (state.loading) {
+            UndalFullScreenLoader(message = "Reading your account…")
+            return@UndalScaffold
+        }
+        if (state.loadFailed) {
+            UndalEmptyState(icon = Icons.Filled.Warning, title = "Your account couldn't load",
+                message = state.notice ?: "Check your connection and try again.",
+                actionLabel = "Try again", onAction = viewModel::load)
+            return@UndalScaffold
+        }
         Column(
             modifier = Modifier
                 .fillMaxSize()
@@ -200,7 +202,7 @@ fun ProfileScreen(
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                         Text(
-                            text = if (state.uploading) "Uploading…" else "Tap “Add photo” to change it",
+                            text = if (state.uploading) "Uploading…" else "Use the photo button below to change it",
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -261,6 +263,20 @@ fun ProfileScreen(
 
             Spacer(Modifier.height(UndalDimens.sm))
 
+            UndalCard {
+                UndalSecondaryButton(
+                    text = if (state.photoUrl.isBlank()) "Add photo" else "Change photo",
+                    onClick = {
+                        photoPicker.launch(
+                            PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
+                        )
+                    },
+                    enabled = !state.uploading,
+                    icon = Icons.Filled.Person
+                )
+            }
+            Spacer(Modifier.height(UndalDimens.sm))
+
             // ---- name and phone ---------------------------------------------
             UndalCard {
                 Text("The rider's details", style = MaterialTheme.typography.titleMedium)
@@ -319,13 +335,14 @@ fun ProfileScreen(
                     )
                     Spacer(Modifier.width(UndalDimens.sm))
                     Text("Delivery address", style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
+
+                }
+                Spacer(Modifier.height(UndalDimens.sm))
                     UndalSecondaryButton(
                         text = if (state.hasAddress) "Re-pin" else "Pin it",
                         onClick = onEditAddress,
-                        icon = Icons.Filled.Edit,
-                        fillWidth = false
+                        icon = Icons.Filled.Edit
                     )
-                }
                 Spacer(Modifier.height(UndalDimens.xs))
                 if (state.address != null) {
                     UndalKeyValueRow("Title", state.address?.title.orEmpty())
@@ -418,18 +435,17 @@ fun ProfileScreen(
             UndalCard {
                 Text("Your activity", style = MaterialTheme.typography.titleMedium)
                 Spacer(Modifier.height(UndalDimens.sm))
-                Row(horizontalArrangement = Arrangement.spacedBy(UndalDimens.sm)) {
+                UndalActionGroup(primary = {
                     UndalSecondaryButton(
                         text = "Your orders",
-                        onClick = onOpenOrders,
-                        modifier = Modifier.weight(1f)
+                        onClick = onOpenOrders
                     )
+                }, secondary = {
                     UndalSecondaryButton(
                         text = "Notifications",
-                        onClick = onOpenInbox,
-                        modifier = Modifier.weight(1f)
+                        onClick = onOpenInbox
                     )
-                }
+                })
             }
 
             Spacer(Modifier.height(UndalDimens.sm))
@@ -445,21 +461,20 @@ fun ProfileScreen(
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
                 Spacer(Modifier.height(UndalDimens.sm))
-                Row(horizontalArrangement = Arrangement.spacedBy(UndalDimens.sm)) {
+                UndalActionGroup(primary = {
                     UndalSecondaryButton(
                         text = "Sign out",
                         onClick = viewModel::signOut,
-                        icon = Icons.Filled.ExitToApp,
-                        modifier = Modifier.weight(1f)
+                        icon = Icons.Filled.ExitToApp
                     )
+                }, secondary = {
                     UndalDangerButton(
                         text = "Delete my account",
                         onClick = { showDeleteConfirm = true },
                         enabled = !state.deleting,
-                        loading = state.deleting,
-                        modifier = Modifier.weight(1f)
+                        loading = state.deleting
                     )
-                }
+                })
             }
 
             Spacer(Modifier.height(UndalDimens.xxl))

@@ -28,6 +28,7 @@ import com.google.firebase.database.FirebaseDatabase
 import com.google.firebase.database.ValueEventListener
 import com.undal.syl.app.MainActivity
 import com.undal.syl.app.R
+import com.undal.syl.app.core.fcm.AlertDeliveryJournal
 import com.undal.syl.app.core.fcm.AlarmChannels
 import com.undal.syl.app.core.fcm.AlertVolume
 import com.undal.syl.app.core.util.OrderStatus
@@ -171,7 +172,7 @@ class OrderAlertService : Service() {
      */
     private fun keepRinging() {
         if (waiting.isEmpty()) return
-        val playing = player?.isPlaying == true
+        val playing = runCatching { player?.isPlaying == true }.getOrDefault(false)
         if (ringtone == null && !playing) {
             // Whatever was making the noise is gone. Release what is left of it
             // first — a dead player still holds an audio session and the partial
@@ -190,7 +191,7 @@ class OrderAlertService : Service() {
                 }
             }
         }
-        if ((player?.isPlaying == true || ringtone != null) && vibrator == null) startVibration()
+        if ((runCatching { player?.isPlaying == true }.getOrDefault(false) || ringtone != null) && vibrator == null) startVibration()
     }
 
     /** Exactly one watchdog chain, however many times the ring is rebuilt. */
@@ -268,6 +269,7 @@ class OrderAlertService : Service() {
         // the foreground is killed by the platform from the main thread — a crash
         // the caller cannot catch and the log cannot explain.
         enterForeground()
+        AlertDeliveryJournal.record(this, "Alarm service started", if (intent == null) "Restored after process death" else "Foreground service active")
 
         if (intent == null) {
             if (waiting.isEmpty()) {
@@ -429,6 +431,7 @@ class OrderAlertService : Service() {
         publishNotification(next)
         watchOrderLive(next.orderId)
         keepRinging()
+        AlertDeliveryJournal.record(this, "Alarm playback requested", "${waiting.size} order(s) queued. Player active: ${runCatching { player?.isPlaying == true }.getOrDefault(false)}; fallback selected: ${ringtone != null}")
         watchSound()
     }
 
@@ -696,6 +699,7 @@ class OrderAlertService : Service() {
      * destroyed-service paths want.
      */
     private fun stopAlert(orderId: String?) {
+        AlertDeliveryJournal.record(this, "Alarm queue updated", if (orderId == null) "All alerts cleared" else "An order was answered or removed")
         if (orderId == null) {
             waiting.clear()
         } else {
@@ -809,6 +813,7 @@ class OrderAlertService : Service() {
             source: String = SOURCE_PUSH
         ) {
             Log.i(TAG, "ring $orderId via $source (test=$isTest)")
+            AlertDeliveryJournal.record(context, "Ring requested", "Source: $source; diagnostic test: $isTest")
             if (orderId.isBlank()) {
                 // Nothing to ring for, so nothing is started. A service asked for
                 // the foreground with no order in its payload would have to take
@@ -829,6 +834,7 @@ class OrderAlertService : Service() {
                 // Android may downgrade a push or deny background FGS starts.
                 // Keep a visible, actionable alert rather than crashing the FCM callback.
                 Log.w(TAG, "Android refused the alarm service; posting the notification instead")
+                AlertDeliveryJournal.record(context, "Background start blocked", "Android denied the looping service. Notification fallback requested; open Undal and check battery/autostart settings.")
                 AlarmChannels.ensureChannels(context)
                 val open = PendingIntent.getActivity(context, orderId.hashCode(),
                     MainActivity.intentFor(context, "vendor/order/$orderId"),

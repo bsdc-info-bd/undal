@@ -1,5 +1,7 @@
 package com.undal.syl.app.features.vendor.settings
 
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
 import android.content.Intent
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -33,10 +35,8 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
@@ -44,6 +44,11 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.undal.syl.app.core.config.UndalBuildInfo
+import com.undal.syl.app.core.design.UndalFullScreenLoader
+import com.undal.syl.app.core.design.UndalEmptyState
+import com.undal.syl.app.core.design.UndalActionGroup
+import com.undal.syl.app.core.design.UndalDangerButton
+import com.undal.syl.app.core.design.UndalPageIntro
 import com.undal.syl.app.core.design.UndalAlertBanner
 import com.undal.syl.app.core.design.UndalCard
 import com.undal.syl.app.core.design.UndalConfirmDialog
@@ -58,7 +63,6 @@ import com.undal.syl.app.core.maps.UndalOsmPicker
 import com.undal.syl.app.core.maps.UndalRadiusPreview
 import com.undal.syl.app.core.theme.UndalDimens
 import com.undal.syl.app.core.theme.undalSemantics
-import com.undal.syl.app.core.util.Money
 import com.undal.syl.app.core.util.UndalDigits
 import com.undal.syl.app.features.vendor.VendorSection
 import com.undal.syl.app.features.vendor.menu.VendorPhotoRow
@@ -101,6 +105,7 @@ fun VendorStoreScreen(
         title = "Store settings",
         subtitle = state.openState.headline.ifBlank { "Sylhet · Asia/Dhaka" },
         onBack = onBack,
+        contentMaxWidth = 760.dp,
         actions = {
             UndalTextButton(
                 text = "Preview",
@@ -109,41 +114,29 @@ fun VendorStoreScreen(
             )
         }
     ) { _ ->
+        if (state.loading) {
+            UndalFullScreenLoader(message = "Reading kitchen settings…")
+            return@UndalScaffold
+        }
+        if (state.loadFailed) {
+            UndalEmptyState(icon = Icons.Filled.Warning, title = "Kitchen settings couldn't load",
+                message = state.message ?: "Check your connection and reopen settings to try again.",
+                actionLabel = "Go back", onAction = onBack)
+            return@UndalScaffold
+        }
         LazyColumn(
             modifier = Modifier.fillMaxSize(),
             contentPadding = PaddingValues(UndalDimens.screenPadding),
             verticalArrangement = Arrangement.spacedBy(UndalDimens.sm)
         ) {
-            item {
-                VendorSection(title = "Storage & history", subtitle = "Keep your kitchen database lean without touching live orders.") {
-                    Column(verticalArrangement = Arrangement.spacedBy(UndalDimens.md)) {
-                        Text("Permanently delete delivered and cancelled orders, their chats, live mirrors, and this kitchen account’s notification history. Customer order history and sales reports will also lose those orders. Export records you need first.",
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        state.cleanupProgress?.let { Text(it, style = MaterialTheme.typography.labelLarge) }
-                        state.cleanupNotice?.let { notice ->
-                            UndalAlertBanner(
-                                text = notice,
-                                icon = Icons.Filled.Info
-                            )
-                        }
-                        UndalSecondaryButton(
-                            text = if (state.cleaning) "Cleaning history…" else "Clear finished history",
-                            onClick = { confirmCleanup = true },
-                            enabled = !state.busy && state.vendorClaim
-                        )
-                        UndalTextButton(
-                            text = if (state.checkingCleanup) "Checking the history path…" else "Check first — delete nothing",
-                            onClick = viewModel::checkCleanupPath,
-                            enabled = !state.busy && state.vendorClaim,
-                            icon = Icons.Filled.Check
-                        )
-                        Text(
-                            "The check asks the Worker to walk the whole path — the Firestore index, the slower scan that replaces it, the live mirrors and the notification history — and report what it finds without deleting a single order.",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
+            item(key = "settings-intro") {
+                UndalPageIntro("KITCHEN · SETTINGS", "Keep the essentials in order.",
+                    "Store identity, delivery rules and the phone behind your kitchen.")
+            }
+            if (state.message != null) {
+                item(key = "settings-message") {
+                    UndalAlertBanner(text = state.message.orEmpty(), icon = Icons.Filled.Info,
+                        action = { UndalTextButton("Close", onClick = viewModel::dismissMessage) })
                 }
             }
             if (!state.vendorClaim) {
@@ -202,26 +195,25 @@ fun VendorStoreScreen(
                         "basket you will cook."
                 ) {
                     Column {
-                        Row(horizontalArrangement = Arrangement.spacedBy(UndalDimens.xs)) {
+                        UndalActionGroup(primary = {
                             UndalTextField(
                                 value = state.perKmText,
                                 onValueChange = { viewModel.onPerKm(UndalDigits.cleanDecimal(it)) },
                                 label = "Per km (taka)",
                                 hint = "20",
                                 keyboardType = KeyboardType.Decimal,
-                                singleLine = true,
-                                modifier = Modifier.weight(1f)
+                                singleLine = true
                             )
+                        }, secondary = {
                             UndalTextField(
                                 value = state.minOrderText,
                                 onValueChange = { viewModel.onMinOrder(UndalDigits.cleanDecimal(it)) },
                                 label = "Minimum basket (taka)",
                                 hint = "150",
                                 keyboardType = KeyboardType.Decimal,
-                                singleLine = true,
-                                modifier = Modifier.weight(1f)
+                                singleLine = true
                             )
-                        }
+                        })
                         Spacer(Modifier.height(UndalDimens.sm))
                         Text(
                             text = "Delivery radius: ${UndalDigits.formatWhole(state.radiusKm)} km",
@@ -297,23 +289,22 @@ fun VendorStoreScreen(
                             onRecentre = null
                         )
                         Spacer(Modifier.height(UndalDimens.xs))
-                        Row(horizontalArrangement = Arrangement.spacedBy(UndalDimens.xs)) {
+                        UndalActionGroup(primary = {
                             UndalSecondaryButton(
                                 text = if (state.locating) "Finding this phone…" else "Use this phone's GPS",
                                 onClick = { viewModel.useCurrentLocation(context) },
                                 enabled = !state.locating,
-                                icon = Icons.Filled.Place,
-                                modifier = Modifier.weight(1f)
+                                icon = Icons.Filled.Place
                             )
+                        }, secondary = {
                             UndalPrimaryButton(
                                 text = "Save the pin",
                                 onClick = viewModel::savePin,
                                 enabled = !state.busy,
                                 loading = state.busy,
-                                icon = Icons.Filled.LocationOn,
-                                modifier = Modifier.weight(1f)
+                                icon = Icons.Filled.LocationOn
                             )
-                        }
+                        })
                         Spacer(Modifier.height(UndalDimens.xs))
                         UndalTextField(
                             value = state.pinLabel,
@@ -410,12 +401,44 @@ fun VendorStoreScreen(
             }
 
             item {
+                VendorSection(title = "Storage & history", subtitle = "Keep your kitchen database lean without touching live orders.") {
+                    Column(verticalArrangement = Arrangement.spacedBy(UndalDimens.md)) {
+                        Text("Permanently delete delivered and cancelled orders, their chats, live mirrors, and this kitchen account’s notification history. Customer order history and sales reports will also lose those orders. Export records you need first.",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        state.cleanupProgress?.let { Text(it, style = MaterialTheme.typography.labelLarge) }
+                        state.cleanupNotice?.let { notice ->
+                            UndalAlertBanner(
+                                text = notice,
+                                icon = Icons.Filled.Info
+                            )
+                        }
+                        UndalDangerButton(
+                            text = if (state.cleaning) "Cleaning history…" else "Clear finished history",
+                            onClick = { confirmCleanup = true },
+                            enabled = !state.busy && state.vendorClaim
+                        )
+                        UndalTextButton(
+                            text = if (state.checkingCleanup) "Checking the history path…" else "Check first — delete nothing",
+                            onClick = viewModel::checkCleanupPath,
+                            enabled = !state.busy && state.vendorClaim,
+                            icon = Icons.Filled.Check
+                        )
+                        Text(
+                            "The check asks the Worker to walk the whole path — the Firestore index, the slower scan that replaces it, the live mirrors and the notification history — and report what it finds without deleting a single order.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+            }
+            item {
                 UndalCard(modifier = Modifier.fillMaxWidth()) {
                     Column(modifier = Modifier.padding(UndalDimens.sm)) {
                         Text(text = "Signing out", style = MaterialTheme.typography.titleSmall)
                         Text(
-                            text = "Signing out stops the alert service, the presence heartbeat and the " +
-                                "cron worker on this phone, so the store goes offline until you are back.",
+                            text = "Signing out stops alert monitoring on this phone. Check the store status and " +
+                                "make sure another kitchen device is ready before leaving it unattended.",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -447,20 +470,11 @@ fun VendorStoreScreen(
             }
         }
 
-        state.message?.let { message ->
-            UndalAlertBanner(
-                text = message,
-                icon = Icons.Filled.Check,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(UndalDimens.screenPadding)
-            )
-        }
 
         if (confirmSignOut) {
             UndalConfirmDialog(
                 title = "Sign out of the kitchen?",
-                message = "New orders will ring nowhere until you sign back in. The store document is not " +
+                message = "This phone will stop receiving kitchen alerts until you sign back in. The store document is not " +
                     "touched — it stays exactly as you left it.",
                 confirmLabel = "Sign out",
                 destructive = true,

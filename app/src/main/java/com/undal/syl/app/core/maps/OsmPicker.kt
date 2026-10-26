@@ -2,7 +2,8 @@ package com.undal.syl.app.core.maps
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -12,7 +13,6 @@ import androidx.compose.material.icons.filled.Place
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -122,6 +122,7 @@ fun UndalOsmPicker(
  * of longitude is shorter than a degree of latitude everywhere except the
  * equator, and a nudge that ignores that drifts as the pin is walked north.
  */
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun UndalPinNudgeRow(
     onNudge: (Double, Double) -> Unit,
@@ -130,10 +131,10 @@ private fun UndalPinNudgeRow(
     // The whole app is inside one delivery radius in Sylhet, so the correction is
     // computed once for that latitude instead of per pin.
     val lngStep = NUDGE_DEGREES / cos(Math.toRadians(SYLHET_LAT)).coerceAtLeast(0.2)
-    Row(
+    FlowRow(
         modifier = modifier,
         horizontalArrangement = Arrangement.spacedBy(UndalDimens.sm),
-        verticalAlignment = Alignment.CenterVertically
+        verticalArrangement = Arrangement.spacedBy(UndalDimens.sm)
     ) {
         NudgeArrow(label = "Move the pin west", glyph = "←") { onNudge(0.0, -lngStep) }
         NudgeArrow(label = "Move the pin north", glyph = "↑") { onNudge(NUDGE_DEGREES, 0.0) }

@@ -182,6 +182,7 @@ export class FakeFirebase {
   readonly fcmSends: Array<Record<string, any>> = [];
   /** Refuse every FCM send, with `fcmStatus` and `fcmErrorCode` as the reason. */
   fcmRefuseAll = false;
+  fcmRejectTokens = new Set<string>();
   /** The HTTP status and error code a refused send answers with. */
   fcmStatus = 404;
   fcmErrorCode = "UNREGISTERED";
@@ -502,7 +503,7 @@ export class FakeFirebase {
       this.fcmFailFirst -= 1;
       refuse = true;
     } else {
-      refuse = this.fcmRefuseAll;
+      refuse = this.fcmRefuseAll || this.fcmRejectTokens.has(message.message?.token);
     }
     if (!refuse) {
       return Response.json({ name: `${path.replace(":send", "")}/${this.fcmSends.length}` });
@@ -529,6 +530,7 @@ export class FakeFirebase {
         where?: FieldFilter;
         orderBy?: Array<{ field?: { fieldPath?: string }; direction?: string }>;
         limit?: number;
+        startAt?: { values?: Array<{ referenceValue?: string }>; before?: boolean };
       };
     };
     const query = body.structuredQuery ?? {};
@@ -541,7 +543,7 @@ export class FakeFirebase {
     // field — including a lone `orderBy` — is served by the single-field index
     // Firestore builds for every field automatically, which is exactly the hole
     // the cleanup's scan fallback climbs through.
-    const fields = [...new Set([...filters.map((filter) => filter.field), ...orderBy.map((clause) => clause.field?.fieldPath ?? "")])].filter(Boolean);
+    const fields = [...new Set([...filters.map((filter) => filter.field), ...orderBy.map((clause) => clause.field?.fieldPath ?? "")])].filter((field) => Boolean(field) && field !== "__name__");
     if (fields.length > 1 && !this.hasCompositeIndex(collectionId, fields)) {
       return new Response(INDEX_REFUSAL(INDEX_CONSOLE_LINK), { status: 400 });
     }
@@ -560,9 +562,13 @@ export class FakeFirebase {
       const clause = orderBy[0];
       const field = clause.field?.fieldPath ?? "";
       const direction = clause.direction === "DESCENDING" ? -1 : 1;
-      rows = rows.filter((row) => row.fields[field] !== undefined)
-        .sort((left, right) => compareValues(left.fields[field], right.fields[field]) * direction);
+      rows = field === "__name__"
+        ? rows.sort((left, right) => compareValues(left.path, right.path) * direction)
+        : rows.filter((row) => row.fields[field] !== undefined)
+          .sort((left, right) => compareValues(left.fields[field], right.fields[field]) * direction);
     }
+    const after = query.startAt?.values?.[0]?.referenceValue;
+    if (after) rows = rows.filter((row) => DOC_PREFIX + row.path > after);
     if (typeof query.limit === "number") rows = rows.slice(0, query.limit);
 
     return Response.json(rows.map((row) => ({

@@ -59,7 +59,7 @@ fun UndalPrimaryButton(
         onClick = onClick,
         modifier = modifier
             .then(if (fillWidth) Modifier.fillMaxWidth() else Modifier)
-            .heightIn(min = UndalDimens.touchTarget)
+            .heightIn(min = 52.dp)
             .semantics { role = Role.Button },
         enabled = enabled && !loading,
         shape = RoundedCornerShape(UndalDimens.radiusMd),
@@ -92,7 +92,8 @@ fun UndalPrimaryButton(
         Text(
             text = text,
             style = MaterialTheme.typography.labelLarge,
-            maxLines = 1,
+            maxLines = 2,
+            textAlign = androidx.compose.ui.text.style.TextAlign.Center,
             overflow = TextOverflow.Ellipsis
         )
     }
@@ -127,7 +128,8 @@ fun UndalSecondaryButton(
             Icon(icon, contentDescription = null, modifier = Modifier.size(UndalDimens.iconSm))
             Spacer(Modifier.width(UndalDimens.sm))
         }
-        Text(text = text, style = MaterialTheme.typography.labelLarge, maxLines = 1)
+        Text(text = text, style = MaterialTheme.typography.labelLarge, maxLines = 2,
+            textAlign = androidx.compose.ui.text.style.TextAlign.Center)
     }
 }
 

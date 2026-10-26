@@ -232,18 +232,18 @@ test("a banner is not printed for an offer the checkout would refuse", async () 
   // complete — `undalEvaluateCoupon` in the browser applies the same expiry rule
   // to it, so an expired entry there changes no price.
   const stale = await storefrontWith([entry]);
-  assert.doesNotMatch(stale, /coupon-banner/);
-  assert.doesNotMatch(stale, /coupon-code/);
+  assert.doesNotMatch(stale, /class="coupon-banner"/);
+  assert.doesNotMatch(stale, /class="coupon-code"/);
   assert.doesNotMatch(stale, /Offers running today/);
   assert.match(stale, /UNDAL_COUPONS/, "the basket still gets the board to price with");
 
   const live = await storefrontWith([{ ...entry, expiresAtMillis: Date.now() + 3_600_000 }]);
-  assert.match(live, /coupon-banner/);
+  assert.match(live, /class="coupon-banner"/);
   assert.match(live, /<span class="coupon-code">EID20<\/span>/);
   assert.match(live, /Applied automatically/);
 
   // And a coupon with no end date is still advertised — "no expiry" is a decision,
   // not a reason to hide the offer.
   const forever = await storefrontWith([{ ...entry, expiresAtMillis: 0 }]);
-  assert.match(forever, /coupon-code/);
+  assert.match(forever, /class="coupon-code"/);
 });

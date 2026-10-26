@@ -4,6 +4,9 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import java.util.Locale
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -59,6 +62,9 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import coil3.compose.AsyncImage
 import com.undal.syl.app.core.cart.CartLine
 import com.undal.syl.app.core.design.UndalAlertBanner
+import com.undal.syl.app.core.design.UndalAdaptivePair
+import com.undal.syl.app.core.design.UndalReadingColumn
+import com.undal.syl.app.core.design.UndalSectionHeader
 import com.undal.syl.app.core.design.UndalCard
 import com.undal.syl.app.core.design.UndalConfirmDialog
 import com.undal.syl.app.core.design.UndalEmptyState
@@ -99,7 +105,8 @@ fun CartScreen(
     LaunchedEffect(Unit) { viewModel.refreshAddress() }
 
     UndalScaffold(
-        title = "Your cart",
+        title = "Your basket",
+        contentMaxWidth = 1100.dp,
         subtitle = if (state.itemCount == 0) "Nothing chosen yet" else "${state.itemCount} item(s)",
         onBack = onBack,
         actions = {
@@ -112,12 +119,10 @@ fun CartScreen(
         bottomBar = {
             if (state.lines.isNotEmpty()) {
                 Surface(color = MaterialTheme.colorScheme.surface, tonalElevation = UndalDimens.elevationBar) {
-                    Column(modifier = Modifier.padding(UndalDimens.screenPadding)) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Text("Total", style = MaterialTheme.typography.titleMedium)
-                            Spacer(Modifier.weight(1f))
-                            Text(state.totalLabel, style = MaterialTheme.typography.titleLarge)
-                        }
+                    UndalReadingColumn(modifier = Modifier.padding(UndalDimens.screenPadding)) {
+                        Text("Total · pay cash on delivery", style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text(state.totalLabel, style = MaterialTheme.typography.headlineSmall)
                         // The first blocker is repeated here, beside the button it is
                         // blocking. The full list is further down the page inside the
                         // bill, and a customer looking at a greyed-out button should
@@ -227,216 +232,231 @@ fun CartScreen(
 
             Spacer(Modifier.height(UndalDimens.sm))
 
-            state.lines.forEach { line ->
-                CartLineRow(
-                    line = line,
-                    unavailable = line.id in state.unavailableLineIds,
-                    onIncrement = { viewModel.increment(line) },
-                    onDecrement = { viewModel.decrement(line) },
-                    onRemove = { viewModel.remove(line) }
-                )
-                Spacer(Modifier.height(UndalDimens.sm))
-            }
+            UndalSectionHeader(
+                title = "One last look",
+                subtitle = "Check your meal, delivery point and total before placing the order."
+            )
+            UndalAdaptivePair(
+                primary = {
+                    Column {
+                        state.lines.forEach { line ->
+                            CartLineRow(
+                                line = line,
+                                unavailable = line.id in state.unavailableLineIds,
+                                onIncrement = { viewModel.increment(line) },
+                                onDecrement = { viewModel.decrement(line) },
+                                onRemove = { viewModel.remove(line) }
+                            )
+                            Spacer(Modifier.height(UndalDimens.sm))
+                        }
 
-            UndalCard {
-                Text("Add a note for the kitchen", style = MaterialTheme.typography.titleMedium)
-                Spacer(Modifier.height(UndalDimens.xs))
-                UndalTextField(
-                    value = state.note,
-                    onValueChange = viewModel::onNoteChange,
-                    label = "Order note",
-                    hint = "Pack the curry separately, ring the bell twice…",
-                    maxLines = 3,
-                    singleLine = false,
-                    helper = "Optional. Per-dish notes go on the dish page.",
-                    imeAction = ImeAction.Done
-                )
-            }
-
-            Spacer(Modifier.height(UndalDimens.sm))
-
-            // ---- coupon -----------------------------------------------------
-            UndalCard {
-                Text("Coupon", style = MaterialTheme.typography.titleMedium)
-                Spacer(Modifier.height(UndalDimens.xs))
-                if (state.couponCode.isBlank()) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Box(modifier = Modifier.weight(1f)) {
+                        UndalCard {
+                            Text("Add a note for the kitchen", style = MaterialTheme.typography.titleMedium)
+                            Spacer(Modifier.height(UndalDimens.xs))
                             UndalTextField(
-                                value = couponInput,
-                                onValueChange = {
-                                    // Codes are upper-case A–Z, 0–9, - and _: a
-                                    // space pasted from a WhatsApp message is not
-                                    // part of the code, and neither is the ৳ sign.
-                                    couponInput = it.uppercase(Locale.ENGLISH)
-                                        .filter { ch -> ch.isLetterOrDigit() || ch == '-' || ch == '_' }
-                                        .take(24)
-                                },
-                                label = "Code",
-                                hint = "UNDAL50",
-                                enabled = !state.couponChecking,
-                                imeAction = ImeAction.Done,
-                                onImeAction = {
-                                    if (couponInput.isNotBlank()) viewModel.applyCoupon(couponInput)
+                                value = state.note,
+                                onValueChange = viewModel::onNoteChange,
+                                label = "Order note",
+                                hint = "Pack the curry separately, ring the bell twice…",
+                                maxLines = 3,
+                                singleLine = false,
+                                helper = "Optional. Per-dish notes go on the dish page.",
+                                imeAction = ImeAction.Done
+                            )
+                        }
+
+                        Spacer(Modifier.height(UndalDimens.sm))
+
+                        // ---- coupon -----------------------------------------------------
+                        UndalCard {
+                            Text("Coupon", style = MaterialTheme.typography.titleMedium)
+                            Spacer(Modifier.height(UndalDimens.xs))
+                            if (state.couponCode.isBlank()) {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Box(modifier = Modifier.weight(1f)) {
+                                        UndalTextField(
+                                            value = couponInput,
+                                            onValueChange = {
+                                                // Codes are upper-case A–Z, 0–9, - and _: a
+                                                // space pasted from a WhatsApp message is not
+                                                // part of the code, and neither is the ৳ sign.
+                                                couponInput = it.uppercase(Locale.ENGLISH)
+                                                    .filter { ch -> ch.isLetterOrDigit() || ch == '-' || ch == '_' }
+                                                    .take(24)
+                                            },
+                                            label = "Code",
+                                            hint = "UNDAL50",
+                                            enabled = !state.couponChecking,
+                                            imeAction = ImeAction.Done,
+                                            onImeAction = {
+                                                if (couponInput.isNotBlank()) viewModel.applyCoupon(couponInput)
+                                            }
+                                        )
+                                    }
+                                    Spacer(Modifier.width(UndalDimens.sm))
+                                    UndalSecondaryButton(
+                                        text = if (state.couponChecking) "Checking…" else "Apply",
+                                        onClick = { viewModel.applyCoupon(couponInput) },
+                                        enabled = !state.couponChecking && couponInput.isNotBlank(),
+                                        fillWidth = false
+                                    )
                                 }
-                            )
+                            } else {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    UndalStatusPill(
+                                        text = state.couponCode,
+                                        containerColour = MaterialTheme.colorScheme.primaryContainer,
+                                        contentColour = MaterialTheme.colorScheme.onPrimaryContainer,
+                                        icon = Icons.Filled.Check
+                                    )
+                                    Spacer(Modifier.weight(1f))
+                                    TextButton(onClick = viewModel::removeCoupon) { Text("Remove") }
+                                }
+                            }
+                            // The kitchen's own offer, applied without typing anything. It is
+                            // shown even before a code is entered, because a discount the
+                            // customer cannot see is a discount they will not believe.
+                            if (state.autoApplied && state.couponCode.isBlank()) {
+                                Spacer(Modifier.height(UndalDimens.xs))
+                                UndalStatusPill(
+                                    text = state.autoHeadline.ifBlank { "Applied automatically" },
+                                    containerColour = MaterialTheme.colorScheme.tertiaryContainer,
+                                    contentColour = MaterialTheme.colorScheme.onTertiaryContainer,
+                                    icon = Icons.Filled.Check
+                                )
+                                Spacer(Modifier.height(UndalDimens.xs))
+                                Text(
+                                    text = state.autoMessage.orEmpty(),
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.primary
+                                )
+                            }
+                            if (state.couponMessage != null) {
+                                Spacer(Modifier.height(UndalDimens.xs))
+                                Text(
+                                    // The message says which it is, rather than leaving colour
+                                    // alone to carry the difference between "applied" and
+                                    // "refused" — colour is not information for every eye.
+                                    text = (if (state.couponIsError) "✕ " else "✓ ") + state.couponMessage.orEmpty(),
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = if (state.couponIsError) {
+                                        MaterialTheme.colorScheme.error
+                                    } else {
+                                        MaterialTheme.colorScheme.primary
+                                    },
+                                    modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite }
+                                )
+                            }
                         }
-                        Spacer(Modifier.width(UndalDimens.sm))
-                        UndalSecondaryButton(
-                            text = if (state.couponChecking) "Checking…" else "Apply",
-                            onClick = { viewModel.applyCoupon(couponInput) },
-                            enabled = !state.couponChecking && couponInput.isNotBlank(),
-                            fillWidth = false
-                        )
+
+                        Spacer(Modifier.height(UndalDimens.sm))
+
                     }
-                } else {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        UndalStatusPill(
-                            text = state.couponCode,
-                            containerColour = MaterialTheme.colorScheme.primaryContainer,
-                            contentColour = MaterialTheme.colorScheme.onPrimaryContainer,
-                            icon = Icons.Filled.Check
-                        )
-                        Spacer(Modifier.weight(1f))
-                        TextButton(onClick = viewModel::removeCoupon) { Text("Remove") }
-                    }
-                }
-                // The kitchen's own offer, applied without typing anything. It is
-                // shown even before a code is entered, because a discount the
-                // customer cannot see is a discount they will not believe.
-                if (state.autoApplied && state.couponCode.isBlank()) {
-                    Spacer(Modifier.height(UndalDimens.xs))
-                    UndalStatusPill(
-                        text = state.autoHeadline.ifBlank { "Applied automatically" },
-                        containerColour = MaterialTheme.colorScheme.tertiaryContainer,
-                        contentColour = MaterialTheme.colorScheme.onTertiaryContainer,
-                        icon = Icons.Filled.Check
-                    )
-                    Spacer(Modifier.height(UndalDimens.xs))
-                    Text(
-                        text = state.autoMessage.orEmpty(),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.primary
-                    )
-                }
-                if (state.couponMessage != null) {
-                    Spacer(Modifier.height(UndalDimens.xs))
-                    Text(
-                        // The message says which it is, rather than leaving colour
-                        // alone to carry the difference between "applied" and
-                        // "refused" — colour is not information for every eye.
-                        text = (if (state.couponIsError) "✕ " else "✓ ") + state.couponMessage.orEmpty(),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = if (state.couponIsError) {
-                            MaterialTheme.colorScheme.error
-                        } else {
-                            MaterialTheme.colorScheme.primary
-                        },
-                        modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite }
-                    )
-                }
-            }
-
-            Spacer(Modifier.height(UndalDimens.sm))
-
-            // ---- money ------------------------------------------------------
-            UndalCard {
-                Text("Bill", style = MaterialTheme.typography.titleMedium)
-                Spacer(Modifier.height(UndalDimens.xs))
-                UndalKeyValueRow("Food subtotal", state.subtotalLabel)
-                UndalKeyValueRow("Delivery", if (state.distanceKm == null) "—" else state.deliveryLabel)
-                if (state.discountPaisa > 0L) {
-                    UndalKeyValueRow(
-                        "Coupon ${state.couponCode.ifBlank { "applied automatically" }}",
-                        state.discountLabel
-                    )
-                }
-                Spacer(Modifier.height(UndalDimens.xs))
-                UndalKeyValueRow("Total to pay the rider", state.totalLabel, emphasise = true)
-                Spacer(Modifier.height(UndalDimens.xs))
-                Text(
-                    text = state.distanceCaption,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-                Spacer(Modifier.height(UndalDimens.sm))
-                Surface(
-                    shape = RoundedCornerShape(UndalDimens.radiusSm),
-                    color = MaterialTheme.colorScheme.primaryContainer
-                ) {
-                    Text(
-                        text = "Cash on delivery only — no card, no wallet, no online payment.",
-                        style = MaterialTheme.typography.labelLarge,
-                        color = MaterialTheme.colorScheme.onPrimaryContainer,
-                        modifier = Modifier.padding(UndalDimens.sm)
-                    )
-                }
-            }
-
-            Spacer(Modifier.height(UndalDimens.sm))
-
-            // ---- address ----------------------------------------------------
-            UndalCard {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Icon(
-                        Icons.Filled.LocationOn,
-                        contentDescription = null,
-                        tint = MaterialTheme.colorScheme.primary,
-                        modifier = Modifier.size(UndalDimens.iconMd)
-                    )
-                    Spacer(Modifier.width(UndalDimens.sm))
-                    Text(
-                        text = state.address?.title?.ifBlank { "Your delivery address" } ?: "No address saved",
-                        style = MaterialTheme.typography.titleMedium,
-                        modifier = Modifier.weight(1f)
-                    )
-                    TextButton(onClick = onEditAddress) {
-                        Icon(Icons.Filled.Edit, contentDescription = null, modifier = Modifier.size(16.dp))
-                        Text(if (state.address == null) "Add" else "Change")
-                    }
-                }
-                val address = state.address
-                if (address != null) {
-                    Spacer(Modifier.height(UndalDimens.xs))
-                    Text(address.desc, style = MaterialTheme.typography.bodyMedium)
-                    if (address.note.isNotBlank()) {
-                        Spacer(Modifier.height(UndalDimens.xs))
-                        Text(
-                            text = "Rider note: ${address.note}",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-                    Spacer(Modifier.height(UndalDimens.sm))
-                    UndalLocationMap(
-                        latitude = address.lat,
-                        longitude = address.lng,
-                        title = address.title.ifBlank { "Delivery point" },
-                        caption = address.title.ifBlank { "Delivery point" },
-                        height = UndalDimens.mapHeight
-                    )
-                }
-            }
-
-            if (state.blockers.isNotEmpty()) {
-                Spacer(Modifier.height(UndalDimens.sm))
-                UndalCard {
-                    Text("Before you can order", style = MaterialTheme.typography.titleMedium)
-                    Spacer(Modifier.height(UndalDimens.xs))
-                    state.blockers.forEach { blocker ->
-                        Row(modifier = Modifier.padding(vertical = 3.dp)) {
-                            Icon(
-                                Icons.Filled.Clear,
-                                contentDescription = null,
-                                tint = MaterialTheme.colorScheme.error,
-                                modifier = Modifier.size(16.dp)
-                            )
-                            Spacer(Modifier.width(UndalDimens.xs))
-                            Text(blocker, style = MaterialTheme.typography.bodyMedium)
+                },
+                secondary = {
+                    Column {
+                        // ---- address ----------------------------------------------------
+                        UndalCard {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Icon(
+                                    Icons.Filled.LocationOn,
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.size(UndalDimens.iconMd)
+                                )
+                                Spacer(Modifier.width(UndalDimens.sm))
+                                Text(
+                                    text = state.address?.title?.ifBlank { "Your delivery address" } ?: "No address saved",
+                                    style = MaterialTheme.typography.titleMedium,
+                                    modifier = Modifier.weight(1f)
+                                )
+                                TextButton(onClick = onEditAddress) {
+                                    Icon(Icons.Filled.Edit, contentDescription = null, modifier = Modifier.size(16.dp))
+                                    Text(if (state.address == null) "Add" else "Change")
+                                }
+                            }
+                            val address = state.address
+                            if (address != null) {
+                                Spacer(Modifier.height(UndalDimens.xs))
+                                Text(address.desc, style = MaterialTheme.typography.bodyMedium)
+                                if (address.note.isNotBlank()) {
+                                    Spacer(Modifier.height(UndalDimens.xs))
+                                    Text(
+                                        text = "Rider note: ${address.note}",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                                Spacer(Modifier.height(UndalDimens.sm))
+                                UndalLocationMap(
+                                    latitude = address.lat,
+                                    longitude = address.lng,
+                                    title = address.title.ifBlank { "Delivery point" },
+                                    caption = address.title.ifBlank { "Delivery point" },
+                                    height = UndalDimens.mapHeight
+                                )
+                            }
                         }
+
+                        // ---- money ------------------------------------------------------
+                        UndalCard {
+                            Text("Your receipt", style = MaterialTheme.typography.titleMedium)
+                            Spacer(Modifier.height(UndalDimens.xs))
+                            UndalKeyValueRow("Food subtotal", state.subtotalLabel)
+                            UndalKeyValueRow("Delivery", if (state.distanceKm == null) "—" else state.deliveryLabel)
+                            if (state.discountPaisa > 0L) {
+                                UndalKeyValueRow(
+                                    "Coupon ${state.couponCode.ifBlank { "applied automatically" }}",
+                                    state.discountLabel
+                                )
+                            }
+                            Spacer(Modifier.height(UndalDimens.xs))
+                            UndalKeyValueRow("Total to pay the rider", state.totalLabel, emphasise = true)
+                            Spacer(Modifier.height(UndalDimens.xs))
+                            Text(
+                                text = state.distanceCaption,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            Spacer(Modifier.height(UndalDimens.sm))
+                            Surface(
+                                shape = RoundedCornerShape(UndalDimens.radiusSm),
+                                color = MaterialTheme.colorScheme.primaryContainer
+                            ) {
+                                Text(
+                                    text = "Cash on delivery only — no card, no wallet, no online payment.",
+                                    style = MaterialTheme.typography.labelLarge,
+                                    color = MaterialTheme.colorScheme.onPrimaryContainer,
+                                    modifier = Modifier.padding(UndalDimens.sm)
+                                )
+                            }
+                        }
+
+                        Spacer(Modifier.height(UndalDimens.sm))
+
+                        if (state.blockers.isNotEmpty()) {
+                            Spacer(Modifier.height(UndalDimens.sm))
+                            UndalCard {
+                                Text("Before you can order", style = MaterialTheme.typography.titleMedium)
+                                Spacer(Modifier.height(UndalDimens.xs))
+                                state.blockers.forEach { blocker ->
+                                    Row(modifier = Modifier.padding(vertical = 3.dp)) {
+                                        Icon(
+                                            Icons.Filled.Clear,
+                                            contentDescription = null,
+                                            tint = MaterialTheme.colorScheme.error,
+                                            modifier = Modifier.size(16.dp)
+                                        )
+                                        Spacer(Modifier.width(UndalDimens.xs))
+                                        Text(blocker, style = MaterialTheme.typography.bodyMedium)
+                                    }
+                                }
+                            }
+                        }
+
                     }
                 }
-            }
+            )
 
             Spacer(Modifier.height(UndalDimens.lg))
 
@@ -538,7 +558,7 @@ fun CartScreen(
     }
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
 private fun CartLineRow(
     line: CartLine,
@@ -631,7 +651,7 @@ private fun CartLineRow(
                         Text(
                             text = "Note: ${line.note}",
                             style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.secondary,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
                             maxLines = 2,
                             overflow = TextOverflow.Ellipsis
                         )
@@ -645,18 +665,19 @@ private fun CartLineRow(
                         )
                     }
                     Spacer(Modifier.height(UndalDimens.xs))
-                    Row(verticalAlignment = Alignment.CenterVertically) {
+                    FlowRow(horizontalArrangement = Arrangement.spacedBy(UndalDimens.sm),
+                        verticalArrangement = Arrangement.spacedBy(UndalDimens.xs)) {
                         QuantityStepper(
                             quantity = line.quantity,
                             onAdd = onIncrement,
                             onRemove = onDecrement,
                             enabled = !unavailable
                         )
-                        Spacer(Modifier.weight(1f))
                         Text(
                             text = Money.format(line.lineTotalPaisa),
                             style = MaterialTheme.typography.titleSmall
                         )
+                        TextButton(onClick = onRemove) { Text("Remove", color = MaterialTheme.colorScheme.error) }
                     }
                 }
             }

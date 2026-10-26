@@ -1,9 +1,13 @@
 package com.undal.syl.app.features.vendor.orders
 
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
 import java.util.Locale
 import android.content.Intent
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -22,14 +26,13 @@ import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Done
 import androidx.compose.material.icons.filled.Email
 import androidx.compose.material.icons.filled.Info
-import androidx.compose.material.icons.filled.LocationOn
-import androidx.compose.material.icons.filled.Place
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -37,11 +40,8 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
-import androidx.compose.runtime.setValue
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.draw.clip
@@ -55,6 +55,8 @@ import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import coil3.compose.AsyncImage
+import com.undal.syl.app.core.design.UndalEmptyState
+import com.undal.syl.app.core.design.UndalFullScreenLoader
 import com.undal.syl.app.core.design.UndalAlertBanner
 import com.undal.syl.app.core.design.UndalCard
 import com.undal.syl.app.core.design.UndalConfirmDialog
@@ -63,7 +65,6 @@ import com.undal.syl.app.core.design.UndalPrimaryButton
 import com.undal.syl.app.core.design.UndalScaffold
 import com.undal.syl.app.core.design.UndalSecondaryButton
 import com.undal.syl.app.core.design.UndalTextField
-import com.undal.syl.app.core.design.UndalTextButton
 import com.undal.syl.app.core.maps.UndalLocationMap
 import com.undal.syl.app.core.theme.UndalDimens
 import com.undal.syl.app.core.theme.undalSemantics
@@ -88,6 +89,7 @@ import kotlinx.coroutines.launch
  * will be told — accepted, ready, on the way, delivered, cancelled with a note —
  * is written here and pushed from here.
  */
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun VendorOrderDetailScreen(
     orderId: String,
@@ -147,28 +149,56 @@ fun VendorOrderDetailScreen(
         title = if (order == null) "Order" else "Order ${order.shortId.ifBlank { order.id.takeLast(4) }}",
         subtitle = order?.let { "${it.statusLabel} · ${it.ageLabel()} old" }.orEmpty(),
         onBack = onBack,
+        contentMaxWidth = 840.dp,
         actions = {
-            UndalTextButton(
-                text = if (state.unread > 0) "Chat · ${state.unread}" else "Chat",
-                onClick = {
-                    viewModel.toggleChat()
-                    if (!state.chatOpen) onOpenChats()
-                },
-                icon = Icons.Filled.Email
-            )
-            UndalTextButton(
-                text = "Share",
-                onClick = viewModel::readyShareText,
-                icon = Icons.Filled.Share
-            )
+            IconButton(onClick = {
+                viewModel.toggleChat()
+                if (!state.chatOpen) onOpenChats()
+            }, enabled = order != null) {
+                Icon(Icons.Filled.Email, contentDescription = if (state.unread > 0) "Chat · ${state.unread} unread" else "Open chat")
+            }
+            IconButton(onClick = viewModel::readyShareText, enabled = order != null) {
+                Icon(Icons.Filled.Share, contentDescription = "Share order")
+            }
+        },
+        bottomBar = {
+            if (order != null && !state.chatOpen && !OrderStateMachine.isTerminal(order.status)) {
+                UndalPrimaryButton(
+                    text = when (order.status) {
+                        OrderStatus.PLACED -> "Accept · choose prep time"
+                        OrderStatus.ACCEPTED -> "Confirm packed and ready"
+                        OrderStatus.READY -> "Handed to rider · mark out"
+                        OrderStatus.IN_DELIVERY -> "Delivered · confirm cash"
+                        else -> "Order finished"
+                    },
+                    onClick = {
+                        when (order.status) {
+                            OrderStatus.PLACED -> viewModel.openSheet(VendorOrderDetailViewModel.Sheet.Accept)
+                            OrderStatus.ACCEPTED -> {
+                                readyChecked = false
+                                viewModel.openSheet(VendorOrderDetailViewModel.Sheet.Ready)
+                            }
+                            OrderStatus.READY -> { haptics.tick(); viewModel.markInDelivery() }
+                            OrderStatus.IN_DELIVERY -> {
+                                collectedChecked = false
+                                viewModel.openSheet(VendorOrderDetailViewModel.Sheet.Delivered)
+                            }
+                            else -> Unit
+                        }
+                    },
+                    enabled = !state.busy, loading = state.busy,
+                    modifier = Modifier.padding(horizontal = UndalDimens.screenPadding, vertical = UndalDimens.sm)
+                )
+            }
         }
     ) { _ ->
         if (order == null) {
-            Column(modifier = Modifier.fillMaxSize().padding(UndalDimens.screenPadding)) {
-                Text(
-                    text = if (state.loading) "Loading the order…" else "This order is no longer available.",
-                    style = MaterialTheme.typography.bodyMedium
-                )
+            if (state.loading && state.infoMessage == null) {
+                UndalFullScreenLoader(message = "Reading the order…")
+            } else {
+                UndalEmptyState(icon = Icons.Filled.Warning, title = "Order unavailable",
+                    message = state.infoMessage ?: "This order could not be found. Reopen it from the queue to try again.",
+                    actionLabel = "Back to queue", onAction = onBack)
             }
             return@UndalScaffold
         }
@@ -179,11 +209,16 @@ fun VendorOrderDetailScreen(
             contentPadding = PaddingValues(UndalDimens.screenPadding),
             verticalArrangement = Arrangement.spacedBy(UndalDimens.sm)
         ) {
+            if (state.infoMessage != null) {
+                item(key = "order-message") {
+                    UndalAlertBanner(text = state.infoMessage.orEmpty(), icon = Icons.Filled.Info,
+                        action = { TextButton(onClick = viewModel::dismissMessage) { Text("Close") } })
+                }
+            }
             if (state.fromCache) {
                 item {
                     UndalAlertBanner(
-                        text = "This order came from the phone's own copy. Status changes will send " +
-                            "themselves the moment the signal returns.",
+                        text = "Showing a saved copy. Reconnect and check the latest order status before acting.",
                         icon = Icons.Filled.Info
                     )
                 }
@@ -202,9 +237,9 @@ fun VendorOrderDetailScreen(
             item {
                 UndalCard(modifier = Modifier.fillMaxWidth()) {
                     Column(modifier = Modifier.padding(UndalDimens.sm)) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
+                        FlowRow(horizontalArrangement = Arrangement.spacedBy(UndalDimens.sm),
+                            verticalArrangement = Arrangement.spacedBy(UndalDimens.xs)) {
                             VendorStatusPill(status = order.status)
-                            Spacer(Modifier.width(UndalDimens.xs))
                             VendorAgePill(order = order)
                         }
                         Spacer(Modifier.height(UndalDimens.xs))
@@ -251,17 +286,8 @@ fun VendorOrderDetailScreen(
             }
 
             item {
-                ActionCard(
-                    state = state,
-                    onAccept = { viewModel.openSheet(VendorOrderDetailViewModel.Sheet.Accept) },
-                    onReject = { viewModel.openSheet(VendorOrderDetailViewModel.Sheet.Reject) },
-                    onReady = { readyChecked = false; viewModel.openSheet(VendorOrderDetailViewModel.Sheet.Ready) },
-                    onOut = { haptics.tick(); viewModel.markInDelivery() },
-                    onDelivered = {
-                        collectedChecked = false
-                        viewModel.openSheet(VendorOrderDetailViewModel.Sheet.Delivered)
-                    }
-                )
+                ActionCard(state = state,
+                    onReject = { viewModel.openSheet(VendorOrderDetailViewModel.Sheet.Reject) })
             }
 
             item {
@@ -750,11 +776,7 @@ private fun chatSubtitle(state: VendorOrderDetailViewModel.State): String = when
 @Composable
 private fun ActionCard(
     state: VendorOrderDetailViewModel.State,
-    onAccept: () -> Unit,
-    onReject: () -> Unit,
-    onReady: () -> Unit,
-    onOut: () -> Unit,
-    onDelivered: () -> Unit
+    onReject: () -> Unit
 ) {
     val order = state.order ?: return
     VendorSection(
@@ -770,51 +792,10 @@ private fun ActionCard(
     ) {
         Column(verticalArrangement = Arrangement.spacedBy(UndalDimens.xs)) {
             when (order.status) {
-                OrderStatus.PLACED -> {
-                    UndalPrimaryButton(
-                        text = "Accept with a prep time",
-                        onClick = onAccept,
-                        enabled = !state.busy,
-                        icon = Icons.Filled.Check
-                    )
-                    UndalSecondaryButton(
-                        text = "Cancel with a reason",
-                        onClick = onReject,
-                        enabled = !state.busy
-                    )
+                OrderStatus.PLACED, OrderStatus.ACCEPTED -> {
+                    UndalSecondaryButton("Cancel with a reason", onClick = onReject, enabled = !state.busy)
                 }
-
-                OrderStatus.ACCEPTED -> {
-                    UndalPrimaryButton(
-                        text = "Is the order ready?",
-                        onClick = onReady,
-                        enabled = !state.busy,
-                        icon = Icons.Filled.Done
-                    )
-                    UndalSecondaryButton(
-                        text = "Cancel with a reason",
-                        onClick = onReject,
-                        enabled = !state.busy
-                    )
-                }
-
-                OrderStatus.READY -> {
-                    UndalPrimaryButton(
-                        text = "Handed to the rider — mark it out",
-                        onClick = onOut,
-                        enabled = !state.busy,
-                        icon = Icons.Filled.LocationOn
-                    )
-                }
-
-                OrderStatus.IN_DELIVERY -> {
-                    UndalPrimaryButton(
-                        text = "Delivered — count the cash",
-                        onClick = onDelivered,
-                        enabled = !state.busy,
-                        icon = Icons.Filled.Done
-                    )
-                }
+                OrderStatus.READY, OrderStatus.IN_DELIVERY -> Unit
 
                 OrderStatus.DELIVERED -> {
                     val closedAt = order.deliveredAtMillis
@@ -835,7 +816,7 @@ private fun ActionCard(
             }
             if (!OrderStateMachine.isTerminal(order.status)) {
                 Text(
-                    text = "Every move here writes one transaction and pushes the customer straight away.",
+                    text = "Review the items and notes before using the action below. Changes need a connection.",
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )

@@ -64,7 +64,7 @@ function shell(options: {
     canonical: canonicalUrl(options.origin, options.path),
     jsonLd: (options.jsonLd ?? []).map(jsonLdScript).join("\n"),
     body: `${options.body}
-<div id="undal-flash" class="notice" style="display:none"></div>
+<div id="undal-flash" class="notice" role="status" aria-live="polite" style="display:none"></div>
 <script>
 window.UNDAL_CATALOGUE = window.UNDAL_CATALOGUE || {};
 window.UNDAL_STORE = ${JSON.stringify({
@@ -136,7 +136,7 @@ export async function handleLoginPage(env: Env, request: Request): Promise<Respo
   const body = `
 ${noticeBlock}
 ${signedInLine}
-<section class="card">
+<section class="card account-entry">
   <span class="eyebrow">One account, two doors</span>
   <h2>Your Undal account</h2>
   <p class="muted">The same email and password works in the Undal app and here. An account is optional —
@@ -222,6 +222,7 @@ ${signedInLine}
     for (var i = 0; i < tabs.length; i++) {
       var active = tabs[i].getAttribute("data-panel") === name;
       tabs[i].setAttribute("aria-selected", active ? "true" : "false");
+      tabs[i].setAttribute("tabindex", active ? "0" : "-1");
       tabs[i].className = active ? "active" : "";
     }
     for (var j = 0; j < panels.length; j++) {
@@ -237,9 +238,22 @@ ${signedInLine}
     for (var i = 0; i < tabs.length; i++) {
       tabs[i].addEventListener("click", function () { select(this.getAttribute("data-panel")); });
       tabs[i].addEventListener("keydown", function (event) {
-        if (event.key === "Enter" || event.key === " ") { event.preventDefault(); select(this.getAttribute("data-panel")); }
+        var list = document.querySelectorAll(".tabs [role=tab]");
+        var index = 0;
+        for (var k = 0; k < list.length; k++) if (list[k] === this) index = k;
+        var next = index;
+        if (event.key === "ArrowRight") next = (index + 1) % list.length;
+        else if (event.key === "ArrowLeft") next = (index + list.length - 1) % list.length;
+        else if (event.key === "Home") next = 0;
+        else if (event.key === "End") next = list.length - 1;
+        else if (event.key !== "Enter" && event.key !== " ") return;
+        event.preventDefault();
+        select(list[next].getAttribute("data-panel"));
+        list[next].focus();
+
       });
     }
+    select("signin");
     if (window.location.hash === "#create") select("signup");
     if (window.location.hash === "#reset") select("reset");
     // A form that came back with an error reopens the tab it was posted from.
@@ -448,14 +462,17 @@ export async function handleAccountPage(env: Env, request: Request): Promise<Res
   const storePin = { lat: store?.storeLat ?? 0, lng: store?.storeLng ?? 0, radiusKm: store?.radiusKm ?? 0 };
 
   const body = `
-<section class="card" id="account-hero">
+<noscript><section class="card"><h2>Your account needs JavaScript here</h2>
+<p>Private profile and order-history panels need JavaScript. You can still sign in with the plain forms and order as a guest.</p>
+<a class="button" href="/login">Open sign-in forms</a><a class="button secondary" href="/store">Browse the menu</a></section></noscript>
+<section class="card account-summary" id="account-hero" role="status" aria-live="polite">
   <span class="eyebrow" id="account-eyebrow">Your account</span>
   <h2 id="account-heading">One moment…</h2>
   <p class="muted" id="account-subheading">Reading the session on this phone.</p>
   <div id="account-actions"></div>
 </section>
 
-<div id="account-body" hidden>
+<div id="account-body" class="account-workspace" hidden>
   <div class="tabs" role="tablist" aria-label="Your account">
     <button type="button" role="tab" id="tab-profile" aria-controls="panel-profile" aria-selected="true" class="active" data-panel="profile">Profile</button>
     <button type="button" role="tab" id="tab-addresses" aria-controls="panel-addresses" aria-selected="false" data-panel="addresses">Addresses</button>
@@ -584,6 +601,7 @@ export async function handleAccountPage(env: Env, request: Request): Promise<Res
     for (var i = 0; i < tabs.length; i++) {
       var active = tabs[i].getAttribute("data-panel") === name;
       tabs[i].setAttribute("aria-selected", active ? "true" : "false");
+      tabs[i].setAttribute("tabindex", active ? "0" : "-1");
       tabs[i].className = active ? "active" : "";
     }
     for (var j = 0; j < panels.length; j++) {
@@ -591,12 +609,29 @@ export async function handleAccountPage(env: Env, request: Request): Promise<Res
       else panels[j].setAttribute("hidden", "");
     }
   }
-  for (var t = 0; t < document.querySelectorAll(".tabs [role=tab]").length; t++) {
-    document.querySelectorAll(".tabs [role=tab]")[t].addEventListener("click", function () {
+  var tabButtons = document.querySelectorAll(".tabs [role=tab]");
+  for (var t = 0; t < tabButtons.length; t++) {
+    tabButtons[t].addEventListener("click", function () {
       select(this.getAttribute("data-panel"));
       if (this.getAttribute("data-panel") === "addresses" && map) map.redraw();
     });
+    tabButtons[t].addEventListener("keydown", function (event) {
+        var list = document.querySelectorAll(".tabs [role=tab]");
+        var index = 0;
+        for (var k = 0; k < list.length; k++) if (list[k] === this) index = k;
+        var next = index;
+        if (event.key === "ArrowRight") next = (index + 1) % list.length;
+        else if (event.key === "ArrowLeft") next = (index + list.length - 1) % list.length;
+        else if (event.key === "Home") next = 0;
+        else if (event.key === "End") next = list.length - 1;
+        else if (event.key !== "Enter" && event.key !== " ") return;
+        event.preventDefault();
+        select(list[next].getAttribute("data-panel"));
+        list[next].focus();
+      if (list[next].getAttribute("data-panel") === "addresses" && map) map.redraw();
+    });
   }
+  select("profile");
 
   var account = window.undalAccount ? window.undalAccount() : null;
 

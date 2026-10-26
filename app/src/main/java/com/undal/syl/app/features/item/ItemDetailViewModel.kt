@@ -39,6 +39,7 @@ class ItemDetailViewModel @Inject constructor(
         val comboContents: List<Pair<MenuItem, Int>> = emptyList(),
         val quantity: Int = 1,
         val note: String = "",
+        val adding: Boolean = false,
         val inCartQuantity: Int = 0,
         val message: String? = null
     )
@@ -56,7 +57,7 @@ class ItemDetailViewModel @Inject constructor(
      * shows messages.
      */
     private val guard = com.undal.syl.app.core.util.UndalGuards.viewModel("reading this dish") { message ->
-        _state.value = _state.value.copy(message = message)
+        _state.value = _state.value.copy(message = message, loading = false, adding = false)
     }
 
     private var cardId: String = ""
@@ -115,37 +116,44 @@ class ItemDetailViewModel @Inject constructor(
 
     /** Adds the chosen quantity with the customer's cooking note (C-043). */
     fun addToCart(onAdded: () -> Unit) {
-        val card = _state.value.card ?: return
+        val snapshot = _state.value
+        if (snapshot.adding) return
+        val card = snapshot.card ?: return
         if (!card.available) {
             _state.value = _state.value.copy(message = "This dish is finished for today.")
             return
         }
+        _state.value = _state.value.copy(adding = true)
         viewModelScope.launch(guard) {
-            val line = when (card) {
-                is MenuCard.Dish -> CartLine(
-                    id = card.item.id,
-                    name = card.item.name,
-                    unitAmountPaisa = card.item.payablePaisa,
-                    quantity = _state.value.quantity,
-                    note = _state.value.note.trim(),
-                    imageUrl = card.item.imageUrl,
-                    veg = card.item.veg,
-                    spiceLevel = card.item.spiceLevel
-                )
+            try {
+                val line = when (card) {
+                    is MenuCard.Dish -> CartLine(
+                        id = card.item.id,
+                        name = card.item.name,
+                        unitAmountPaisa = card.item.payablePaisa,
+                        quantity = snapshot.quantity,
+                        note = snapshot.note.trim(),
+                        imageUrl = card.item.imageUrl,
+                        veg = card.item.veg,
+                        spiceLevel = card.item.spiceLevel
+                    )
 
-                is MenuCard.Bundle -> CartLine(
-                    id = card.combo.id,
-                    name = card.combo.name,
-                    unitAmountPaisa = card.combo.amountPaisa,
-                    quantity = _state.value.quantity,
-                    note = _state.value.note.trim(),
-                    imageUrl = card.combo.imageUrl,
-                    isCombo = true
-                )
+                    is MenuCard.Bundle -> CartLine(
+                        id = card.combo.id,
+                        name = card.combo.name,
+                        unitAmountPaisa = card.combo.amountPaisa,
+                        quantity = snapshot.quantity,
+                        note = snapshot.note.trim(),
+                        imageUrl = card.combo.imageUrl,
+                        isCombo = true
+                    )
+                }
+                cartRepo.add(line)
+                _state.value = _state.value.copy(message = null)
+                onAdded()
+            } finally {
+                _state.value = _state.value.copy(adding = false)
             }
-            cartRepo.add(line)
-            _state.value = _state.value.copy(message = null)
-            onAdded()
         }
     }
 

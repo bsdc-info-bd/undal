@@ -5,14 +5,12 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Phone
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -22,7 +20,10 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import com.undal.syl.app.core.config.UndalBuildInfo
-import com.undal.syl.app.core.design.UndalCard
+import androidx.compose.ui.platform.LocalContext
+import com.undal.syl.app.core.util.UndalPhone
+import com.undal.syl.app.core.design.UndalPageIntro
+import com.undal.syl.app.core.design.UndalSecondaryButton
 import com.undal.syl.app.core.design.UndalScaffold
 import com.undal.syl.app.core.theme.UndalDimens
 import com.undal.syl.app.features.vendor.VendorSection
@@ -37,35 +38,20 @@ import com.undal.syl.app.features.vendor.VendorSection
  */
 @Composable
 fun PolicyScreen(onBack: () -> Unit) {
+    val context = LocalContext.current
     UndalScaffold(
         title = "Privacy and policies",
         subtitle = "Readable offline · lasts as long as the app is installed",
-        onBack = onBack
+        onBack = onBack,
+        contentMaxWidth = 760.dp
     ) { _ ->
         LazyColumn(
             modifier = Modifier.fillMaxSize(),
             contentPadding = PaddingValues(UndalDimens.screenPadding)
         ) {
-            item {
-                UndalCard(modifier = Modifier.fillMaxWidth()) {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        modifier = Modifier.padding(UndalDimens.sm)
-                    ) {
-                        Icon(
-                            Icons.Filled.Info,
-                            contentDescription = null,
-                            tint = MaterialTheme.colorScheme.primary,
-                            modifier = Modifier.size(UndalDimens.iconMd)
-                        )
-                        Spacer(Modifier.width(UndalDimens.xs))
-                        Text(
-                            text = "Undal HomeKitchen is one kitchen in Sylhet taking its own orders. " +
-                                "These pages describe how that app treats your information.",
-                            style = MaterialTheme.typography.bodyMedium
-                        )
-                    }
-                }
+            item(key = "policy-intro") {
+                UndalPageIntro("UNDAL · YOUR INFORMATION", "Privacy, without the fine print.",
+                    "How this kitchen uses your information, how payment works and who to contact. Available offline.")
             }
 
             item { Spacer(Modifier.height(UndalDimens.sm)) }
@@ -126,8 +112,8 @@ fun PolicyScreen(onBack: () -> Unit) {
                         listOf(
                             "Accounts, orders, the menu and the store document live in Google Cloud " +
                                 "Firestore under the project this app was built for.",
-                            "Chat messages and the live order status live in Firebase Realtime Database, " +
-                                "so a status change reaches your screen in under a second.",
+                            "Chat messages and the live order status live in Firebase Realtime Database. " +
+                                "Updates arrive when your device is connected.",
                             "Photos live in Cloudinary, with the file link stored alongside the record that " +
                                 "uses it.",
                             "Maps are drawn from standard OpenStreetMap tiles inside the app, and its " +
@@ -210,6 +196,10 @@ fun PolicyScreen(onBack: () -> Unit) {
                             )
                         }
                         Spacer(Modifier.height(UndalDimens.xs))
+                        if (UndalBuildInfo.supportPhone.isNotBlank()) {
+                            UndalSecondaryButton("Call the kitchen", onClick = { UndalPhone.dial(context, UndalBuildInfo.supportPhone) })
+                            Spacer(Modifier.height(UndalDimens.sm))
+                        }
                         Text(
                             text = "Undal HomeKitchen · Sylhet, Bangladesh · built with Undal " +
                                 UndalBuildInfo.versionName + " (build " + UndalBuildInfo.versionCode + ").",

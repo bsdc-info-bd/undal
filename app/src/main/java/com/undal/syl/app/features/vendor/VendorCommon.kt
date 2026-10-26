@@ -3,11 +3,15 @@ package com.undal.syl.app.features.vendor
 import java.util.Locale
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.sizeIn
+import androidx.compose.foundation.layout.wrapContentHeight
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -149,6 +153,7 @@ fun VendorStatCard(
 }
 
 /** One queue row (V-015, V-025 lite). */
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun VendorOrderCard(
     order: VendorOrder,
@@ -157,15 +162,16 @@ fun VendorOrderCard(
     trailing: @Composable (() -> Unit)? = null
 ) {
     UndalCard(modifier = Modifier.fillMaxWidth(), onClick = onClick) {
-        Column(modifier = Modifier.padding(UndalDimens.sm)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
+        Column {
+            FlowRow(
+                horizontalArrangement = Arrangement.spacedBy(UndalDimens.sm),
+                verticalArrangement = Arrangement.spacedBy(UndalDimens.sm)
+            ) {
                 Text(
                     text = order.shortId.ifBlank { order.id.takeLast(4) },
                     style = MaterialTheme.typography.titleMedium
                 )
-                Spacer(Modifier.width(UndalDimens.xs))
                 VendorAgePill(order)
-                Spacer(Modifier.weight(1f))
                 VendorStatusPill(order.status)
             }
             Spacer(Modifier.height(UndalDimens.xs))
@@ -192,11 +198,13 @@ fun VendorOrderCard(
                     overflow = TextOverflow.Ellipsis,
                     modifier = Modifier.weight(1f)
                 )
-                Text(
-                    text = Money.format(order.totalAmountPaisa),
-                    style = MaterialTheme.typography.titleSmall
-                )
             }
+            Spacer(Modifier.height(UndalDimens.sm))
+            Text(
+                text = Money.format(order.totalAmountPaisa),
+                style = MaterialTheme.typography.titleLarge,
+                color = MaterialTheme.colorScheme.primary
+            )
             if (order.isOverdue()) {
                 Spacer(Modifier.height(UndalDimens.xs))
                 Surface(
@@ -343,13 +351,13 @@ fun VendorChip(
         } else {
             MaterialTheme.colorScheme.surfaceVariant
         },
-        modifier = modifier.clickable(onClick = onClick)
+        modifier = modifier.sizeIn(minWidth = UndalDimens.touchTarget, minHeight = UndalDimens.touchTarget).clickable(onClick = onClick)
     ) {
         Text(
             text = label,
             style = MaterialTheme.typography.labelLarge,
             color = if (selected) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.padding(horizontal = UndalDimens.sm, vertical = UndalDimens.xs)
+            modifier = Modifier.padding(horizontal = UndalDimens.sm, vertical = UndalDimens.xs).wrapContentHeight(Alignment.CenterVertically)
         )
     }
 }
