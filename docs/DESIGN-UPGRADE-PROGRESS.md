@@ -173,6 +173,7 @@ UNDAL_BROWSER_MODULES="$HOME/.cache/undal-browser" node tools/check-design-brows
 - Audited remaining surfaces: safe-mode intentionally keeps dependency-light native views; order-alert full-screen actions use Android notification intents into existing order sheets, not a separate Compose overlay.
 - Added a secret-free Worker PR workflow and Android debug-preview/instrumentation-source compilation alongside the existing release unit-test/build gates.
 - Full inventory and remaining release gates: `docs/DESIGN-COVERAGE.md`.
+- CI found and fixed implicit Compose delegate/unit imports and duplicated dashboard stat arguments. The import gate now has five regression tests covering implicit getValue/setValue/dp usage. **137 Android release unit tests passed**; debug source compile deliberately excludes production-only Firebase debug processing, not release validation.
 - Updated evidence: **205 Worker tests; 59 browser reflow cases**, keyboard tab navigation, tracking refresh recovery and no-script account/basket/checkout paths all passed locally.
 
 ## Test and review assets

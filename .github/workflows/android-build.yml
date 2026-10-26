@@ -143,7 +143,11 @@ jobs:
       - name: Compile adaptive previews and instrumentation tests
         run: |
           set -o pipefail
-          ./gradlew :app:compileDebugAndroidTestKotlin --no-daemon --stacktrace 2>&1 | tee -a "$RUNNER_TEMP/undal-build.log"
+          # Compile-only: the production Firebase JSON need not register the .debug app.
+          # No debug APK/device test is produced or run here. Release Google Services
+          # processing and release input validation remain mandatory below.
+          ./gradlew :app:compileDebugAndroidTestKotlin -x :app:processDebugGoogleServices \
+            --no-daemon --stacktrace 2>&1 | tee -a "$RUNNER_TEMP/undal-build.log"
 
       - name: Assemble signed-ready release APK
         run: |
