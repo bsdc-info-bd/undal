@@ -135,8 +135,8 @@ fun LocationSetupScreen(
                         Text("1 · Where is the food going?", style = MaterialTheme.typography.titleMedium)
                         Spacer(Modifier.height(UndalDimens.xs))
                         Text(
-                            text = "Drag the pin onto your building. The kitchen uses this point to know whether " +
-                                "you are inside the delivery area and how much the ride costs.",
+                            text = "Tap a spot on the map or drag the pin to your entrance. The kitchen uses this " +
+                                "point to check delivery coverage and calculate the ride fee.",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -145,6 +145,7 @@ fun LocationSetupScreen(
                         UndalOsmPicker(
                             latitude = state.lat,
                             longitude = state.lng,
+                            height = UndalDimens.mapHeightTall,
                             onPicked = viewModel::onPinMoved,
                             accuracyMeters = state.accuracyMeters,
                             recentreLabel = "Use my current location",
@@ -180,7 +181,7 @@ fun LocationSetupScreen(
 
                         Spacer(Modifier.height(UndalDimens.sm))
                         UndalPickedPointLabel(
-                            label = state.label.ifBlank { "Drag the pin onto your building to set the exact spot." }
+                            label = state.label.ifBlank { "Tap the map or drag the pin onto your building to set the exact spot." }
                         )
                         Row {
                             Checkbox(checked = state.pinConfirmed,

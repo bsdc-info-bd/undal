@@ -1,9 +1,9 @@
 # Undal — whole-product UI/UX upgrade plan
 
-Status: **implementation started — first batch in source, native verification pending**.
-See [implementation progress](DESIGN-UPGRADE-PROGRESS.md) for shipped source changes, checks and remaining scope.
+Status: **source refresh in progress — native verification pending**.
+See [implementation progress](DESIGN-UPGRADE-PROGRESS.md) for source changes, checks and remaining scope.
 Date: 26 October 2026.
-Direction: **Warm Kitchen, Precision Console**.
+Direction: **Food-forward Berry Kitchen, Precision Console**.
 
 ## 1. The intended transformation
 
@@ -13,11 +13,11 @@ This is not a colour swap. The work covers layout, navigation, component states,
 
 ### Customer character
 
-Warm ivory canvas, deep evergreen actions, restrained turmeric accents, generous whitespace and food-forward imagery. A warm editorial display treatment for a small number of hero headings; highly legible platform text everywhere else. Bengali fallback must remain intact. Never require a remote font to use the app.
+Warm near-white surfaces, berry actions, restrained saffron accents, generous whitespace and real kitchen/menu photography. The supplied Foodpanda captures inform colour energy, search/category placement and persistent thumb-friendly navigation; do not ship Foodpanda marks or their screenshot artwork. Keep Undal's own name, content and voice. Bengali fallback must remain intact, and no remote font may be required to use the app.
 
 ### Vendor character
 
-The same evergreen brand with quieter surfaces, stronger numeric hierarchy, compact-but-touchable rows, clear age/status labels and action-first order detail. Operational data, not decorative dashboards. Use red for errors/destructive actions and amber for attention; never make a routine button look like an alarm.
+The same berry identity with quieter surfaces, stronger numeric hierarchy, compact-but-touchable rows, clear age/status labels and action-first order detail. Operational data, not decorative dashboards. Use semantic green for success, red for errors/destructive actions and amber for attention; never make a routine button look like an alarm.
 
 ### Three signature experiences
 

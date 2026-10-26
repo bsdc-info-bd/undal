@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.runtime.getValue
@@ -35,7 +36,10 @@ import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import kotlinx.coroutines.delay
 import com.undal.syl.app.core.background.OrderAlertController
+import com.undal.syl.app.core.design.LocalUndalCustomerNavigation
 import com.undal.syl.app.core.design.UndalAlertBanner
+import com.undal.syl.app.core.design.UndalCustomerNavigation
+import com.undal.syl.app.core.design.UndalCustomerTab
 import com.undal.syl.app.core.theme.UndalDimens
 import com.undal.syl.app.features.auth.LoginScreen
 import com.undal.syl.app.features.auth.RegisterScreen
@@ -155,6 +159,32 @@ fun UndalRoot(
      */
     val currentEntry by navController.currentBackStackEntryAsState()
     val currentRoute = currentEntry?.destination?.route
+
+    fun openCustomerTab(route: String) {
+        if (currentRoute != route) {
+            navigateSafely(navController, route, viewModel::onNavigationFailed)
+        }
+    }
+
+    val customerNavigation = if (UndalRoutes.isCustomer(currentRoute)) {
+        val selectedTab = when {
+            currentRoute == UndalRoutes.CUSTOMER_CART -> UndalCustomerTab.BASKET
+            currentRoute == UndalRoutes.CUSTOMER_ORDERS ||
+                currentRoute?.startsWith("customer/order/") == true ||
+                currentRoute?.startsWith("customer/chat/") == true -> UndalCustomerTab.ORDERS
+            currentRoute == UndalRoutes.CUSTOMER_PROFILE ||
+                currentRoute == UndalRoutes.CUSTOMER_INBOX -> UndalCustomerTab.ACCOUNT
+            else -> UndalCustomerTab.HOME
+        }
+        UndalCustomerNavigation(
+            selectedTab = selectedTab,
+            onHome = { openCustomerTab(UndalRoutes.CUSTOMER_HOME) },
+            onOrders = { openCustomerTab(UndalRoutes.CUSTOMER_ORDERS) },
+            onBasket = { openCustomerTab(UndalRoutes.CUSTOMER_CART) },
+            onAccount = { openCustomerTab(UndalRoutes.CUSTOMER_PROFILE) }
+        )
+    } else null
+
     var lastExitPress by remember { mutableLongStateOf(0L) }
 
     fun leavePortal() {
@@ -233,6 +263,7 @@ fun UndalRoot(
       // The shared-element scope for the whole app: a dish photo travels from
       // the menu card to the dish page with one identity, which is what makes
       // the second screen feel like the first one opening (C-039).
+      CompositionLocalProvider(LocalUndalCustomerNavigation provides customerNavigation) {
       SharedTransitionLayout {
       NavHost(
         navController = navController,
@@ -489,6 +520,7 @@ fun UndalRoot(
         composable(UndalRoutes.POLICY) {
             PolicyScreen(onBack = { navController.popBackStack() })
         }
+      }
       }
       }
 

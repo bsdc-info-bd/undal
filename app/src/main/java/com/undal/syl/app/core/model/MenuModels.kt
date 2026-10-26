@@ -229,6 +229,26 @@ data class MenuSnapshot(
     fun combo(id: String): Combo? = combos.firstOrNull { it.id == id }
 
     fun card(id: String): MenuCard? = dish(id)?.let { MenuCard.Dish(it) } ?: combo(id)?.let { MenuCard.Bundle(it) }
+
+    /**
+     * IDs that can honestly be labelled vegetarian. A combo qualifies only when
+     * it contains at least one known dish and every referenced dish is marked
+     * vegetarian; missing references are never treated as safe by default.
+     */
+    fun vegetarianCardIds(): Set<String> {
+        val dishesById = items.associateBy { it.id }
+        return buildSet {
+            items.filter { it.veg }.forEach { add(it.id) }
+            combos.forEach { combo ->
+                val allIngredientsAreKnownAndVegetarian = combo.itemRefs.isNotEmpty() &&
+                    combo.itemRefs.all { ref -> dishesById[ref.menuItemId]?.veg == true }
+                if (allIngredientsAreKnownAndVegetarian) add(combo.id)
+            }
+        }
+    }
+
+    /** Only dishes with real order history qualify; bundles have no order-count field. */
+    fun popularDishIds(): Set<String> = items.filter { it.isPopular }.mapTo(mutableSetOf()) { it.id }
 }
 
 /** The sort options offered on the store screen (C-037). */
