@@ -2,6 +2,8 @@ package com.undal.syl.app.features.store
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -22,13 +24,16 @@ import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Clear
-import androidx.compose.material.icons.filled.Email
-import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.LocationOn
 import androidx.compose.material.icons.filled.ShoppingCart
 import androidx.compose.material.icons.filled.Star
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -49,6 +54,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.input.ImeAction
@@ -57,6 +63,10 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import coil3.compose.AsyncImage
+import com.undal.syl.app.core.design.UndalAdaptivePair
+import com.undal.syl.app.core.design.UndalLayoutPolicy
+import com.undal.syl.app.core.design.UndalPageIntro
+import com.undal.syl.app.core.design.UndalSectionHeader
 import com.undal.syl.app.core.design.ShimmerListRow
 import com.undal.syl.app.core.design.UndalAlertBanner
 import com.undal.syl.app.core.design.UndalEmptyState
@@ -94,6 +104,8 @@ fun StoreScreen(
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     val focus = LocalFocusManager.current
+    var showAccountMenu by remember { mutableStateOf(false) }
+    val menuCardWidth = UndalLayoutPolicy.menuCardWidth(LocalConfiguration.current.screenWidthDp.toFloat(), LocalDensity.current.fontScale).dp
     var refreshing by remember { mutableStateOf(false) }
 
     LaunchedEffect(Unit) {
@@ -118,15 +130,17 @@ fun StoreScreen(
     UndalScaffold(
         title = state.store.storeName,
         subtitle = if (state.openState.serviceable) "Open · ${state.openState.todayLine}" else state.openState.headline,
+        contentMaxWidth = 1200.dp,
         actions = {
-            TextButton(onClick = onOpenInbox) {
-                Icon(Icons.Filled.Email, contentDescription = "Notifications", modifier = Modifier.size(UndalDimens.iconSm))
-            }
-            TextButton(onClick = onOpenOrders) {
-                Text("Orders", style = MaterialTheme.typography.labelLarge)
-            }
-            TextButton(onClick = onOpenProfile) {
-                Icon(Icons.Filled.Home, contentDescription = "Profile", modifier = Modifier.size(UndalDimens.iconSm))
+            Box {
+                IconButton(onClick = { showAccountMenu = true }) {
+                    Icon(Icons.Filled.MoreVert, contentDescription = "Orders, notifications and profile")
+                }
+                DropdownMenu(expanded = showAccountMenu, onDismissRequest = { showAccountMenu = false }) {
+                    DropdownMenuItem(text = { Text("My orders") }, onClick = { showAccountMenu = false; onOpenOrders() })
+                    DropdownMenuItem(text = { Text("Notifications") }, onClick = { showAccountMenu = false; onOpenInbox() })
+                    DropdownMenuItem(text = { Text("My profile") }, onClick = { showAccountMenu = false; onOpenProfile() })
+                }
             }
         },
         bottomBar = {
@@ -146,7 +160,7 @@ fun StoreScreen(
             modifier = Modifier.fillMaxSize()
         ) {
             LazyVerticalGrid(
-                columns = GridCells.Adaptive(minSize = 160.dp * LocalDensity.current.fontScale),
+                columns = GridCells.Adaptive(minSize = menuCardWidth),
                 modifier = Modifier.fillMaxSize(),
                 contentPadding = PaddingValues(
                     start = UndalDimens.screenPadding,
@@ -154,14 +168,23 @@ fun StoreScreen(
                     top = UndalDimens.sm,
                     bottom = UndalDimens.xl
                 ),
-                horizontalArrangement = Arrangement.spacedBy(UndalDimens.sm),
-                verticalArrangement = Arrangement.spacedBy(UndalDimens.sm)
+                horizontalArrangement = Arrangement.spacedBy(UndalDimens.md),
+                verticalArrangement = Arrangement.spacedBy(UndalDimens.lg)
             ) {
                 item(span = { GridItemSpan(maxLineSpan) }) {
-                    StoreHeader(
-                        state = state,
-                        reachabilityLine = viewModel.reachabilityLine(state.reachability),
-                        onEditAddress = onEditAddress
+                    UndalAdaptivePair(
+                        primary = {
+                            UndalPageIntro(
+                                eyebrow = state.store.storeName,
+                                title = "A little taste of home.",
+                                subtitle = "Find your favourites, choose your doorstep, and leave the cooking to us. Pay cash when your order arrives."
+                            )
+                        },
+                        secondary = {
+                            StoreHeader(state = state,
+                                reachabilityLine = viewModel.reachabilityLine(state.reachability),
+                                onEditAddress = onEditAddress)
+                        }
                     )
                 }
 
@@ -194,10 +217,9 @@ fun StoreScreen(
                 }
 
                 item(span = { GridItemSpan(maxLineSpan) }) {
-                    GreetingHeader(
-                        greeting = state.greeting,
-                        addressLabel = state.addressLabel,
-                        onEditAddress = onEditAddress
+                    UndalSectionHeader(
+                        title = state.greeting.ifBlank { "What sounds good today?" },
+                        subtitle = if (state.loading) "Reading the kitchen menu…" else "${state.cards.size} choices · find your favourite"
                     )
                 }
 
@@ -207,7 +229,7 @@ fun StoreScreen(
                         onValueChange = viewModel::onQueryChange,
                         label = "Search the menu",
                         hint = "kacchi, biryani, tea …",
-                        leadingIcon = Icons.Filled.Star,
+                        leadingIcon = Icons.Filled.Search,
                         keyboardType = KeyboardType.Text,
                         imeAction = ImeAction.Search,
                         // The Search key on a Bangla or English keyboard used to
@@ -288,6 +310,7 @@ fun StoreScreen(
     }
 }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun StoreHeader(
     state: StoreViewModel.State,
@@ -305,7 +328,8 @@ private fun StoreHeader(
             }
         ) {
             Column(modifier = Modifier.padding(UndalDimens.md)) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(UndalDimens.sm),
+                    verticalArrangement = Arrangement.spacedBy(UndalDimens.xs)) {
                     UndalStatusPill(
                         text = state.openState.headline,
                         containerColour = if (state.openState.serviceable) {
@@ -324,7 +348,7 @@ private fun StoreHeader(
                         } else {
                             MaterialTheme.colorScheme.onErrorContainer
                         },
-                        maxLines = 1,
+                        maxLines = 3,
                         overflow = TextOverflow.Ellipsis
                     )
                 }
@@ -669,7 +693,7 @@ private fun CartSummaryBar(
             UndalPrimaryButton(
                 text = "$itemCount item${if (itemCount == 1) "" else "s"} · $subtotalLabel — view cart",
                 onClick = onOpenCart,
-                enabled = enabled,
+                enabled = true,
                 icon = Icons.Filled.ShoppingCart
             )
             if (!enabled) {

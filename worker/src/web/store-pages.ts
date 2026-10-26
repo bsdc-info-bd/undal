@@ -88,7 +88,7 @@ function page(options: ShellOptions & {
   const serverCart = JSON.stringify(options.serverCart ?? null).replace(/</g, "\\u003c");
 
   const body = `${options.body}
-<div id="undal-flash" class="notice" style="display:none"></div>
+<div id="undal-flash" class="notice" role="status" aria-live="polite" style="display:none"></div>
 <script>
 window.UNDAL_CATALOGUE = ${catalogue};
 window.UNDAL_STORE = ${store};
@@ -144,7 +144,7 @@ function statusBanner(store: WebStoreConfig | null): string {
     : status.reason === "paused"
       ? `${status.detail} You can still browse the menu.`
       : `${status.detail} You can still browse the menu and fill your basket.`;
-  return `<div class="card">
+  return `<section class="card store-status" aria-label="Kitchen and delivery information">
   <span class="pill ${open ? "open" : "closed"}">${escapeHtml(status.headline)}</span>
   <h2 style="margin-top:10px">${escapeHtml(store.storeName)}</h2>
   <p class="muted" style="margin-top:0">${escapeHtml(store.storeAddressText)}</p>
@@ -155,7 +155,7 @@ function statusBanner(store: WebStoreConfig | null): string {
     <dt>Minimum order</dt><dd>${formatPaisa(store.minOrderAmountPaisa)}</dd>
     <dt>Payment</dt><dd>Cash on delivery only</dd>
   </dl>
-</div>`;
+</section>`;
 }
 
 /** The "add to basket" control: a form first, a scripted button second. */
@@ -366,11 +366,11 @@ ${campaignCard}
   ${sectionId ? `<input type="hidden" name="section" value="${escapeHtml(sectionId)}">` : ""}
   <button class="button" type="submit" style="margin:0;padding:12px 18px">Search</button>
 </form>
-<div class="chips">
+<nav class="chips" aria-label="Menu categories">
   ${chips}
   ${comboChip}
-</div>
-<div class="chips">${sortLinks}</div>
+</nav>
+<nav class="chips" aria-label="Sort menu">${sortLinks}</nav>
 ${grid}
 <p class="smallprint" style="margin-top:16px">Prices are per dish and include nothing else. The delivery fee is added at checkout from your pinned location, rounded up to whole kilometres.</p>`;
 
@@ -435,11 +435,16 @@ export async function handleStoreItem(env: Env, request: Request, id: string): P
       : "";
 
   const body = `
-<section class="card">
-  ${item.imageUrl ? `<img class="hero" src="${escapeHtml(item.imageUrl)}" alt="">` : ""}
-  <h2>${escapeHtml(item.name)}</h2>
+<a class="back-link" href="/store">← Back to the menu</a>
+<article class="item-detail" aria-labelledby="dish-title">
+  <div class="item-photo">${item.imageUrl
+    ? `<img class="hero" src="${escapeHtml(item.imageUrl)}" alt="${escapeHtml(item.name)}">`
+    : `<div class="food-placeholder" aria-hidden="true"><span>♨</span><small>From our kitchen</small></div>`}</div>
+  <section class="card item-information">
+  <span class="eyebrow">${escapeHtml(section?.name ?? (item.kind === "combo" ? "Combo" : "Menu"))}</span>
+  <h2 id="dish-title">${escapeHtml(item.name)}</h2>
   <p class="muted">${escapeHtml(section?.name ?? (item.kind === "combo" ? "Combo" : "Menu"))}${
-    item.kind === "dish" ? ` · ready in about ${item.prepMinutes} minutes` : ""
+    item.kind === "dish" ? ` · prep guide: ${item.prepMinutes} minutes, confirmed when accepted` : ""
   }</p>
   <p>${escapeHtml(item.description)}</p>
   ${comboContents ? `<p class="muted">${escapeHtml(comboContents)}</p>` : ""}
@@ -452,10 +457,11 @@ export async function handleStoreItem(env: Env, request: Request, id: string): P
   ${
     item.available
       ? addForm(item, { next: "basket", label: "Add to basket", wide: true }) +
-        `<a class="button" href="/basket">Go to the basket</a>`
+        `<a class="button secondary" href="/basket">View your basket</a>`
       : `<div class="notice">This dish is finished for today. The kitchen keeps it on the menu so you know what they cook — it is not orderable right now.</div>`
   }
-</section>
+  </section>
+</article>
 <section class="card">
   <h2>Prefer the app?</h2>
   <p class="muted">Live order tracking, chat with the kitchen and the Undal order sound are app-only, and the app keeps working when the browser tab is closed.</p>
@@ -539,7 +545,8 @@ export async function handleBasket(env: Env, request: Request): Promise<Response
 
   const body = `
 ${couponStrip(menu.coupons ?? [])}
-<section class="card">
+<div class="basket-layout">
+<section class="card basket-review">
   <h2>Your basket</h2>
   <div id="undal-cart-lines" class="js" style="display:none"></div>
   ${serverBasket}
@@ -552,13 +559,15 @@ ${couponStrip(menu.coupons ?? [])}
   <a class="button" href="/checkout">Continue to delivery details</a>
   <a class="button secondary" href="/store">Add something else</a>
 </section>
-<section class="card">
+<section class="card basket-guidance">
+  <span class="eyebrow">Before you order</span>
   <h2>How payment works</h2>
   <p class="muted">Cash on delivery only. You pay the rider in taka when the food arrives; there is no card, no wallet and no online payment anywhere in Undal.</p>
   <p class="smallprint">Delivery is ${formatPaisa(store?.deliveryPerKmAmountPaisa ?? 0)} per whole kilometre inside ${
     store?.radiusKm ?? 0
   } km of the kitchen. If your address is outside that radius the checkout will say so plainly instead of taking an order the kitchen cannot serve.</p>
-</section>`;
+</section>
+</div>`;
 
   return page({
     title: "Your basket — Undal HomeKitchen",
@@ -638,12 +647,14 @@ export async function handleCheckout(env: Env, request: Request): Promise<Respon
   };
 
   const catalogue = catalogueFor(menu);
+  const checkoutSubtotal = cart.lines.reduce((total, line) =>
+    total + (menuItem(menu, line.id)?.payablePaisa ?? 0) * line.qty, 0);
   const cartLinesJson = JSON.stringify(cart.lines).replace(/</g, "\\u003c");
 
   const body = `
 ${noticeBlock}
 ${closedBlock}
-<section class="card">
+<section class="card checkout-card">
   <h2>Where should the rider go?</h2>
   <p class="muted">Move the map until the green pin is on your door, then <strong>tick it</strong>. The delivery fee is
   measured from that exact point and the rider is sent to it — so the pin is worth ten seconds of your time.</p>
@@ -653,6 +664,9 @@ ${closedBlock}
   <form method="post" action="/checkout/place" id="undal-checkout-form" data-undal-cart="${escapeHtml(cartLinesJson)}">
   <p class="undal-map-attribution">Tiles © OpenStreetMap contributors · the pin is placed by you, never guessed from your IP address.</p>
   <div id="undal-radius" class="notice" style="display:none"></div>
+  <div class="checkout-layout">
+  <div class="checkout-details">
+  <h3>Your delivery details</h3>
   <div class="auth-split">
     <div>
       <label for="name">Name the kitchen should call out</label>
@@ -676,22 +690,28 @@ ${closedBlock}
   <input type="hidden" name="lat" id="undal-lat" value="0">
   <input type="hidden" name="lng" id="undal-lng" value="0">
   <input type="hidden" name="lines" id="undal-lines" value="">
-  <div class="row"><span>Food</span><span id="undal-subtotal">৳ 0</span></div>
+  </div>
+  <aside class="checkout-summary" aria-labelledby="summary-heading">
+  <span class="eyebrow">Review before placing</span>
+  <h3 id="summary-heading">Your cash-on-delivery receipt</h3>
+  <div class="row"><span>Food</span><span id="undal-subtotal">${formatPaisa(checkoutSubtotal)}</span></div>
   <div class="row"><span>Delivery</span><span id="undal-delivery">measured once you tick the pin</span></div>
   <div class="row" id="undal-discount-row" style="display:none"><span>Coupon</span><span id="undal-discount">৳ 0</span></div>
-  <div class="row"><span class="total">Cash on delivery</span><span class="total" id="undal-total">৳ 0</span></div>
+  <div class="row"><span class="total">Cash on delivery</span><span class="total" id="undal-total">Delivery check needed</span></div>
   <div id="undal-auto-coupon" class="notice ok" style="display:none"></div>
   <div id="undal-cart-lines" class="smallprint" style="display:none"></div>
   <div id="undal-minimum" class="notice" style="display:none"></div>
-  <div id="undal-order-result"></div>
+  <div id="undal-order-result" role="status" aria-live="polite"></div>
   <button class="button" id="undal-place" type="submit">Place the order — pay cash on delivery</button>
-  <p class="smallprint">Placing the order tells the kitchen immediately. The order number and the tracking page appear as soon as it is written. A customer cannot cancel from the web — call the kitchen if something changes.</p>
+  <p class="smallprint">Placing the order sends it to the kitchen. The order number and the tracking page appear as soon as it is written. A customer cannot cancel from the web — call the kitchen if something changes.</p>
+  </aside>
+  </div>
   </form>
 </section>
 <section class="card">
   <h2>What happens after you tap</h2>
   <ol class="steps">
-    <li class="done"><span class="dot"></span><span>Your order gets a number like <strong>UND-1042</strong> and rings the kitchen phone.</span></li>
+    <li class="done"><span class="dot"></span><span>Your order gets a number like <strong>UND-1042</strong> and is sent to the kitchen.</span></li>
     <li><span class="dot"></span><span>The kitchen accepts it with a preparation time, or cancels it with a written reason.</span></li>
     <li><span class="dot"></span><span>You watch the status on the tracking page — no account needed, the link is the key.</span></li>
     <li><span class="dot"></span><span>You pay the rider in cash when the food arrives.</span></li>
@@ -909,7 +929,10 @@ ${closedBlock}
       store: storePin.lat && storePin.lng ? storePin : null,
       perKmPaisa: store.perKmPaisa || 0,
       confirmLabel: "Tick this pin as my delivery address",
-      onPin: function (point, next) { position = point; info = next || info; preview(); },
+      onPin: function (point, next) {
+        if (!position || position.lat !== point.lat || position.lng !== point.lng) ticked = false;
+        position = point; info = next || info; preview();
+      },
       onConfirm: function (point, next) { position = point; info = next || info; ticked = true; fillAddress(); preview(); }
     });
   } catch (mapError) {
@@ -1029,11 +1052,12 @@ export async function handleOrderTracking(orderId: string): Promise<Response> {
   return renderPage({
     title: "Order status — Undal HomeKitchen",
     description: "Live status of an Undal HomeKitchen order.",
-    body: `<section class="receipt" id="undal-receipt">
+    body: `<div class="tracking-layout">
+<section class="receipt" id="undal-receipt">
   <div class="receipt-hero" id="undal-receipt-hero" hidden>
     <span class="receipt-tick" aria-hidden="true">✓</span>
-    <h2>Order placed. We’re on it.</h2>
-    <p>The kitchen has been alerted on its own phone and is looking at your order now.</p>
+    <h2>Order placed.</h2>
+    <p>Your order was sent to the kitchen. This page updates when its status changes.</p>
     <p class="receipt-sent" id="undal-receipt-sent"></p>
   </div>
   <div class="receipt-rows" id="undal-receipt-rows">
@@ -1042,8 +1066,8 @@ export async function handleOrderTracking(orderId: string): Promise<Response> {
   <div class="receipt-total"><span>Cash to the rider</span><span class="amount" id="undal-order-total">—</span></div>
   <p class="receipt-note">Cash on delivery only — no card, no wallet, no online payment. Keep the cash ready for the rider.</p>
 </section>
-<section class="card">
-  <span class="pill" id="undal-status-pill">Loading…</span>
+<section class="card tracking-status" aria-label="Order progress">
+  <span class="pill" id="undal-status-pill" role="status" aria-live="polite">Loading…</span>
   <h2 style="margin-top:10px" id="undal-order-title">Order</h2>
   <ul class="steps" id="undal-steps">
     <li data-status="placed"><span class="dot"></span><span>Placed — the kitchen has your order</span></li>
@@ -1054,14 +1078,17 @@ export async function handleOrderTracking(orderId: string): Promise<Response> {
   </ul>
   <div id="undal-note"></div>
   <p class="smallprint" id="undal-updated"></p>
+  <p class="smallprint" id="undal-connection" role="status" aria-live="polite"></p>
+  <noscript><p class="notice">Status updates need JavaScript on this page. Enable it or contact the kitchen with your order number.</p></noscript>
   <a class="button secondary" href="/store">Order something else</a>
   <a class="button secondary" href="/download">Install the app for live pushes</a>
 </section>
+</div>
 <script>
 (function () {
   var orderId = ${JSON.stringify(orderId.replace(/[^A-Za-z0-9]/g, ""))};
   var labels = {
-    placed: ["Placed", "The kitchen has your order and is looking at it now."],
+    placed: ["Placed", "Your order was placed. Waiting for the kitchen to respond."],
     accepted: ["Cooking", "The kitchen has accepted this order and the prep timer is running."],
     ready: ["Ready", "Packed and waiting for the rider."],
     in_delivery: ["On the way", "The rider has left the kitchen. Keep the cash ready."],
@@ -1236,14 +1263,20 @@ export async function handleOrderTracking(orderId: string): Promise<Response> {
           notFound();
           return null;
         }
+        if (response.status >= 400) throw new Error("The order could not be refreshed.");
         return response.json();
       })
       .then(function (payload) {
         if (!payload) return;
-        if (payload.ok) paint(payload.order);
+        if (payload.ok) {
+          document.getElementById("undal-connection").textContent = "";
+          paint(payload.order);
+        }
         else notFound();
       })
-      .catch(function () { /* the next poll tries again */ });
+      .catch(function () {
+        document.getElementById("undal-connection").textContent = "Could not refresh. Showing the last update; retrying while this page stays open.";
+      });
   }
   poll();
   window._undalPoll = window.setInterval(poll, 20000);

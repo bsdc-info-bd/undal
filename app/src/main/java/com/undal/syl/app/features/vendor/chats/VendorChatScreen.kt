@@ -1,7 +1,10 @@
+@file:OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
+
 package com.undal.syl.app.features.vendor.chats
 
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -27,20 +30,18 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
+import com.undal.syl.app.core.design.ShimmerListRow
+import com.undal.syl.app.core.design.UndalMessageComposer
 import com.undal.syl.app.core.design.UndalAlertBanner
 import com.undal.syl.app.core.design.UndalCard
-import com.undal.syl.app.core.design.UndalPrimaryButton
 import com.undal.syl.app.core.design.UndalScaffold
-import com.undal.syl.app.core.design.UndalTextField
 import com.undal.syl.app.core.design.UndalTextButton
 import com.undal.syl.app.core.theme.UndalDimens
 import com.undal.syl.app.core.theme.undalSemantics
@@ -84,7 +85,7 @@ fun VendorChatScreen(
     UndalScaffold(
         title = "Chat · ${order?.shortId?.ifBlank { orderId.takeLast(4) } ?: "order"}",
         subtitle = when {
-            order == null -> "Loading the order…"
+            order == null -> if (state.loading) "Reading the order…" else "Order unavailable"
             state.customerTyping -> "The customer is typing…"
             state.readAtMillis > 0L -> "They read your last message at " +
                 TimeDhaka.formatInstant(Instant.ofEpochMilli(state.readAtMillis))
@@ -92,6 +93,7 @@ fun VendorChatScreen(
             else -> "${order.customerName.ifBlank { "Customer" }} · ${order.statusLabel}"
         },
         onBack = onBack,
+        contentMaxWidth = 760.dp,
         actions = {
             UndalTextButton(
                 text = "Order",
@@ -101,9 +103,17 @@ fun VendorChatScreen(
         }
     ) { _ ->
         Column(modifier = Modifier.fillMaxSize()) {
+            if (state.message != null) {
+                UndalAlertBanner(text = state.message.orEmpty(), icon = Icons.Filled.Info,
+                    modifier = Modifier.padding(horizontal = UndalDimens.screenPadding),
+                    action = { UndalTextButton("Close", onClick = viewModel::dismissMessage) })
+            }
+            if (state.loading) {
+                ShimmerListRow(Modifier.padding(horizontal = UndalDimens.screenPadding))
+            }
             if (order != null) {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
+                FlowRow(
+                    horizontalArrangement = Arrangement.spacedBy(UndalDimens.sm),
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(horizontal = UndalDimens.screenPadding, vertical = UndalDimens.xs)
@@ -113,13 +123,12 @@ fun VendorChatScreen(
                     Text(
                         text = order.linesSummary.ifBlank { "${order.itemCount} item(s)" },
                         style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.weight(1f)
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
             }
 
-            if (state.messages.isEmpty()) {
+            if (state.messages.isEmpty() && !state.loading && state.message == null) {
                 UndalCard(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -137,7 +146,8 @@ fun VendorChatScreen(
                         )
                         Spacer(Modifier.width(UndalDimens.xs))
                         Text(
-                            text = "No message yet. Say when the food leaves, and tell them if it will be late.",
+                            text = if (order == null) "The order is unavailable. Open it from the queue to check its status." else
+                                "No messages yet. Keep the customer informed about their order.",
                             style = MaterialTheme.typography.bodyMedium
                         )
                     }
@@ -174,59 +184,10 @@ fun VendorChatScreen(
                 }
             }
 
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(UndalDimens.screenPadding),
-                horizontalArrangement = Arrangement.spacedBy(UndalDimens.xs)
-            ) {
-                UndalTextField(
-                    value = state.draft,
-                    onValueChange = viewModel::onDraftChange,
-                    label = "Message",
-                    hint = "Text only — the rider is five minutes away.",
-                    maxLines = 3,
-                    modifier = Modifier.weight(1f)
-                )
-                UndalPrimaryButton(
-                    text = "Send",
-                    onClick = viewModel::send,
-                    enabled = state.draft.isNotBlank() && !state.sending,
-                    loading = state.sending,
-                    icon = Icons.Filled.Email,
-                    fillWidth = false
-                )
-            }
-
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                modifier = Modifier.padding(
-                    start = UndalDimens.screenPadding,
-                    end = UndalDimens.screenPadding,
-                    bottom = UndalDimens.sm
-                )
-            ) {
-                Icon(
-                    Icons.Filled.Info,
-                    contentDescription = null,
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.size(UndalDimens.iconSm)
-                )
-                Spacer(Modifier.width(UndalDimens.xs))
-                Text(
-                    text = "Messages are text only in this version, and both sides see the same thread.",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            }
-        }
-
-        state.message?.let { message ->
-            UndalAlertBanner(
-                text = message,
-                icon = Icons.Filled.Info,
-                modifier = Modifier.fillMaxWidth().padding(UndalDimens.screenPadding)
+            UndalMessageComposer(
+                draft = state.draft, onDraftChange = viewModel::onDraftChange,
+                onSend = viewModel::send, sending = state.sending, enabled = order != null,
+                modifier = Modifier.padding(horizontal = UndalDimens.screenPadding, vertical = UndalDimens.sm)
             )
         }
     }
@@ -237,6 +198,7 @@ private fun androidx.compose.foundation.lazy.LazyListScope.itemsOf(state: Vendor
     state.messages.forEach { message ->
         item(key = message.id) {
             val mine = message.fromKitchen
+            val bubbleContent = if (mine) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurfaceVariant
             Surface(
                 color = if (mine) {
                     MaterialTheme.colorScheme.primaryContainer
@@ -250,14 +212,14 @@ private fun androidx.compose.foundation.lazy.LazyListScope.itemsOf(state: Vendor
                     Text(
                         text = if (mine) "Kitchen" else "Customer",
                         style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                        color = bubbleContent
                     )
                     Text(text = message.text, style = MaterialTheme.typography.bodyMedium)
                     if (message.tsMillis > 0L) {
                         Text(
                             text = TimeDhaka.formatInstantDate(Instant.ofEpochMilli(message.tsMillis)),
                             style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                            color = bubbleContent
                         )
                     }
                 }

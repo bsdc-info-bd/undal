@@ -97,6 +97,7 @@ export async function raiseKitchenAlert(
 ): Promise<KitchenAlertOutcome> {
   const topic = kitchenTopic(env);
   const data: Record<string, string> = {
+    ...(alert.extra ?? {}),
     type: alert.type ?? "order_created",
     orderId: alert.orderId,
     shortId: alert.shortId,
@@ -106,8 +107,10 @@ export async function raiseKitchenAlert(
     clickAction: "vendor_order",
     ...(alert.test ? { test: "true" } : {}),
     ...(alert.kind ? { kind: alert.kind } : {}),
-    ...(alert.extra ?? {}),
+    sentAt: String(Date.now()),
   };
+  if (!alert.test) delete data.test;
+  if (!alert.kind) delete data.kind;
   // Never collapse new orders: Android keeps only four collapse keys, so
   // using one key per order can silently discard a busy kitchen's backlog.
   const options = { data, ttl: alert.ttl ?? "300s", highPriority: true,
@@ -121,6 +124,13 @@ export async function raiseKitchenAlert(
     topicSent: false,
     delivered: 0,
   };
+
+  const topicPromise = sendToTopic(env, topic, options).catch(() => ({
+    ok: false as const,
+    status: 0,
+    code: "TOPIC_SEND_FAILED",
+    unregistered: false,
+  }));
 
   // --- route 1: the kitchen account's own devices -------------------------
   const uid = await vendorUid(env).catch(() => null);
@@ -150,17 +160,13 @@ export async function raiseKitchenAlert(
   // This route does not consult the account at all, which is exactly why it is
   // here: a renamed, recreated or unprovisioned vendor account cannot silence an
   // order while a device is subscribed.
-  const topicPush = await sendToTopic(env, topic, options).catch(() => ({
-    ok: false as const,
-    status: 0,
-    code: "TOPIC_SEND_FAILED",
-    unregistered: false,
-  }));
+  const topicPush = await topicPromise;
   outcome.topicSent = topicPush.ok;
   if (!topicPush.ok && topicPush.code !== "NO_TARGET") {
     outcome.warning = outcome.warning ?? `topic fan-out failed (${topicPush.code})`;
   }
 
   outcome.delivered = outcome.tokenSent + (outcome.topicSent ? 1 : 0);
+  if (outcome.delivered === 0) outcome.warning = "No alert route was accepted by FCM. Check credentials, tokens and Worker logs; the next sweep will retry.";
   return outcome;
 }

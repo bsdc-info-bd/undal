@@ -247,6 +247,8 @@ export interface FsQuery {
   where?: Array<{ field: string; op: "EQUAL" | "NOT_EQUAL" | "LESS_THAN" | "LESS_THAN_OR_EQUAL" | "GREATER_THAN" | "GREATER_THAN_OR_EQUAL"; value: unknown }>;
   orderBy?: Array<{ field: string; direction?: "ASCENDING" | "DESCENDING" }>;
   limit?: number;
+  /** Exclusive document-name cursor; only valid with ascending __name__ ordering. */
+  afterDocument?: string;
 }
 
 /**
@@ -279,6 +281,15 @@ export async function fsQuery(env: Env, query: FsQuery, subject?: string): Promi
     }));
   }
   if (query.limit) structuredQuery.limit = query.limit;
+  if (query.afterDocument) {
+    if (query.orderBy?.length !== 1 || query.orderBy[0]?.field !== "__name__" || query.orderBy[0]?.direction === "DESCENDING") {
+      throw new Error("Document cursors require ascending __name__ ordering");
+    }
+    structuredQuery.startAt = {
+      values: [{ referenceValue: `projects/${projectId(env)}/databases/(default)/documents/${query.afterDocument}` }],
+      before: false,
+    };
+  }
 
   const response = await authorizedFetch(
     env,

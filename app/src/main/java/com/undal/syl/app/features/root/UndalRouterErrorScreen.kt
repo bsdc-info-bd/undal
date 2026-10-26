@@ -8,12 +8,13 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.Button
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.unit.dp
+import com.undal.syl.app.core.design.UndalPrimaryButton
+import com.undal.syl.app.core.design.UndalTextButton
 import com.undal.syl.app.core.design.UndalCard
 import com.undal.syl.app.core.design.UndalScaffold
 import com.undal.syl.app.core.theme.UndalDimens
@@ -36,7 +37,7 @@ fun UndalRouterErrorScreen(
     onSignOut: () -> Unit,
     onOpenSupport: () -> Unit
 ) {
-    UndalScaffold(title = "Undal HomeKitchen") { _ ->
+    UndalScaffold(title = "Open your account", contentMaxWidth = 600.dp) { _ ->
         Column(
             modifier = Modifier
                 .fillMaxSize()
@@ -48,24 +49,17 @@ fun UndalRouterErrorScreen(
                 Spacer(Modifier.height(UndalDimens.xs))
                 Text(text = message, style = MaterialTheme.typography.bodyMedium)
                 Spacer(Modifier.height(UndalDimens.md))
-                Button(onClick = onRetry, modifier = Modifier.fillMaxWidth()) {
-                    Text("Try again")
-                }
-                TextButton(onClick = onOpenSupport, modifier = Modifier.fillMaxWidth()) {
-                    Text("What delivery, payment and privacy mean here")
-                }
-                TextButton(onClick = onSignOut, modifier = Modifier.fillMaxWidth()) {
-                    Text("Sign out instead")
-                }
+                UndalPrimaryButton("Try again", onClick = onRetry)
+                UndalTextButton("Delivery, payment and privacy", onClick = onOpenSupport, modifier = Modifier.fillMaxWidth())
+                UndalTextButton("Sign out instead", onClick = onSignOut, modifier = Modifier.fillMaxWidth())
             }
             Spacer(Modifier.height(UndalDimens.sm))
             UndalCard {
                 Text("While this is on screen", style = MaterialTheme.typography.titleMedium)
                 Spacer(Modifier.height(UndalDimens.xs))
                 Text(
-                    text = "Nothing has been changed and nothing has been lost: you are still signed in, " +
-                        "the kitchen still has every order it had, and your basket is still on this phone. " +
-                        "Tap Try again once the connection is back — a single tap is normally all it takes.",
+                    text = "We could not confirm where this account should open. Check your connection and try again. " +
+                        "Retrying does not place an order or change your saved delivery details.",
                     style = MaterialTheme.typography.bodyMedium
                 )
             }

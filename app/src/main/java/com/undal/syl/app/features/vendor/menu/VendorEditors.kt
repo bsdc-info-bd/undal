@@ -1,3 +1,5 @@
+@file:OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
+
 package com.undal.syl.app.features.vendor.menu
 
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -8,11 +10,13 @@ import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -27,8 +31,9 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Star
-import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Checkbox
+import androidx.compose.material3.Surface
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import androidx.compose.material3.DatePicker
 import androidx.compose.material3.DatePickerDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -39,10 +44,7 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -50,6 +52,7 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import coil3.compose.AsyncImage
+import com.undal.syl.app.core.design.UndalActionGroup
 import com.undal.syl.app.core.design.UndalAlertBanner
 import com.undal.syl.app.core.design.UndalPrimaryButton
 import com.undal.syl.app.core.design.UndalSecondaryButton
@@ -91,31 +94,27 @@ private fun EditorDialog(
     onConfirm: () -> Unit,
     content: @Composable () -> Unit
 ) {
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text(title, style = MaterialTheme.typography.titleMedium) },
-        text = {
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .heightIn(max = 460.dp)
-                    .verticalScroll(rememberScrollState())
-            ) {
-                content()
+    Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
+        Surface(
+            modifier = Modifier.padding(UndalDimens.md).widthIn(max = 640.dp).fillMaxWidth().heightIn(max = 740.dp),
+            shape = RoundedCornerShape(UndalDimens.radiusLg),
+            color = MaterialTheme.colorScheme.surface
+        ) {
+            Column(modifier = Modifier.padding(UndalDimens.screenPadding)) {
+                Text(title, style = MaterialTheme.typography.titleLarge)
+                Spacer(Modifier.height(UndalDimens.md))
+                Column(
+                    modifier = Modifier.weight(1f, fill = false).fillMaxWidth()
+                        .verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(UndalDimens.xs)
+                ) { content() }
+                Spacer(Modifier.height(UndalDimens.md))
+                UndalPrimaryButton(text = confirmLabel, onClick = onConfirm,
+                    enabled = confirmEnabled, loading = busy)
+                UndalTextButton(text = "Close", onClick = onDismiss, modifier = Modifier.fillMaxWidth())
             }
-        },
-        confirmButton = {
-            UndalPrimaryButton(
-                text = confirmLabel,
-                onClick = onConfirm,
-                enabled = confirmEnabled,
-                loading = busy
-            )
-        },
-        dismissButton = {
-            UndalTextButton(text = "Close", onClick = onDismiss)
         }
-    )
+    }
 }
 
 /** Photo pick → Cloudinary, with the progress the owner needs on mobile data. */
@@ -306,7 +305,7 @@ fun DishEditorSheet(
             maxLines = 3
         )
         Spacer(Modifier.height(UndalDimens.xs))
-        Row(horizontalArrangement = Arrangement.spacedBy(UndalDimens.xs)) {
+        UndalActionGroup(primary = {
             UndalTextField(
                 value = draft.priceText,
                 onValueChange = { viewModel.onItemDraftChange(draft.copy(priceText = UndalDigits.cleanDecimal(it))) },
@@ -316,9 +315,9 @@ fun DishEditorSheet(
                 // Decimal, not Number: a number keypad on many phones has no dot,
                 // and ৳180.50 is a price the kitchen is allowed to charge.
                 keyboardType = KeyboardType.Decimal,
-                singleLine = true,
-                modifier = Modifier.weight(1f)
+                singleLine = true
             )
+        }, secondary = {
             UndalTextField(
                 value = draft.compareText,
                 onValueChange = { viewModel.onItemDraftChange(draft.copy(compareText = UndalDigits.cleanDecimal(it))) },
@@ -326,10 +325,9 @@ fun DishEditorSheet(
                 hint = "220",
                 error = draft.compareError,
                 keyboardType = KeyboardType.Decimal,
-                singleLine = true,
-                modifier = Modifier.weight(1f)
+                singleLine = true
             )
-        }
+        })
         if (draft.discountAmountPaisa > 0L) {
             Spacer(Modifier.height(UndalDimens.xs))
             UndalStatusPill(
@@ -348,7 +346,7 @@ fun DishEditorSheet(
         )
         Spacer(Modifier.height(UndalDimens.xs))
         Text(text = "Section", style = MaterialTheme.typography.labelLarge)
-        Row(horizontalArrangement = Arrangement.spacedBy(UndalDimens.xs)) {
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(UndalDimens.xs)) {
             categories.forEach { category ->
                 VendorChip(
                     label = category.name,
@@ -362,7 +360,7 @@ fun DishEditorSheet(
         if (subcategories.isNotEmpty()) {
             Spacer(Modifier.height(UndalDimens.xs))
             Text(text = "Subcategory", style = MaterialTheme.typography.labelLarge)
-            Row(horizontalArrangement = Arrangement.spacedBy(UndalDimens.xs)) {
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(UndalDimens.xs)) {
                 subcategories.forEach { sub ->
                     VendorChip(
                         label = sub.name,
@@ -378,7 +376,7 @@ fun DishEditorSheet(
         }
         Spacer(Modifier.height(UndalDimens.xs))
         Text(text = "Spice level", style = MaterialTheme.typography.labelLarge)
-        Row(horizontalArrangement = Arrangement.spacedBy(UndalDimens.xs)) {
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(UndalDimens.xs)) {
             SPICE_LABELS.forEachIndexed { level, spiceLabel ->
                 VendorChip(
                     label = spiceLabel,
@@ -389,7 +387,7 @@ fun DishEditorSheet(
         }
         Spacer(Modifier.height(UndalDimens.xs))
         Text(text = "Prep time", style = MaterialTheme.typography.labelLarge)
-        Row(horizontalArrangement = Arrangement.spacedBy(UndalDimens.xs)) {
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(UndalDimens.xs)) {
             PREP_CHOICES.forEach { minutes ->
                 VendorChip(
                     label = "$minutes min",
@@ -496,7 +494,7 @@ fun SectionEditorSheet(
         } else {
             Spacer(Modifier.height(UndalDimens.xs))
             Text(text = "Belongs to", style = MaterialTheme.typography.labelLarge)
-            Row(horizontalArrangement = Arrangement.spacedBy(UndalDimens.xs)) {
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(UndalDimens.xs)) {
                 state.menu.categories.sortedBy { it.order }.forEach { category ->
                     VendorChip(
                         label = category.name,
@@ -606,7 +604,7 @@ fun ComboEditorSheet(
         }
         Spacer(Modifier.height(UndalDimens.xs))
         Text(text = "Add a dish", style = MaterialTheme.typography.labelLarge)
-        Row(horizontalArrangement = Arrangement.spacedBy(UndalDimens.xs)) {
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(UndalDimens.xs)) {
             state.menu.items
                 .filter { item -> draft.refs.none { it.menuItemId == item.id } }
                 .take(12)
@@ -688,7 +686,7 @@ fun CampaignEditorSheet(
         )
         Spacer(Modifier.height(UndalDimens.xs))
         Text(text = "Discount type", style = MaterialTheme.typography.labelLarge)
-        Row(horizontalArrangement = Arrangement.spacedBy(UndalDimens.xs)) {
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(UndalDimens.xs)) {
             VendorChip(
                 label = "Percent",
                 selected = draft.type == "percent",
@@ -802,7 +800,7 @@ fun CouponEditorSheet(
         )
         Spacer(Modifier.height(UndalDimens.xs))
         Text(text = "Type", style = MaterialTheme.typography.labelLarge)
-        Row(horizontalArrangement = Arrangement.spacedBy(UndalDimens.xs)) {
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(UndalDimens.xs)) {
             VendorChip(
                 label = "Percent",
                 selected = draft.type == "percent",
@@ -883,8 +881,7 @@ fun CouponEditorSheet(
             singleLine = true
         )
         Spacer(Modifier.height(UndalDimens.xs))
-        Row(horizontalArrangement = Arrangement.spacedBy(UndalDimens.xs)) {
-            Box(modifier = Modifier.weight(1f)) {
+        UndalActionGroup(primary = {
                 UndalTextField(
                     value = draft.startsAt,
                     onValueChange = { viewModel.onCouponDraftChange(draft.copy(startsAt = UndalDigits.cleanClock(it))) },
@@ -893,8 +890,7 @@ fun CouponEditorSheet(
                     error = if (draft.windowError != null && draft.startsAt.isNotBlank()) draft.windowError else null,
                     singleLine = true
                 )
-            }
-            Box(modifier = Modifier.weight(1f)) {
+        }, secondary = {
                 UndalTextField(
                     value = draft.endsAt,
                     onValueChange = { viewModel.onCouponDraftChange(draft.copy(endsAt = UndalDigits.cleanClock(it))) },
@@ -903,8 +899,7 @@ fun CouponEditorSheet(
                     error = if (draft.windowError != null && draft.endsAt.isNotBlank()) draft.windowError else null,
                     singleLine = true
                 )
-            }
-        }
+        })
         Text(
             text = "Leave both blank for all day. A window that ends before it starts is a " +
                 "late-night offer — 20:00 to 01:00 works.",
@@ -914,7 +909,7 @@ fun CouponEditorSheet(
         Spacer(Modifier.height(UndalDimens.xs))
         Text(text = "Days", style = MaterialTheme.typography.labelLarge)
         Spacer(Modifier.height(UndalDimens.xs))
-        Row(horizontalArrangement = Arrangement.spacedBy(UndalDimens.xs)) {
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(UndalDimens.xs)) {
             listOf("fri", "sat", "sun").forEach { day ->
                 VendorChip(
                     label = day.uppercase(Locale.ENGLISH),
@@ -927,7 +922,7 @@ fun CouponEditorSheet(
             }
         }
         Spacer(Modifier.height(UndalDimens.xs))
-        Row(horizontalArrangement = Arrangement.spacedBy(UndalDimens.xs)) {
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(UndalDimens.xs)) {
             listOf("mon", "tue", "wed", "thu").forEach { day ->
                 VendorChip(
                     label = day.uppercase(Locale.ENGLISH),

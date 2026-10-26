@@ -45,6 +45,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.undal.syl.app.core.config.UndalBuildInfo
+import com.undal.syl.app.core.design.UndalActionGroup
 import com.undal.syl.app.core.design.UndalAlertBanner
 import com.undal.syl.app.core.design.UndalCard
 import com.undal.syl.app.core.design.UndalKeyValueRow
@@ -231,8 +232,8 @@ fun VendorDashboardScreen(
                 if (state.fromCache) {
                     item {
                         UndalAlertBanner(
-                            text = "Showing the last queue that reached this phone. Writes wait for signal " +
-                                "and send themselves — nothing is lost.",
+                            text = "Showing the last queue that reached this phone. Reconnect and check the latest " +
+                                "order status before acting.",
                             icon = Icons.Filled.Info
                         )
                     }
@@ -248,38 +249,72 @@ fun VendorDashboardScreen(
                 }
 
                 item {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(UndalDimens.xs)
+                    VendorSection(
+                        title = "New orders",
+                        subtitle = if (state.waiting.isEmpty()) {
+                            "No waiting orders in the current feed."
+                        } else {
+                            "${state.waiting.size} waiting for your answer — tap to open."
+                        }
                     ) {
-                        VendorStatCard(
-                            label = "Today",
-                            value = state.stats.orders.toString(),
-                            caption = "orders since midnight",
-                            modifier = Modifier.weight(1f)
-                        )
-                        VendorStatCard(
-                            label = "Collected",
-                            value = Money.format(state.stats.revenuePaisa),
-                            caption = "cash on delivered",
-                            modifier = Modifier.weight(1f)
-                        )
+                        if (state.waiting.isEmpty()) {
+                            VendorEmptyState(
+                                icon = Icons.Filled.Star,
+                                title = "All quiet in the kitchen",
+                                message = "New orders appear here when they reach this phone. Keep notification " +
+                                    "and sound permissions enabled; check alert diagnostics if an order is missed.",
+                                actionLabel = null,
+                                onAction = null
+                            )
+                        } else {
+                            Column(verticalArrangement = Arrangement.spacedBy(UndalDimens.xs)) {
+                                state.waiting.forEach { order ->
+                                    VendorOrderCard(
+                                        order = order,
+                                        onClick = {
+                                            haptics.tick()
+                                            onOpenOrder(order.id)
+                                        },
+                                        trailing = {
+                                            VendorAgePill(order = order)
+                                        }
+                                    )
+                                }
+                            }
+                        }
                     }
                 }
 
                 item {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(UndalDimens.xs)
-                    ) {
+                    UndalActionGroup(primary = {
                         VendorStatCard(
+                            modifier = Modifier.fillMaxWidth(),
+                            label = "Today",
+                            value = state.stats.orders.toString(),
+                            caption = "orders since midnight"
+                        )
+                    }, secondary = {
+                        VendorStatCard(
+                            modifier = Modifier.fillMaxWidth(),
+                            label = "Collected",
+                            value = Money.format(state.stats.revenuePaisa),
+                            caption = "cash on delivered"
+                        )
+                    })
+                }
+
+                item {
+                    UndalActionGroup(primary = {
+                        VendorStatCard(
+                            modifier = Modifier.fillMaxWidth(),
                             label = "In hand",
                             value = state.stats.pendingAndActive.toString(),
                             caption = "pending + cooking",
-                            highlight = state.stats.pendingAndActive > 0,
-                            modifier = Modifier.weight(1f)
+                            highlight = state.stats.pendingAndActive > 0
                         )
+                    }, secondary = {
                         VendorStatCard(
+                            modifier = Modifier.fillMaxWidth(),
                             label = "Average",
                             value = if (state.stats.averageTicketPaisa > 0L) {
                                 Money.format(state.stats.averageTicketPaisa)
@@ -290,10 +325,9 @@ fun VendorDashboardScreen(
                                 "no orders yet"
                             } else {
                                 "top: ${state.stats.topDish}"
-                            },
-                            modifier = Modifier.weight(1f)
+                            }
                         )
-                    }
+                    })
                 }
 
                 item {
@@ -371,43 +405,6 @@ fun VendorDashboardScreen(
 
                 item {
                     VendorSection(
-                        title = "New orders",
-                        subtitle = if (state.waiting.isEmpty()) {
-                            "Nothing is ringing. The alert loop is armed and the sound is loaded."
-                        } else {
-                            "${state.waiting.size} waiting for your answer — tap to open."
-                        }
-                    ) {
-                        if (state.waiting.isEmpty()) {
-                            VendorEmptyState(
-                                icon = Icons.Filled.Star,
-                                title = "All quiet in the kitchen",
-                                message = "A new order rings this phone within a second of the customer " +
-                                    "tapping pay. You can leave the app open or let the push wake it.",
-                                actionLabel = null,
-                                onAction = null
-                            )
-                        } else {
-                            Column(verticalArrangement = Arrangement.spacedBy(UndalDimens.xs)) {
-                                state.waiting.forEach { order ->
-                                    VendorOrderCard(
-                                        order = order,
-                                        onClick = {
-                                            haptics.tick()
-                                            onOpenOrder(order.id)
-                                        },
-                                        trailing = {
-                                            VendorAgePill(order = order)
-                                        }
-                                    )
-                                }
-                            }
-                        }
-                    }
-                }
-
-                item {
-                    VendorSection(
                         title = "Jump to",
                         subtitle = "The five screens the kitchen actually uses."
                     ) {
@@ -417,34 +414,32 @@ fun VendorDashboardScreen(
                                 onClick = onOpenOrders,
                                 icon = Icons.Filled.ShoppingCart
                             )
-                            Row(horizontalArrangement = Arrangement.spacedBy(UndalDimens.xs)) {
+                            UndalActionGroup(primary = {
                                 UndalSecondaryButton(
                                     text = "Menu",
                                     onClick = onOpenMenu,
-                                    icon = Icons.Filled.List,
-                                    modifier = Modifier.weight(1f)
+                                    icon = Icons.Filled.List
                                 )
+                            }, secondary = {
                                 UndalSecondaryButton(
                                     text = "Schedule",
                                     onClick = onOpenSchedule,
-                                    icon = Icons.Filled.Home,
-                                    modifier = Modifier.weight(1f)
+                                    icon = Icons.Filled.Home
                                 )
-                            }
-                            Row(horizontalArrangement = Arrangement.spacedBy(UndalDimens.xs)) {
+                            })
+                            UndalActionGroup(primary = {
                                 UndalSecondaryButton(
                                     text = "Offers",
                                     onClick = onOpenPromos,
-                                    icon = Icons.Filled.Star,
-                                    modifier = Modifier.weight(1f)
+                                    icon = Icons.Filled.Star
                                 )
+                            }, secondary = {
                                 UndalSecondaryButton(
                                     text = "Chats",
                                     onClick = onOpenChats,
-                                    icon = Icons.Filled.Email,
-                                    modifier = Modifier.weight(1f)
+                                    icon = Icons.Filled.Email
                                 )
-                            }
+                            })
                         }
                     }
                 }
@@ -595,7 +590,7 @@ private fun ConnectionCard(summary: PresenceSummary, loaded: Boolean) {
                 horizontalArrangement = Arrangement.spacedBy(UndalDimens.xs)
             ) {
                 VendorStatCard(
-                    label = "Uptime",
+                            modifier = Modifier.fillMaxWidth(),                    label = "Uptime",
                     value = if (loaded) summary.uptimeLabel else "—",
                     caption = if (summary.sampledMinutes > 0) {
                         "${summary.sampledMinutes} min sampled"
@@ -606,7 +601,7 @@ private fun ConnectionCard(summary: PresenceSummary, loaded: Boolean) {
                     modifier = Modifier.weight(1f)
                 )
                 VendorStatCard(
-                    label = "Offline",
+                            modifier = Modifier.fillMaxWidth(),                    label = "Offline",
                     value = PresenceSummary.formatMinutes(summary.offlineMinutes),
                     caption = "in 7 days",
                     highlight = summary.heartbeatAgeMillis > PresenceHeartbeat.STALE_AGE_MILLIS,

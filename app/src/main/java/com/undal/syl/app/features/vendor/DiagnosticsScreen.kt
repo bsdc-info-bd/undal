@@ -1,7 +1,8 @@
+@file:OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
+
 package com.undal.syl.app.features.vendor
 
 import android.Manifest
-import android.content.Intent
 import android.os.Build
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -13,7 +14,7 @@ import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -24,7 +25,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CheckCircle
@@ -42,16 +42,11 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.scale
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.undal.syl.app.core.config.UndalBuildInfo
@@ -66,19 +61,7 @@ import com.undal.syl.app.core.fcm.AlarmChannels
 import com.undal.syl.app.core.theme.UndalDimens
 import kotlinx.coroutines.delay
 
-/**
- * Kitchen readiness (V-004 · V-009 · V-087 · PART I).
- *
- * The question this screen answers is not "are the settings nice" — it is **"if a
- * customer orders right now, will this phone ring?"** So it leads with the
- * answer, in one word, and then lists only what stands between the kitchen and
- * that word. Everything below is read from the operating system, the database or
- * the relay; nothing here is a setting the app merely believes it set.
- *
- * The last card is the one that matters: a real alert, sent by the relay, ringing
- * this phone through the same code path a real order uses. A green checklist can
- * be wrong; a phone that rings cannot.
- */
+/** Device readiness checks and a relay test. Neither is a guarantee of future Android delivery. */
 @Composable
 fun DiagnosticsScreen(
     onContinue: () -> Unit,
@@ -158,8 +141,16 @@ fun DiagnosticsScreen(
     }
 
     UndalScaffold(
-        title = "Will this phone ring?",
-        subtitle = if (state.armed) "Everything an order needs is in place" else "Two minutes now, no missed orders"
+        title = "Alert readiness",
+        subtitle = "Device checks and a real test alert",
+        contentMaxWidth = 760.dp,
+        bottomBar = {
+            UndalPrimaryButton(
+                text = if (state.armed) "Open kitchen console" else "Continue with checks outstanding",
+                onClick = onContinue,
+                modifier = Modifier.padding(horizontal = UndalDimens.screenPadding, vertical = UndalDimens.sm)
+            )
+        }
     ) { _ ->
         Column(
             modifier = Modifier
@@ -185,10 +176,10 @@ fun DiagnosticsScreen(
             val failing = state.checks.filter { it.status != DiagnosticsViewModel.Status.OK }
             val ready = state.checks.filter { it.status == DiagnosticsViewModel.Status.OK }
 
-            if (failing.isEmpty() && state.notice == null) {
+            if (state.armed && failing.isEmpty() && state.notice == null) {
                 UndalAlertBanner(
-                    text = "Every check passes. Scroll to the last card and ring this phone once — that is the " +
-                        "only test that proves the whole chain.",
+                    text = "Required checks pass. Send a test alert below and listen with the screen locked. " +
+                        "A successful test confirms that attempt, not future delivery.",
                     icon = Icons.Filled.CheckCircle
                 )
                 Spacer(Modifier.height(UndalDimens.sm))
@@ -230,6 +221,43 @@ fun DiagnosticsScreen(
                 }
             )
 
+            Spacer(Modifier.height(UndalDimens.sm))
+
+            UndalCard {
+                Text("Background delivery · what to expect", style = MaterialTheme.typography.titleMedium)
+                Spacer(Modifier.height(UndalDimens.xs))
+                Text(
+                    "Orders use high-priority FCM data messages. After receipt, a foreground alarm service loops the sound until all waiting orders are answered. A live watcher and server re-alerts add recovery paths.",
+                    style = MaterialTheme.typography.bodyMedium
+                )
+                Spacer(Modifier.height(UndalDimens.sm))
+                Text(
+                    "Normal process death is supported, but Force stop, a powered-off/offline phone, revoked permissions or manufacturer restrictions can prevent delivery. After Force stop, open Undal again. Allow notifications, unrestricted battery use and autostart, then test with the screen locked.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+            Spacer(Modifier.height(UndalDimens.sm))
+            UndalCard {
+                Text("Alert delivery timeline", style = MaterialTheme.typography.titleMedium)
+                Text("Local evidence · latest 24 events · Bangladesh time. Playback state is not proof that a person heard the sound.",
+                    style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                val events = state.alertEvents
+                if (events.isEmpty()) Text("No alert events yet. Run Ring my phone to test the chain.", style = MaterialTheme.typography.bodyMedium)
+                events.take(12).forEach { event ->
+                    Spacer(Modifier.height(UndalDimens.sm))
+                    Text(event, style = MaterialTheme.typography.bodySmall)
+                }
+                Spacer(Modifier.height(UndalDimens.sm))
+                UndalSecondaryButton(text = "Refresh delivery evidence", onClick = { viewModel.refresh(context) })
+                if (events.isNotEmpty()) {
+                    UndalTextButton(text = "Copy diagnostic timeline", onClick = {
+                        val clipboard = context.getSystemService(android.content.Context.CLIPBOARD_SERVICE) as? android.content.ClipboardManager
+                        clipboard?.setPrimaryClip(android.content.ClipData.newPlainText("Undal alert diagnostics", events.joinToString("\n\n")))
+                        android.widget.Toast.makeText(context, "Diagnostic timeline copied", android.widget.Toast.LENGTH_SHORT).show()
+                    })
+                }
+            }
             Spacer(Modifier.height(UndalDimens.sm))
 
             UndalCard {
@@ -320,15 +348,6 @@ fun DiagnosticsScreen(
 
             Spacer(Modifier.height(UndalDimens.lg))
 
-            UndalPrimaryButton(
-                text = if (state.armed) {
-                    "Open the kitchen console"
-                } else {
-                    "Open the console anyway"
-                },
-                onClick = onContinue
-            )
-            Spacer(Modifier.height(UndalDimens.sm))
             UndalTextButton(
                 text = "Read how Undal handles your data",
                 onClick = onOpenSupport,
@@ -339,91 +358,28 @@ fun DiagnosticsScreen(
     }
 }
 
-/**
- * The one-word answer, and the reason a kitchen phone is worth carrying.
- *
- * A slow pulse while armed, because "armed" is a live state, not a badge: the
- * pulse is what makes the difference between "the app said ok once" and "the app
- * is watching right now" visible at a glance from across the counter.
- */
+/** Static device-readiness summary. Passing checks do not prove delivery or audibility. */
 @Composable
 private fun ArmedHeader(armed: Boolean, blockers: Int, attention: Int) {
-    val accent = if (armed) {
-        MaterialTheme.colorScheme.primary
-    } else {
-        MaterialTheme.colorScheme.error
-    }
-    val container = if (armed) {
-        MaterialTheme.colorScheme.primaryContainer
-    } else {
-        MaterialTheme.colorScheme.errorContainer
-    }
-    val pulse = rememberInfiniteTransition(label = "armed-pulse")
-    val scale by pulse.animateFloat(
-        initialValue = 1f,
-        targetValue = if (armed) 1.06f else 1f,
-        animationSpec = infiniteRepeatable(tween(1600), RepeatMode.Reverse),
-        label = "armed-scale"
-    )
-
     UndalCard {
-        Column(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalAlignment = Alignment.CenterHorizontally
-        ) {
-            Box(
-                modifier = Modifier
-                    .size(132.dp)
-                    .scale(scale)
-                    .background(container, CircleShape),
-                contentAlignment = Alignment.Center
-            ) {
-                Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    Icon(
-                        imageVector = if (armed) Icons.Filled.CheckCircle else Icons.Filled.Warning,
-                        contentDescription = null,
-                        tint = accent,
-                        modifier = Modifier.size(40.dp)
-                    )
-                    Spacer(Modifier.height(UndalDimens.xs))
-                    Text(
-                        text = if (armed) "ARMED" else "NOT YET",
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.Bold,
-                        color = accent
-                    )
-                }
-            }
-
-            Spacer(Modifier.height(UndalDimens.md))
-
-            Text(
-                text = when {
-                    armed -> "This phone will ring for a new order"
-                    blockers > 0 -> "$blockers setting${if (blockers == 1) "" else "s"} would lose an order"
-                    else -> "Worth improving before tonight"
-                },
-                style = MaterialTheme.typography.titleMedium,
-                textAlign = TextAlign.Center
-            )
-            Spacer(Modifier.height(UndalDimens.xs))
-            Text(
-                text = when {
-                    armed && attention == 0 ->
-                        "Notifications, the alarm channel, the battery exemption and the live watcher are all in " +
-                            "place. Ring this phone at the bottom to prove the whole chain."
-                    armed ->
-                        "Nothing here can lose an order. $attention check${if (attention == 1) "" else "s"} below " +
-                            "would still make the alert quieter or slower than it should be."
-                    else ->
-                        "Android blocks loud background alarms by default on a new install. Work down this list " +
-                            "once — it takes about two minutes."
-                },
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                textAlign = TextAlign.Center
-            )
-        }
+        Icon(if (armed) Icons.Filled.CheckCircle else Icons.Filled.Warning, contentDescription = null,
+            tint = if (armed) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error,
+            modifier = Modifier.size(40.dp))
+        Spacer(Modifier.height(UndalDimens.sm))
+        Text(if (armed) "Required device checks pass" else "Review alert setup",
+            style = MaterialTheme.typography.headlineSmall)
+        Spacer(Modifier.height(UndalDimens.xs))
+        Text(
+            when {
+                blockers > 0 -> "$blockers required check(s) need attention. Start with the fixes below."
+                attention > 0 -> "$attention optional check(s) may improve alert reliability."
+                armed -> "Device settings are ready for a test alert."
+                else -> "Read the checks below before testing this phone."
+            }, style = MaterialTheme.typography.bodyLarge)
+        Spacer(Modifier.height(UndalDimens.sm))
+        Text("These checks are not a delivery guarantee. Test audibly with the screen locked. " +
+            "Force stop, an offline phone and manufacturer restrictions can still prevent alerts.",
+            style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
 }
 
@@ -447,7 +403,8 @@ private fun CheckCard(check: DiagnosticsViewModel.Check, onFix: (DiagnosticsView
     }
 
     UndalCard {
-        Row(verticalAlignment = Alignment.CenterVertically) {
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(UndalDimens.sm),
+            verticalArrangement = Arrangement.spacedBy(UndalDimens.xs)) {
             Icon(
                 imageVector = icon,
                 contentDescription = null,
@@ -457,8 +414,7 @@ private fun CheckCard(check: DiagnosticsViewModel.Check, onFix: (DiagnosticsView
             Spacer(Modifier.width(UndalDimens.sm))
             Text(
                 text = check.title,
-                style = MaterialTheme.typography.titleMedium,
-                modifier = Modifier.weight(1f)
+                style = MaterialTheme.typography.titleMedium
             )
             UndalStatusPill(
                 text = when (check.status) {

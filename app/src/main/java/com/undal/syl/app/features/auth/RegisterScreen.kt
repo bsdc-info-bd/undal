@@ -19,10 +19,14 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.runtime.getValue
+import androidx.compose.ui.platform.LocalContext
+import com.undal.syl.app.core.design.UndalSecondaryButton
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.unit.dp
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.hilt.navigation.compose.hiltViewModel
+import com.undal.syl.app.core.design.UndalSectionHeader
 import com.undal.syl.app.core.design.PasswordStrengthMeter
 import com.undal.syl.app.core.design.UndalAlertBanner
 import com.undal.syl.app.core.design.UndalCard
@@ -45,12 +49,15 @@ import com.undal.syl.app.core.theme.UndalDimens
 fun RegisterScreen(
     onRegistered: () -> Unit,
     onBackToLogin: () -> Unit,
+    onGoogleSignedIn: () -> Unit = onRegistered,
     viewModel: RegisterViewModel = hiltViewModel()
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
+    val context = LocalContext.current
 
     UndalScaffold(
         title = "Create your account",
+        contentMaxWidth = 600.dp,
         subtitle = "Two steps: account details, then your delivery pin",
         onBack = onBackToLogin
     ) { _ ->
@@ -69,6 +76,17 @@ fun RegisterScreen(
                 )
                 Spacer(Modifier.height(UndalDimens.md))
             }
+
+            UndalSectionHeader("Your next favourite starts here", subtitle = "Use Google or create an account with email.")
+            UndalSecondaryButton(
+                text = "Continue with Google",
+                onClick = { viewModel.signInWithGoogle(context, onGoogleSignedIn) },
+                enabled = !state.busy,
+                loading = state.googleBusy
+            )
+            Text("No new password needed. You will still confirm your name, mobile number and delivery pin.",
+                style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Spacer(Modifier.height(UndalDimens.md))
 
             UndalCard {
                 Text("Your details", style = MaterialTheme.typography.titleMedium)
@@ -146,7 +164,8 @@ fun RegisterScreen(
             UndalPrimaryButton(
                 text = "Create account and pin my address",
                 onClick = { viewModel.submit(onRegistered) },
-                loading = state.busy,
+                loading = state.busy && !state.googleBusy,
+                enabled = !state.busy,
                 icon = Icons.Filled.Add
             )
 
@@ -155,6 +174,7 @@ fun RegisterScreen(
             UndalTextButton(
                 text = "I already have an account",
                 onClick = onBackToLogin,
+                enabled = !state.busy,
                 modifier = Modifier.fillMaxWidth()
             )
 

@@ -1,14 +1,14 @@
 package com.undal.syl.app.features.order
 
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Refresh
@@ -19,11 +19,10 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import androidx.compose.runtime.getValue
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.hilt.navigation.compose.hiltViewModel
+import com.undal.syl.app.core.design.ShimmerListRow
 import com.undal.syl.app.core.design.UndalAlertBanner
 import com.undal.syl.app.core.design.UndalCard
 import com.undal.syl.app.core.design.UndalEmptyState
@@ -60,134 +59,82 @@ fun OrderHistoryScreen(
         subtitle = if (state.hasAnything) "${state.orders.size} order(s) on this account" else null,
         onBack = onBack
     ) { _ ->
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .verticalScroll(rememberScrollState())
-                .padding(horizontal = UndalDimens.screenPadding)
+        LazyColumn(
+            modifier = Modifier.fillMaxSize(),
+            contentPadding = PaddingValues(UndalDimens.screenPadding),
+            verticalArrangement = Arrangement.spacedBy(UndalDimens.md)
         ) {
             if (state.notice != null) {
-                Spacer(Modifier.height(UndalDimens.sm))
-                UndalAlertBanner(
-                    text = state.notice.orEmpty(),
-                    icon = Icons.Filled.Info,
-                    action = { TextButton(onClick = viewModel::dismissNotice) { Text("Close") } }
-                )
+                item(key = "notice") {
+                    UndalAlertBanner(text = state.notice.orEmpty(), icon = Icons.Filled.Info,
+                        action = { TextButton(onClick = viewModel::dismissNotice) { Text("Close") } })
+                }
             }
-
             if (state.loading) {
-                Spacer(Modifier.height(UndalDimens.lg))
-                Text("Reading your orders…", style = MaterialTheme.typography.bodyLarge)
-                return@Column
-            }
-
-            if (!state.hasAnything) {
-                Spacer(Modifier.height(UndalDimens.xxl))
-                UndalEmptyState(
-                    icon = Icons.Filled.ShoppingCart,
-                    title = "No orders yet",
-                    message = "When you place your first order it appears here, with its receipt and a " +
-                        "one-tap reorder for next time.",
-                    actionLabel = "Browse the menu",
-                    onAction = onBrowseMenu
-                )
-                return@Column
-            }
-
-            if (state.active.isNotEmpty()) {
-                Spacer(Modifier.height(UndalDimens.lg))
-                UndalSectionHeader(title = "In progress", subtitle = "Orders the kitchen is working on now")
-                Spacer(Modifier.height(UndalDimens.sm))
-                state.active.forEach { order ->
-                    OrderHistoryRow(
-                        order = order,
-                        reordering = state.reorderingId == order.id,
-                        onOpen = { onOpenOrder(order.id) },
-                        onReorder = { viewModel.reorder(order.id) }
+                item(key = "loading-label") { Text("Reading your orders…", style = MaterialTheme.typography.bodyLarge) }
+                items(3, key = { "loading-$it" }) { ShimmerListRow() }
+            } else if (!state.hasAnything) {
+                item(key = "empty") {
+                    UndalEmptyState(
+                        icon = Icons.Filled.ShoppingCart,
+                        title = if (state.loadFailed) "Couldn't read your orders" else "Your first favourite is waiting",
+                        message = if (state.loadFailed) "Your history could not be loaded. Go back and reopen this page to try again." else
+                            "Orders appear here with their status, receipt and a way to order again at today's prices.",
+                        actionLabel = if (state.loadFailed) "Go back" else "Browse the menu",
+                        onAction = if (state.loadFailed) onBack else onBrowseMenu
                     )
-                    Spacer(Modifier.height(UndalDimens.sm))
+                }
+            } else {
+                if (state.active.isNotEmpty()) {
+                    item(key = "active-heading") { UndalSectionHeader("Happening now", subtitle = "Open an order to follow its progress") }
+                    items(state.active, key = { "active-${it.id}" }) { order ->
+                        OrderHistoryRow(order, state.reorderingId == order.id, reorderEnabled = state.reorderingId == null,
+                            onOpen = { onOpenOrder(order.id) }, onReorder = { viewModel.reorder(order.id) })
+                    }
+                }
+                if (state.past.isNotEmpty()) {
+                    item(key = "past-heading") { UndalSectionHeader("Your past favourites", subtitle = "Delivered and cancelled orders · newest first") }
+                    items(state.past, key = { "past-${it.id}" }) { order ->
+                        OrderHistoryRow(order, state.reorderingId == order.id, reorderEnabled = state.reorderingId == null,
+                            onOpen = { onOpenOrder(order.id) }, onReorder = { viewModel.reorder(order.id) })
+                    }
+                }
+                if (state.canLoadMore) {
+                    item(key = "more") { UndalTextButton("Show more orders", onClick = viewModel::loadMore) }
                 }
             }
-
-            if (state.past.isNotEmpty()) {
-                Spacer(Modifier.height(UndalDimens.lg))
-                UndalSectionHeader(
-                    title = "Past orders",
-                    subtitle = "Delivered or cancelled, newest first"
-                )
-                Spacer(Modifier.height(UndalDimens.sm))
-                state.past.forEach { order ->
-                    OrderHistoryRow(
-                        order = order,
-                        reordering = state.reorderingId == order.id,
-                        onOpen = { onOpenOrder(order.id) },
-                        onReorder = { viewModel.reorder(order.id) }
-                    )
-                    Spacer(Modifier.height(UndalDimens.sm))
-                }
-            }
-
-            if (state.canLoadMore) {
-                Spacer(Modifier.height(UndalDimens.sm))
-                UndalTextButton(
-                    text = "Show 20 more",
-                    onClick = viewModel::loadMore,
-                    modifier = Modifier.padding(vertical = UndalDimens.xs)
-                )
-            }
-
-            Spacer(Modifier.height(UndalDimens.xxl))
         }
     }
 }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun OrderHistoryRow(
     order: OrderRepo.OrderSummary,
     reordering: Boolean,
+    reorderEnabled: Boolean,
     onOpen: () -> Unit,
     onReorder: () -> Unit
 ) {
     UndalCard(onClick = onOpen) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    text = order.shortId.ifBlank { "Order" },
-                    style = MaterialTheme.typography.titleMedium
-                )
-                Text(
-                    text = summaryLine(order),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
-            }
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(UndalDimens.sm),
+            verticalArrangement = Arrangement.spacedBy(UndalDimens.sm)) {
+            Text(order.shortId.ifBlank { "Order" }, style = MaterialTheme.typography.titleMedium)
             OrderStatusPill(order.status)
         }
-        Spacer(Modifier.height(UndalDimens.xs))
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Text(
-                text = historyStamp(order),
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-            Spacer(Modifier.width(UndalDimens.sm))
-            Text(
-                text = Money.format(order.totalAmountPaisa),
-                style = MaterialTheme.typography.titleSmall
-            )
-            Spacer(Modifier.weight(1f))
-            if (!order.isActive) {
-                UndalTextButton(
-                    text = if (reordering) "Rebuilding…" else "Reorder",
-                    onClick = onReorder,
-                    icon = Icons.Filled.Refresh,
-                    enabled = !reordering
-                )
-            } else {
-                UndalTextButton(text = "Track", onClick = onOpen)
-            }
+        Spacer(Modifier.height(UndalDimens.sm))
+        Text(summaryLine(order), style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 2, overflow = TextOverflow.Ellipsis)
+        Text(historyStamp(order), style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Spacer(Modifier.height(UndalDimens.sm))
+        Text(Money.format(order.totalAmountPaisa), style = MaterialTheme.typography.titleLarge,
+            color = MaterialTheme.colorScheme.primary)
+        if (order.isActive) {
+            UndalTextButton("Track this order", onClick = onOpen)
+        } else {
+            UndalTextButton(if (reordering) "Rebuilding your basket…" else "Order again",
+                onClick = onReorder, icon = Icons.Filled.Refresh, enabled = reorderEnabled && !reordering)
         }
         if (order.cancelNote.isNotBlank()) {
             Spacer(Modifier.height(UndalDimens.xs))

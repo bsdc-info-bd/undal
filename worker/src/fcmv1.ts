@@ -15,6 +15,7 @@
 import type { Env } from "./env";
 import { projectId } from "./env";
 import { accessToken, invalidateAccessToken } from "./gcp";
+import { sleep } from "./util/retry";
 
 /**
  * How long FCM keeps trying to deliver a message to an offline device.
@@ -51,16 +52,15 @@ export function ttlSeconds(ttl: string | undefined): number {
  *     if that means waking the radio;
  *   · a data-only push takes `apns-priority: 5` with `content-available`, because
  *     APNs refuses a background push at 10 with `BadPriority`. Priority 5 is not
- *     a downgrade here: for a background push it is the only legal value, and the
- *     wake-up guarantee on iOS comes from the app's own VoIP-style alarm
- *     handling, not from this header.
+ *     a downgrade here: for a background push it is the only legal value.
+ *     iOS background delivery remains best-effort. This Android app does not
+ *     implement iOS or a PushKit/VoIP alarm service.
  *
  * `apns-expiration` is derived from the same TTL the Android side carries, so a
  * stale alert does not survive on one platform longer than the other.
  *
  * None of this reaches an Android device — FCM drops the apns block for Android
- * tokens. It is here so that a kitchen running an iPhone rings correctly on the
- * day one appears, instead of being silently throttled.
+ * tokens. These headers alone do not implement iOS alarm delivery.
  */
 function apnsConfig(showsNotification: boolean, urgent: boolean, ttl: string): Record<string, unknown> {
   const expiration = String(Math.floor(Date.now() / 1000) + ttlSeconds(ttl));
@@ -103,7 +103,8 @@ export function pushBody(data: Record<string, string>, options: PushOptions): st
   }
 
   const ttl = options.ttl ?? DEFAULT_TTL;
-  const urgent = options.highPriority !== false;
+  const isOrder = payload.type === "order_created";
+  const urgent = isOrder || options.highPriority !== false;
   // An order alert never carries a display block, even if a caller passes one:
   // the alarm is raised by `onMessageReceived`, and a system-tray notification
   // would arrive instead of it.
@@ -124,7 +125,7 @@ export function pushBody(data: Record<string, string>, options: PushOptions): st
       icon: "ic_undal_mark", color: "#165B3B",
     };
   }
-  if (options.collapseKey) {
+  if (options.collapseKey && !isOrder) {
     (message.android as Record<string, unknown>).collapse_key = options.collapseKey;
   }
   return JSON.stringify({ message });
@@ -142,21 +143,50 @@ async function send(env: Env, target: { token?: string; topic?: string }, option
     return JSON.stringify(parsed);
   };
 
-  const attempt = async (): Promise<Response> =>
-    fetch(endpoint, {
-      method: "POST",
-      headers: {
-        authorization: `Bearer ${await accessToken(env)}`,
-        "content-type": "application/json",
-      },
-      body: withTarget(payload),
-    });
+  // Get credentials before opening the request deadline; each retry gets a fresh
+  // AbortController. One stalled request must not block every other alert route.
+  const attempt = async (): Promise<Response> => {
+    const token = await accessToken(env);
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 8_000);
+    try {
+      return await fetch(endpoint, {
+        method: "POST",
+        headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+        body: withTarget(payload),
+        signal: controller.signal,
+      });
+    } finally {
+      clearTimeout(timer);
+    }
+  };
 
-  let response = await attempt();
-  if (response.status === 401) {
-    await invalidateAccessToken(env);
-    response = await attempt();
+  let response: Response | undefined;
+  let refreshed = false;
+  for (let tries = 0; tries < 3; tries++) {
+    try {
+      response = await attempt();
+    } catch {
+      if (tries === 2) return { ok: false, status: 503, code: "TRANSPORT_ERROR", unregistered: false };
+      await sleep(200 * (tries + 1));
+      continue;
+    }
+    if (response.status === 401 && !refreshed && tries < 2) {
+      refreshed = true;
+      await response.body?.cancel().catch(() => undefined);
+      await invalidateAccessToken(env);
+      continue;
+    }
+    // Do not hammer a quota refusal. The next cron sweep is the retry for 429;
+    // it respects the normal one-minute FCM quota backoff rather than hot-looping.
+    if (response.status >= 500 && tries < 2) {
+      await response.body?.cancel().catch(() => undefined);
+      await sleep(200 * (tries + 1));
+      continue;
+    }
+    break;
   }
+  if (!response) return { ok: false, status: 503, code: "TRANSPORT_ERROR", unregistered: false };
 
   if (response.ok) return { ok: true };
 
@@ -172,7 +202,6 @@ async function send(env: Env, target: { token?: string; topic?: string }, option
   }
   const unregistered =
     code === "UNREGISTERED" ||
-    code === "NOT_FOUND" ||
     (response.status === 400 && /not a valid FCM registration token/i.test(raw));
   return { ok: false, status: response.status, code, unregistered };
 }

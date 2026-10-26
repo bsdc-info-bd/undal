@@ -264,6 +264,7 @@ fun UndalRoot(
 
         composable(UndalRoutes.REGISTER) {
             RegisterScreen(
+                onGoogleSignedIn = viewModel::onSignedIn,
                 onRegistered = { navController.navigate(UndalRoutes.LOCATION_SETUP) { launchSingleTop = true } },
                 onBackToLogin = { navController.popBackStack() }
             )

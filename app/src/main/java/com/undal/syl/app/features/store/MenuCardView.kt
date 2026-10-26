@@ -1,7 +1,11 @@
 package com.undal.syl.app.features.store
 
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -20,6 +24,7 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Clear
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
@@ -54,6 +59,7 @@ import com.undal.syl.app.core.util.Money
  * in place of Add the moment there is one in the cart, so nobody loses track of
  * what they have already chosen.
  */
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun UndalMenuCard(
     card: MenuCard,
@@ -72,7 +78,8 @@ fun UndalMenuCard(
             .clickable(enabled = true, onClick = onOpen),
         shape = RoundedCornerShape(UndalDimens.radiusMd),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-        elevation = CardDefaults.cardElevation(defaultElevation = UndalDimens.elevationCard)
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+        elevation = CardDefaults.cardElevation(defaultElevation = UndalDimens.elevationFlat)
     ) {
         Column {
             Box(
@@ -85,6 +92,7 @@ fun UndalMenuCard(
                     AsyncImage(
                         model = card.imageUrl,
                         contentDescription = card.name,
+                        error = painterResource(R.drawable.ic_undal_mark),
                         contentScale = ContentScale.Crop,
                         modifier = Modifier
                             .fillMaxWidth()
@@ -123,7 +131,7 @@ fun UndalMenuCard(
                     if (dish?.isPopular == true) add("Popular")
                 }
                 if (badges.isNotEmpty()) {
-                    Row(
+                    FlowRow(
                         modifier = Modifier
                             .align(Alignment.TopStart)
                             .padding(6.dp),
@@ -146,7 +154,7 @@ fun UndalMenuCard(
                 }
             }
 
-            Column(modifier = Modifier.padding(UndalDimens.sm)) {
+            Column(modifier = Modifier.padding(UndalDimens.md)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     val dish = (card as? MenuCard.Dish)?.item
                     if (dish != null && dish.veg) {
@@ -187,14 +195,14 @@ fun UndalMenuCard(
                     Text(
                         text = spiceLabel(dish.spiceLevel),
                         style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.secondary
+                        color = MaterialTheme.colorScheme.primary
                     )
                 }
 
                 Spacer(Modifier.height(UndalDimens.sm))
 
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Column(modifier = Modifier.weight(1f)) {
+                Column(verticalArrangement = Arrangement.spacedBy(UndalDimens.sm)) {
+                    Column {
                         Text(
                             text = Money.format(card.amountPaisa),
                             style = MaterialTheme.typography.titleMedium
@@ -271,7 +279,7 @@ fun QuantityStepper(
         color = MaterialTheme.colorScheme.primaryContainer
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            TextButton(
+            IconButton(
                 onClick = onRemove,
                 enabled = enabled,
                 modifier = Modifier.undalTouchTarget()
@@ -287,9 +295,9 @@ fun QuantityStepper(
                 text = quantity.toString(),
                 style = MaterialTheme.typography.titleSmall,
                 color = MaterialTheme.colorScheme.onPrimaryContainer,
-                modifier = Modifier.width(20.dp)
+                modifier = Modifier.widthIn(min = 24.dp)
             )
-            TextButton(
+            IconButton(
                 onClick = onAdd,
                 enabled = enabled,
                 modifier = Modifier.undalTouchTarget()
@@ -313,11 +321,13 @@ fun spiceLabel(level: Int): String = when (level) {
 }
 
 /** Small badge used on the item page for the dish's own attributes. */
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun MenuAttributeRow(item: MenuItem, modifier: Modifier = Modifier) {
-    Row(
+    FlowRow(
         modifier = modifier,
-        horizontalArrangement = Arrangement.spacedBy(UndalDimens.xs)
+        horizontalArrangement = Arrangement.spacedBy(UndalDimens.xs),
+        verticalArrangement = Arrangement.spacedBy(UndalDimens.xs)
     ) {
         UndalStatusPill(
             text = if (item.veg) "Vegetarian" else "Non-veg",

@@ -33,6 +33,7 @@ class OrderHistoryViewModel @Inject constructor(
 
     data class State(
         val loading: Boolean = true,
+        val loadFailed: Boolean = false,
         val orders: List<OrderRepo.OrderSummary> = emptyList(),
         val visible: Int = PAGE_SIZE,
         val reorderingId: String? = null,
@@ -40,7 +41,7 @@ class OrderHistoryViewModel @Inject constructor(
         val reorderedLines: Int = 0
     ) {
 
-        val shown: List<OrderRepo.OrderSummary> get() = orders.take(visible)
+        val shown: List<OrderRepo.OrderSummary> get() = orders.sortedBy { if (it.isActive) 0 else 1 }.take(visible)
 
         val active: List<OrderRepo.OrderSummary> get() = shown.filter { it.isActive }
 
@@ -64,7 +65,8 @@ class OrderHistoryViewModel @Inject constructor(
      * shows messages.
      */
     private val guard = com.undal.syl.app.core.util.UndalGuards.viewModel("reading your orders") { message ->
-        _state.value = _state.value.copy(notice = message)
+        noticeFlow.value = message
+        _state.value = _state.value.copy(notice = message, loading = false, loadFailed = _state.value.orders.isEmpty())
     }
 
     private val visibleFlow = MutableStateFlow(PAGE_SIZE)
@@ -104,22 +106,24 @@ class OrderHistoryViewModel @Inject constructor(
         if (reorderingFlow.value != null) return
         reorderingFlow.value = orderId
         viewModelScope.launch(guard) {
-            val snapshot = menuRepo.observeMenu().first()
-            if (!snapshot.loaded) {
-                noticeFlow.value = "The menu has not loaded yet. Check your connection and try again."
-                reorderingFlow.value = null
-                return@launch
-            }
-            when (val result = orderRepo.reorder(orderId, snapshot)) {
-                is UndalResult.Success -> {
-                    cartRepo.replaceLines(Cart(lines = result.value))
-                    reorderedFlow.value = result.value.size
-                    noticeFlow.value = orderRepo.lastReorderNote
+            try {
+                val snapshot = menuRepo.observeMenu().first()
+                if (!snapshot.loaded) {
+                    noticeFlow.value = "The menu has not loaded yet. Check your connection and try again."
+                    return@launch
                 }
+                when (val result = orderRepo.reorder(orderId, snapshot)) {
+                    is UndalResult.Success -> {
+                        cartRepo.replaceLines(Cart(lines = result.value))
+                        reorderedFlow.value = result.value.size
+                        noticeFlow.value = orderRepo.lastReorderNote
+                    }
 
-                is UndalResult.Failure -> noticeFlow.value = result.message
+                    is UndalResult.Failure -> noticeFlow.value = result.message
+                }
+            } finally {
+                reorderingFlow.value = null
             }
-            reorderingFlow.value = null
         }
     }
 

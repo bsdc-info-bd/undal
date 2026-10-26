@@ -69,6 +69,10 @@ class UndalFcmService : FirebaseMessagingService() {
     override fun onMessageReceived(message: RemoteMessage) {
         AlarmChannels.ensureChannels(applicationContext)
         val data = message.data
+        if (data["type"] == TYPE_ORDER_CREATED) {
+            val priority = if (message.priority == RemoteMessage.PRIORITY_HIGH) "HIGH" else "NORMAL (downgraded or sent normal)"
+            AlertDeliveryJournal.record(applicationContext, "FCM data received", "Delivery priority: $priority")
+        }
         val uid = runCatching { FirebaseAuth.getInstance().currentUser?.uid }.getOrNull()
         // The remembered role for this exact account, which is what the router
         // established from the token the last time it ran. A `Task.getResult()`

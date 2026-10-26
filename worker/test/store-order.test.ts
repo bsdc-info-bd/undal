@@ -262,9 +262,8 @@ test("a placed order leads with the tick, and delivery stops the poll", async ()
   await settle();
   assert.ok(!page.ids("undal-receipt-hero").hasAttribute("hidden"));
 
-  // The kitchen rings an alarm at this moment; the customer sees the same
-  // promise the app shows, worded for a browser.
-  assert.match(page.ids("undal-receipt-hero").textContent, /the kitchen has been alerted/i);
+  // Placement confirms the order was sent, not that a phone audibly rang.
+  assert.match(page.ids("undal-receipt-hero").textContent, /Your order was sent to the kitchen/i);
   assert.equal(page.ids("undal-receipt-sent").textContent, "Sent at 6:00 pm, Dhaka time");
   assert.equal(page.ids("undal-status-pill").textContent, "Placed");
   assert.deepEqual(page.window.cleared, []);

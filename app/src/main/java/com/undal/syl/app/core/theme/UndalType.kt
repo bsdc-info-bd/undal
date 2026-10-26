@@ -20,6 +20,22 @@ private val tightLineHeight = LineHeightStyle(
 )
 
 val UndalTypography = Typography(
+    headlineLarge = TextStyle(
+        fontFamily = FontFamily.Serif,
+        fontWeight = FontWeight.Medium,
+        fontSize = 32.sp,
+        lineHeight = 38.sp,
+        letterSpacing = (-0.6).sp,
+        lineHeightStyle = tightLineHeight
+    ),
+    titleSmall = TextStyle(
+        fontFamily = Default,
+        fontWeight = FontWeight.SemiBold,
+        fontSize = 15.sp,
+        lineHeight = 21.sp,
+        fontFeatureSettings = "tnum",
+        lineHeightStyle = tightLineHeight
+    ),
     displaySmall = TextStyle(
         fontFamily = Default,
         fontWeight = FontWeight.Bold,

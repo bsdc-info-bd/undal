@@ -19,11 +19,13 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
+import com.undal.syl.app.core.design.ShimmerListRow
+import com.undal.syl.app.core.design.UndalSectionHeader
+import com.undal.syl.app.core.design.UndalSecondaryButton
 import com.undal.syl.app.core.design.UndalAlertBanner
 import com.undal.syl.app.core.design.UndalCard
 import com.undal.syl.app.core.design.UndalScaffold
@@ -50,39 +52,38 @@ fun VendorInboxScreen(
 
     UndalScaffold(
         title = "Kitchen history",
-        subtitle = if (state.unread == 0) {
-            "Every order this phone rang for, newest first"
-        } else {
-            "${state.unread} unread alert(s) · ${state.items.size} in total"
-        },
-        onBack = onBack,
-        actions = {
-            if (state.items.any { !it.read }) {
-                UndalTextButton(
-                    text = "Mark all read",
-                    onClick = viewModel::markAllRead,
-                    icon = Icons.Filled.Check
-                )
-            }
-        }
+        subtitle = if (state.loading) "Reading saved alerts…" else "${state.unread} unread · ${state.items.size} saved",
+        onBack = onBack, contentMaxWidth = 760.dp
     ) { _ ->
-        Column(modifier = Modifier.fillMaxSize()) {
-            if (state.items.isEmpty() && !state.loading) {
-                VendorEmptyState(
-                    icon = Icons.Filled.Email,
-                    title = "No alert recorded yet",
-                    message = "The moment a new order rings this phone it is written here, with the order " +
-                        "number and the amount. Losing the notification shade never loses this.",
-                    actionLabel = null,
-                    onAction = null
-                )
+        LazyColumn(
+            modifier = Modifier.fillMaxSize(), contentPadding = PaddingValues(UndalDimens.screenPadding),
+            verticalArrangement = Arrangement.spacedBy(UndalDimens.md)
+        ) {
+            item(key = "history-intro") {
+                UndalSectionHeader("Saved kitchen updates", subtitle = "Notification history is not proof an alarm sounded")
+                if (state.unread > 0) {
+                    UndalSecondaryButton("Mark all read", onClick = viewModel::markAllRead,
+                        enabled = !state.busy, loading = state.busy, icon = Icons.Filled.Check)
+                }
+            }
+            if (state.message != null) {
+                item(key = "history-message") {
+                    UndalAlertBanner(text = state.message.orEmpty(), icon = Icons.Filled.Info,
+                        action = { UndalTextButton("Close", onClick = viewModel::dismissMessage) })
+                }
+            }
+            if (state.loading) {
+                items(3, key = { "loading-$it" }) { ShimmerListRow() }
+            } else if (state.items.isEmpty()) {
+                item(key = "history-empty") {
+                    VendorEmptyState(icon = Icons.Filled.Email,
+                        title = if (state.loadFailed) "History couldn't load" else "No saved alerts yet",
+                        message = if (state.loadFailed) "Check your connection and reopen history to try again." else
+                            "Saved kitchen notifications appear here when available. Use diagnostics to test this phone's alarm.",
+                        actionLabel = null, onAction = null)
+                }
             } else {
-                LazyColumn(
-                    modifier = Modifier.fillMaxSize(),
-                    contentPadding = PaddingValues(UndalDimens.screenPadding),
-                    verticalArrangement = Arrangement.spacedBy(UndalDimens.xs)
-                ) {
-                    items(state.items, key = { it.id }) { item ->
+                    items(state.items, key = { "alert-${it.id}" }) { item ->
                         UndalCard(
                             modifier = Modifier.fillMaxWidth(),
                             onClick = {
@@ -109,7 +110,7 @@ fun VendorInboxScreen(
                                 Text(text = item.body, style = MaterialTheme.typography.bodyMedium)
                                 Spacer(Modifier.height(UndalDimens.xs))
                                 Text(
-                                    text = TimeDhaka.formatInstantDate(Instant.ofEpochMilli(item.createdAtMillis)),
+                                    text = if (item.createdAtMillis > 0L) TimeDhaka.formatInstantDate(Instant.ofEpochMilli(item.createdAtMillis)) else "Time unavailable",
                                     style = MaterialTheme.typography.labelSmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
@@ -123,16 +124,7 @@ fun VendorInboxScreen(
                             }
                         }
                     }
-                }
             }
-        }
-
-        state.message?.let { message ->
-            UndalAlertBanner(
-                text = message,
-                icon = Icons.Filled.Info,
-                modifier = Modifier.fillMaxWidth().padding(UndalDimens.screenPadding)
-            )
         }
     }
 }

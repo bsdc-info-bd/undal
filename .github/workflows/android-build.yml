@@ -77,6 +77,7 @@ jobs:
         run: |
           python3 tools/check_kotlin_shape.py
           python3 tools/check_import_contracts.py
+          python3 tools/check-design-contrast.py
 
       # The two mistakes that compile, pass every test, and then kill the process
       # from a thread nobody is watching: a foreground service that stops without
@@ -137,6 +138,11 @@ jobs:
           ./gradlew :app:testReleaseUnitTest --no-daemon --stacktrace \
             -PundalVersionCode=${{ github.run_number }} \
             -PundalVersionName=1.0.${{ github.run_number }} 2>&1 | tee "$RUNNER_TEMP/undal-build.log"
+
+      - name: Compile adaptive previews and instrumentation tests
+        run: |
+          set -o pipefail
+          ./gradlew :app:compileDebugAndroidTestKotlin --no-daemon --stacktrace 2>&1 | tee -a "$RUNNER_TEMP/undal-build.log"
 
       - name: Assemble signed-ready release APK
         run: |

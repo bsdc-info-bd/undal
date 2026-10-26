@@ -13,6 +13,10 @@ laptop step, no CLI step, no paid service anywhere in the stack.
 > `FEATURES.md` tracks the 263 features and ticks each one only when it is
 > really implemented.
 
+> **Google sign-in (Android):** available on login and registration. After enabling
+> the provider, update signing fingerprints and the Firebase build configuration
+> using [the Google sign-in setup guide](docs/GOOGLE-SIGN-IN.md).
+
 ---
 
 ## 1 · The eight values this project needs (PART A)

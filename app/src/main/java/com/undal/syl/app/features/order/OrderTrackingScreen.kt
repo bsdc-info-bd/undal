@@ -2,9 +2,10 @@ package com.undal.syl.app.features.order
 
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
-import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -18,7 +19,6 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
@@ -32,7 +32,6 @@ import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Send
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -40,7 +39,6 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.scale
@@ -53,6 +51,8 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.undal.syl.app.core.design.UndalAdaptivePair
+import com.undal.syl.app.core.design.UndalActionGroup
 import com.undal.syl.app.core.design.UndalAlertBanner
 import com.undal.syl.app.core.design.UndalCard
 import com.undal.syl.app.core.design.UndalEmptyState
@@ -61,7 +61,6 @@ import com.undal.syl.app.core.design.UndalKeyValueRow
 import com.undal.syl.app.core.design.UndalPrimaryButton
 import com.undal.syl.app.core.design.UndalScaffold
 import com.undal.syl.app.core.design.UndalSecondaryButton
-import com.undal.syl.app.core.design.UndalStatusPill
 import com.undal.syl.app.core.design.UndalTextField
 import com.undal.syl.app.core.maps.UndalLocationMap
 import com.undal.syl.app.core.theme.UndalDimens
@@ -82,6 +81,7 @@ import com.undal.syl.app.data.repo.OrderRepo
  * is a mode of this screen rather than a separate page, because a conversation
  * about an order only makes sense next to the order.
  */
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun OrderTrackingScreen(
     orderId: String,
@@ -126,38 +126,28 @@ fun OrderTrackingScreen(
         title = state.detail?.shortId?.ifBlank { "Your order" } ?: "Your order",
         subtitle = state.detail?.let { orderStatusCaption(state.displayStatus) },
         onBack = onBack,
-        actions = {
-            if (state.isActive && !state.isCancelled) {
-                IconButton(onClick = { viewModel.openChat() }) {
-                    Box {
-                        Icon(
-                            Icons.Filled.Send,
-                            contentDescription = "Chat with the kitchen",
-                            modifier = Modifier.size(UndalDimens.iconMd)
+        contentMaxWidth = 1100.dp,
+        bottomBar = {
+            if (state.detail != null && !state.chatOpen) {
+                UndalActionGroup(
+                    modifier = Modifier.padding(horizontal = UndalDimens.screenPadding, vertical = UndalDimens.sm),
+                    primary = {
+                        UndalSecondaryButton(
+                            text = if (state.unread > 0) "Chat · ${state.unread} new" else "Chat with kitchen",
+                            onClick = viewModel::openChat, icon = Icons.Filled.Send
                         )
-                        if (state.unread > 0) {
-                            Box(
-                                modifier = Modifier
-                                    .align(Alignment.TopEnd)
-                                    .size(9.dp)
-                                    .background(MaterialTheme.colorScheme.error, CircleShape)
-                            )
+                    },
+                    secondary = if (state.canCallKitchen) {
+                        {
+                            UndalSecondaryButton("Call kitchen", onClick = { UndalPhone.dial(context, state.kitchenPhone) },
+                                icon = Icons.Filled.Call)
                         }
-                    }
-                }
-            }
-            if (state.canCallKitchen) {
-                IconButton(onClick = { UndalPhone.dial(context, state.kitchenPhone) }) {
-                    Icon(
-                        Icons.Filled.Call,
-                        contentDescription = "Call the kitchen",
-                        modifier = Modifier.size(UndalDimens.iconMd)
-                    )
-                }
+                    } else null
+                )
             }
         }
     ) { _ ->
-        if (state.loading && state.detail == null) {
+        if (state.loading && state.detail == null && state.notice == null) {
             UndalFullScreenLoader(message = "Reading your order…")
             return@UndalScaffold
         }
@@ -165,8 +155,8 @@ fun OrderTrackingScreen(
         if (detail == null) {
             UndalEmptyState(
                 icon = Icons.Filled.Warning,
-                title = "That order is not on this account",
-                message = "It may have been placed with a different phone number, or the link is old.",
+                title = if (state.notice != null) "Your order could not be read" else "That order is not on this account",
+                message = state.notice ?: "It may belong to a different account, or the link is old.",
                 actionLabel = "Back to the store",
                 onAction = onBack
             )
@@ -178,10 +168,8 @@ fun OrderTrackingScreen(
             return@UndalScaffold
         }
 
-        // The order has been sent but the kitchen has not picked it up yet: this
-        // is the moment the customer is checking what they just ordered, so the
-        // confirmation and its bill lead the screen. Once the kitchen accepts,
-        // the live status card is the important thing again and this steps aside.
+        // Status and timeline stay together; the receipt and delivery details
+        // sit beside them on wide screens, and follow them on compact screens.
         val showPlacementCard = state.displayStatus == OrderStatus.PLACED && !state.isCancelled
 
         Column(
@@ -190,11 +178,6 @@ fun OrderTrackingScreen(
                 .verticalScroll(rememberScrollState())
                 .padding(horizontal = UndalDimens.screenPadding)
         ) {
-            if (showPlacementCard) {
-                Spacer(Modifier.height(UndalDimens.sm))
-                UndalOrderConfirmationCard(detail = detail)
-            }
-
             if (state.notice != null) {
                 Spacer(Modifier.height(UndalDimens.sm))
                 UndalAlertBanner(
@@ -208,123 +191,92 @@ fun OrderTrackingScreen(
 
             Spacer(Modifier.height(UndalDimens.sm))
 
-            // ---- what is happening now -------------------------------------
-            UndalCard {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    OrderStatusPill(state.displayStatus)
-                    Spacer(Modifier.weight(1f))
-                    if (state.placedAgoLabel.isNotBlank()) {
-                        Text(
-                            text = state.placedAgoLabel,
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
+            UndalAdaptivePair(primary = {
+                Column {
+                    // ---- what is happening now -------------------------------------
+                    UndalCard {
+                        FlowRow(horizontalArrangement = Arrangement.spacedBy(UndalDimens.sm),
+                            verticalArrangement = Arrangement.spacedBy(UndalDimens.xs)) {
+                            OrderStatusPill(state.displayStatus)
+                            if (state.placedAgoLabel.isNotBlank()) {
+                                Text(
+                                    text = state.placedAgoLabel,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                        }
+                        Spacer(Modifier.height(UndalDimens.sm))
+
+                        when {
+                            state.isCancelled -> CancelledBlock(state, viewModel, context)
+                            state.isDelivered -> DeliveredBlock(state, viewModel, onOpenCart)
+                            state.isCooking -> CookingBlock(state)
+                            state.displayStatus == OrderStatus.READY -> ReadyBlock(state)
+                            state.displayStatus == OrderStatus.IN_DELIVERY -> OnTheWayBlock(state)
+                            else -> WaitingBlock(state)
+                        }
                     }
-                }
-                Spacer(Modifier.height(UndalDimens.sm))
 
-                when {
-                    state.isCancelled -> CancelledBlock(state, viewModel, context)
-                    state.isDelivered -> DeliveredBlock(state, viewModel, onOpenCart)
-                    state.isCooking -> CookingBlock(state)
-                    state.displayStatus == OrderStatus.READY -> ReadyBlock(state)
-                    state.displayStatus == OrderStatus.IN_DELIVERY -> OnTheWayBlock(state)
-                    else -> WaitingBlock(state)
-                }
-            }
+                    Spacer(Modifier.height(UndalDimens.sm))
 
-            Spacer(Modifier.height(UndalDimens.sm))
-
-            // ---- receipts, timeline, address -------------------------------
-            UndalCard {
-                Text("Order status", style = MaterialTheme.typography.titleMedium)
-                Spacer(Modifier.height(UndalDimens.sm))
-                OrderTimelineStepper(
-                    steps = state.steps,
-                    currentIndex = state.stepIndex,
-                    cancelled = state.isCancelled
-                )
-                if (state.hasHistoryRows) {
-                    Spacer(Modifier.height(UndalDimens.xs))
-                    Text(
-                        text = "Every step above is recorded on the order itself, in Dhaka time.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
-            }
-
-            // The placement card above prints the same bill row by row, so it is
-            // not printed twice on one screen — the page repeats the *status*,
-            // never the receipt.
-            if (!showPlacementCard) {
-                Spacer(Modifier.height(UndalDimens.sm))
-
-                ReceiptCard(detail)
-            }
-
-            Spacer(Modifier.height(UndalDimens.sm))
-
-            DeliveryCard(detail)
-
-            if (detail.kitchenNotes.isNotEmpty()) {
-                Spacer(Modifier.height(UndalDimens.sm))
-                UndalCard {
-                    Text("From the kitchen", style = MaterialTheme.typography.titleMedium)
-                    Spacer(Modifier.height(UndalDimens.xs))
-                    detail.kitchenNotes.forEach { note ->
-                        Text(
-                            text = "“$note”",
-                            style = MaterialTheme.typography.bodyMedium,
-                            modifier = Modifier.padding(vertical = 2.dp)
+                    // ---- receipts, timeline, address -------------------------------
+                    UndalCard {
+                        Text("Order status", style = MaterialTheme.typography.titleMedium)
+                        Spacer(Modifier.height(UndalDimens.sm))
+                        OrderTimelineStepper(
+                            steps = state.steps,
+                            currentIndex = state.stepIndex,
+                            cancelled = state.isCancelled
                         )
+                        if (state.hasHistoryRows) {
+                            Spacer(Modifier.height(UndalDimens.xs))
+                            Text(
+                                text = "Every step above is recorded on the order itself, in Dhaka time.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
                     }
-                }
-            }
 
-            Spacer(Modifier.height(UndalDimens.sm))
-
-            UndalCard {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text("Talk to the kitchen", style = MaterialTheme.typography.titleMedium)
-                        Text(
-                            text = if (state.canCallKitchen) {
-                                "Ask about a dish, a spice level, or where the rider is."
-                            } else {
-                                "Chat is always available; the kitchen phone is not published in this build."
-                            },
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-                    if (state.unread > 0) {
-                        UndalStatusPill(
-                            text = "${state.unread} new",
-                            containerColour = MaterialTheme.colorScheme.errorContainer,
-                            contentColour = MaterialTheme.colorScheme.onErrorContainer
-                        )
-                    }
                 }
-                Spacer(Modifier.height(UndalDimens.sm))
-                Row(horizontalArrangement = Arrangement.spacedBy(UndalDimens.sm)) {
-                    UndalSecondaryButton(
-                        text = if (state.unread > 0) "Open chat · ${state.unread} new" else "Open chat",
-                        onClick = viewModel::openChat,
-                        icon = Icons.Filled.Send,
-                        modifier = Modifier.weight(1f)
-                    )
-                    if (state.canCallKitchen) {
-                        UndalSecondaryButton(
-                            text = "Call",
-                            onClick = { UndalPhone.dial(context, state.kitchenPhone) },
-                            icon = Icons.Filled.Call,
-                            modifier = Modifier.weight(1f)
-                        )
+            }, secondary = {
+                Column {
+                    if (showPlacementCard) {
+                        UndalOrderConfirmationCard(detail = detail)
                     }
-                }
-            }
+                    // The placement card above prints the same bill row by row, so it is
+                    // not printed twice on one screen — the page repeats the *status*,
+                    // never the receipt.
+                    if (!showPlacementCard) {
+                        Spacer(Modifier.height(UndalDimens.sm))
 
+                        ReceiptCard(detail)
+                    }
+
+                    Spacer(Modifier.height(UndalDimens.sm))
+
+                    DeliveryCard(detail)
+
+                    if (detail.kitchenNotes.isNotEmpty()) {
+                        Spacer(Modifier.height(UndalDimens.sm))
+                        UndalCard {
+                            Text("From the kitchen", style = MaterialTheme.typography.titleMedium)
+                            Spacer(Modifier.height(UndalDimens.xs))
+                            detail.kitchenNotes.forEach { note ->
+                                Text(
+                                    text = "“$note”",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    modifier = Modifier.padding(vertical = 2.dp)
+                                )
+                            }
+                        }
+                    }
+
+                    Spacer(Modifier.height(UndalDimens.sm))
+
+                }
+            })
             Spacer(Modifier.height(UndalDimens.sm))
 
             UndalCard {
@@ -365,7 +317,7 @@ private fun WaitingBlock(state: OrderTrackingViewModel.State) {
         Column {
             Text("Waiting for the kitchen", style = MaterialTheme.typography.titleMedium)
             Text(
-                text = "Their phone is ringing with this order. Accepting usually takes a minute or two.",
+                text = "Your order has been placed. This page updates when the kitchen responds.",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )

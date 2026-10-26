@@ -249,7 +249,7 @@ test("a token FCM reports as dead is removed from the device list", async () => 
   const restore = backend.install();
   try {
     await armedKitchen(backend);
-    backend.fcmFailFirst = 2; // both device tokens are dead; the topic is not
+    backend.fcmRejectTokens = new Set(["token-one-0123456789abcdef", "token-two-0123456789abcdef"]);
     backend.fcmStatus = 404;
     backend.fcmErrorCode = "UNREGISTERED";
     const outcome = await raiseKitchenAlert(backend.env, { orderId: "o", shortId: "UND-1", title: "t", body: "b" });

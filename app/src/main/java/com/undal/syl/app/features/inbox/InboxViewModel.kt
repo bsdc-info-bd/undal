@@ -26,6 +26,7 @@ class InboxViewModel @Inject constructor(
 
     data class State(
         val loading: Boolean = true,
+        val loadFailed: Boolean = false,
         val items: List<NotifInboxRepo.InboxItem> = emptyList(),
         val notice: String? = null,
         val busy: Boolean = false
@@ -49,7 +50,8 @@ class InboxViewModel @Inject constructor(
      * shows messages.
      */
     private val guard = com.undal.syl.app.core.util.UndalGuards.viewModel("reading your notifications") { message ->
-        _state.value = _state.value.copy(notice = message, busy = false)
+        _state.value = _state.value.copy(notice = message, busy = false, loading = false,
+            loadFailed = _state.value.loading || _state.value.loadFailed)
     }
 
     init {
@@ -59,7 +61,7 @@ class InboxViewModel @Inject constructor(
         } else {
             viewModelScope.launch(guard) {
                 repo.observe(uid).collect { items ->
-                    _state.value = _state.value.copy(loading = false, items = items)
+                    _state.value = _state.value.copy(loading = false, loadFailed = false, items = items)
                 }
             }
         }

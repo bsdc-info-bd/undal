@@ -204,6 +204,11 @@ dependencies {
     implementation(libs.androidx.hilt.work)
     kapt(libs.androidx.hilt.compiler)
 
+    // Credential Manager Google sign-in (no deprecated GoogleSignInClient).
+    implementation(libs.androidx.credentials)
+    implementation(libs.androidx.credentials.play.services.auth)
+    implementation(libs.google.identity.googleid)
+
     // --- firebase -----------------------------------------------------------
     implementation(platform(libs.firebase.bom))
     implementation(libs.firebase.auth)

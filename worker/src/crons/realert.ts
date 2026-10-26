@@ -11,9 +11,10 @@
  * and tested.
  *
  * A query on `status == placed` alone is used on purpose. Adding `orderBy
- * createdAt` would need a composite index that does not exist, and a cron that
+ * createdAt` can need a missing composite index, and a cron that
  * throws FAILED_PRECONDITION every minute is worse than no cron: the sort is
- * done here, over at most `SWEEP_LIMIT` documents.
+ * done here per page. An ascending document-name cursor rotates the pages
+ * between sweeps, so abandoned orders cannot starve the rest of the queue.
  */
 import type { Env } from "../env";
 import { fsQuery, type FsRecord } from "../firestore";
@@ -22,7 +23,8 @@ import { formatPaisa } from "../util/money";
 import { sweepAction, waitedMinutes } from "./alert-window";
 
 /** At most this many live orders are considered per sweep. */
-const SWEEP_LIMIT = 10;
+const SWEEP_LIMIT = 50;
+const CURSOR_KEY = "alerts:realert-cursor:v1";
 
 export interface RealertSweepResult {
   considered: number;
@@ -50,13 +52,21 @@ function itemCount(order: FsRecord): number {
 export async function runRealertSweep(env: Env): Promise<RealertSweepResult> {
   const result: RealertSweepResult = { considered: 0, realerted: 0, missed: 0, failures: [] };
 
+  // Rotate through the complete placed-order set, not the same first page.
+  // Otherwise ten abandoned orders could permanently hide every new order.
+  const cursor = await env.UNDAL_KV.get(CURSOR_KEY).catch(() => null);
   const outstanding = await fsQuery(env, {
     collectionId: "orders",
     where: [{ field: "status", op: "EQUAL", value: "placed" }],
     limit: SWEEP_LIMIT,
+    orderBy: [{ field: "__name__", direction: "ASCENDING" }],
+    ...(cursor && /^orders\/[^/]+$/.test(cursor) ? { afterDocument: cursor } : {}),
   });
   result.considered = outstanding.length;
-  if (outstanding.length === 0) return result;
+  if (outstanding.length === 0) {
+    await env.UNDAL_KV.delete(CURSOR_KEY);
+    return result;
+  }
 
   const now = Date.now();
   // Oldest first: if the kitchen is drowning, the order that has waited longest
@@ -79,7 +89,7 @@ export async function runRealertSweep(env: Env): Promise<RealertSweepResult> {
           // to act on (who is waiting, how long, and the number to call).
           const customer = text(order, "customerName") || "the customer";
           const phone = text(order, "phone");
-          await raiseKitchenAlert(
+          const outcome = await raiseKitchenAlert(
             env,
             {
               orderId,
@@ -99,13 +109,14 @@ export async function runRealertSweep(env: Env): Promise<RealertSweepResult> {
             },
             `order-${orderId}-missed`,
           );
+          if (outcome.delivered === 0) result.failures.push(`${orderId}: ${outcome.warning ?? "FCM refused all routes"}`);
           result.missed += 1;
           break;
         }
         case "realert": {
           // The same collapse key as the first push: a phone that is already
           // ringing refreshes its notification instead of stacking a second one.
-          await raiseKitchenAlert(
+          const outcome = await raiseKitchenAlert(
             env,
             {
               orderId,
@@ -117,6 +128,7 @@ export async function runRealertSweep(env: Env): Promise<RealertSweepResult> {
             },
             `order-${orderId}`,
           );
+          if (outcome.delivered === 0) result.failures.push(`${orderId}: ${outcome.warning ?? "FCM refused all routes"}`);
           result.realerted += 1;
           break;
         }
@@ -128,5 +140,10 @@ export async function runRealertSweep(env: Env): Promise<RealertSweepResult> {
     }
   }
 
+  if (outstanding.length === SWEEP_LIMIT) {
+    await env.UNDAL_KV.put(CURSOR_KEY, `orders/${outstanding[outstanding.length - 1]!.id}`, { expirationTtl: 300 });
+  } else {
+    await env.UNDAL_KV.delete(CURSOR_KEY);
+  }
   return result;
 }

@@ -26,6 +26,7 @@ data class AuthFormState(
     val passwordError: String? = null,
     val confirmError: String? = null,
     val busy: Boolean = false,
+    val googleBusy: Boolean = false,
     val banner: String? = null,
     val bannerIsError: Boolean = true,
     val done: Boolean = false
@@ -63,7 +64,32 @@ class LoginViewModel @Inject constructor(
         _state.value = _state.value.copy(password = value, passwordError = null, banner = null)
     }
 
+    fun signInWithGoogle(context: android.content.Context, onSignedIn: () -> Unit) {
+        if (_state.value.busy) return
+        _state.value = _state.value.copy(busy = true, googleBusy = true, banner = null)
+        viewModelScope.launch(guard) {
+            try {
+                val token = GoogleSignIn.idToken(context)
+                when (val result = authRepo.signInWithGoogle(token)) {
+                    is UndalResult.Success -> {
+                        _state.value = _state.value.copy(busy = false)
+                        onSignedIn()
+                    }
+                    is UndalResult.Failure -> _state.value = _state.value.copy(
+                        busy = false, banner = result.message, bannerIsError = true
+                    )
+                }
+            } catch (error: Exception) {
+                val message = GoogleSignIn.errorMessage(error)
+                _state.value = _state.value.copy(busy = false, banner = message, bannerIsError = true)
+            } finally {
+                _state.value = _state.value.copy(busy = false, googleBusy = false)
+            }
+        }
+    }
+
     fun submit(onSignedIn: () -> Unit) {
+        if (_state.value.busy) return
         val current = _state.value
         val emailError = Validators.email(current.email)
         val passwordError = if (current.password.isEmpty()) "Please enter your password." else null
@@ -88,6 +114,7 @@ class LoginViewModel @Inject constructor(
     }
 
     fun resetPassword() {
+        if (_state.value.busy) return
         val current = _state.value
         val emailError = Validators.email(current.email)
         if (emailError != null) {
@@ -157,7 +184,32 @@ class RegisterViewModel @Inject constructor(
         _state.value = _state.value.copy(confirmPassword = value, confirmError = null, banner = null)
     }
 
+    fun signInWithGoogle(context: android.content.Context, onSignedIn: () -> Unit) {
+        if (_state.value.busy) return
+        _state.value = _state.value.copy(busy = true, googleBusy = true, banner = null)
+        viewModelScope.launch(guard) {
+            try {
+                val token = GoogleSignIn.idToken(context)
+                when (val result = authRepo.signInWithGoogle(token)) {
+                    is UndalResult.Success -> {
+                        _state.value = _state.value.copy(busy = false)
+                        onSignedIn()
+                    }
+                    is UndalResult.Failure -> _state.value = _state.value.copy(
+                        busy = false, banner = result.message, bannerIsError = true
+                    )
+                }
+            } catch (error: Exception) {
+                val message = GoogleSignIn.errorMessage(error)
+                _state.value = _state.value.copy(busy = false, banner = message, bannerIsError = true)
+            } finally {
+                _state.value = _state.value.copy(busy = false, googleBusy = false)
+            }
+        }
+    }
+
     fun submit(onRegistered: () -> Unit) {
+        if (_state.value.busy) return
         val current = _state.value
         val nameError = Validators.name(current.name)
         val emailError = Validators.email(current.email)

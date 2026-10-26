@@ -124,6 +124,8 @@ export const MAP_SCRIPT = `
     var frame = null;
     var dragging = null;
     var locating = false;
+    var revision = 0;
+    var destroyed = false;
     var locateLabel = options.locateLabel || "Use my current location";
 
     host.innerHTML = "";
@@ -195,6 +197,20 @@ export const MAP_SCRIPT = `
     host.appendChild(locateButton);
     host.appendChild(tick);
 
+    var nudges = document.createElement("div");
+    nudges.className = "undal-map-nudges";
+    nudges.setAttribute("role", "group");
+    nudges.setAttribute("aria-label", "Fine tune the pin, about six metres per tap");
+    function nudge(north, east) {
+      var longitudeStep = 0.00005 / Math.max(0.01, Math.cos(center.lat * Math.PI / 180));
+      setPin(center.lat + north * 0.00005, center.lng + east * longitudeStep);
+    }
+    nudges.appendChild(controlButton("Move pin west about six metres", "\\u2190", function () { nudge(0, -1); }));
+    nudges.appendChild(controlButton("Move pin north about six metres", "\\u2191", function () { nudge(1, 0); }));
+    nudges.appendChild(controlButton("Move pin south about six metres", "\\u2193", function () { nudge(-1, 0); }));
+    nudges.appendChild(controlButton("Move pin east about six metres", "\\u2192", function () { nudge(0, 1); }));
+    host.appendChild(nudges);
+
     function width() { return frame_.clientWidth || 320; }
     function height() { return frame_.clientHeight || 240; }
 
@@ -204,7 +220,17 @@ export const MAP_SCRIPT = `
       settle();
     }
 
+    function invalidatePin() {
+      revision++;
+      confirmed = false;
+      info = { area: "", road: "", label: "" };
+      tick.classList.remove("ticked");
+      tick.textContent = options.confirmLabel || "Tick this pin as my address";
+    }
+
     function setPin(lat, lng, nextZoom) {
+      if (!usablePoint({ lat: lat, lng: lng })) return;
+      invalidatePin();
       center = { lat: clamp(lat, -90, 90), lng: clamp(lng, -180, 180) };
       if (typeof nextZoom === "number") zoom = clamp(Math.round(nextZoom), MIN_ZOOM, MAX_ZOOM);
       confirmed = false;
@@ -278,6 +304,7 @@ export const MAP_SCRIPT = `
       var parts = [];
       parts.push(confirmed ? "Pin ticked" : "Move the map, then tick the pin");
       if (info.label) parts.push(info.label);
+      parts.push(center.lat.toFixed(5) + ", " + center.lng.toFixed(5));
       if (store) {
         var km = haversine(store, center);
         var text = km.toFixed(1) + " km from the kitchen";
@@ -299,13 +326,15 @@ export const MAP_SCRIPT = `
     }
 
     function geocode() {
+      var requestedRevision = revision;
+      var requestedPoint = { lat: center.lat, lng: center.lng };
       // Straight from this browser to OpenStreetMap: the customer's position is
       // never routed through the kitchen's server.
-      fetch("https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=" + center.lat.toFixed(6) +
-        "&lon=" + center.lng.toFixed(6), { headers: { "Accept-Language": "en" } })
+      fetch("https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=" + requestedPoint.lat.toFixed(6) +
+        "&lon=" + requestedPoint.lng.toFixed(6), { headers: { "Accept-Language": "en" } })
         .then(function (response) { return response.ok ? response.json() : null; })
         .then(function (data) {
-          if (!data) return;
+          if (!data || destroyed || requestedRevision !== revision) return;
           var address = data.address || {};
           info = {
             area: address.suburb || address.neighbourhood || address.village || address.town || address.city || "",
@@ -364,6 +393,7 @@ export const MAP_SCRIPT = `
     locateButton.addEventListener("click", function () { locate(); });
 
     tick.addEventListener("click", function () {
+      if (dragging || destroyed) return;
       confirmed = true;
       tick.classList.add("ticked");
       tick.textContent = "\\u2713 Ticked \\u2014 " + (info.label || "pin saved");
@@ -375,16 +405,18 @@ export const MAP_SCRIPT = `
 
     // ---- dragging: one finger moves the map under the pin --------------------
     frame_.addEventListener("pointerdown", function (event) {
+      if (dragging || event.isPrimary === false || (event.button != null && event.button !== 0)) return;
       if (event.target.closest && event.target.closest(".undal-map-controls")) return;
-      dragging = { x: event.clientX, y: event.clientY, moved: false };
+      dragging = { x: event.clientX, y: event.clientY, moved: false, pointerId: event.pointerId };
       try { frame_.setPointerCapture(event.pointerId); } catch (error) { /* older browsers */ }
       frame_.classList.add("dragging");
       event.preventDefault();
     });
     frame_.addEventListener("pointermove", function (event) {
-      if (!dragging) return;
+      if (!dragging || event.pointerId !== dragging.pointerId) return;
       var dx = event.clientX - dragging.x, dy = event.clientY - dragging.y;
       if (Math.abs(dx) + Math.abs(dy) < 1) return;
+      invalidatePin();
       dragging.moved = true;
       dragging.x = event.clientX;
       dragging.y = event.clientY;
@@ -395,8 +427,8 @@ export const MAP_SCRIPT = `
       if (frame) cancelAnimationFrame(frame);
       frame = requestAnimationFrame(draw);
     });
-    function endDrag() {
-      if (!dragging) return;
+    function endDrag(event) {
+      if (!dragging || (event && event.pointerId !== dragging.pointerId)) return;
       var moved = dragging.moved;
       dragging = null;
       frame_.classList.remove("dragging");
@@ -404,6 +436,7 @@ export const MAP_SCRIPT = `
     }
     frame_.addEventListener("pointerup", endDrag);
     frame_.addEventListener("pointercancel", endDrag);
+    frame_.addEventListener("lostpointercapture", endDrag);
     frame_.addEventListener("wheel", function (event) {
       event.preventDefault();
       setZoom(zoom + (event.deltaY < 0 ? 1 : -1));
@@ -412,11 +445,13 @@ export const MAP_SCRIPT = `
     // ---- keyboard: the map has to work without a finger ----------------------
     frame_.tabIndex = 0;
     frame_.addEventListener("keydown", function (event) {
+      if (event.target !== frame_) return;
       var step = { ArrowLeft: [-40, 0], ArrowRight: [40, 0], ArrowUp: [0, -40], ArrowDown: [0, 40] }[event.key];
       if (step) {
         event.preventDefault();
         var origin = project(center.lat, center.lng, zoom);
         var next = unproject(origin.x - step[0], origin.y - step[1], zoom);
+        invalidatePin();
         center = next;
         draw();
         settle();
@@ -437,7 +472,14 @@ export const MAP_SCRIPT = `
       locate: locate,
       redraw: draw,
       /** Ticks the pin programmatically — a saved address arrives already chosen. */
-      confirm: function () { tick.click(); }
+      confirm: function () { tick.click(); },
+      destroy: function () {
+        destroyed = true;
+        if (geocodeTimer) clearTimeout(geocodeTimer);
+        if (frame) cancelAnimationFrame(frame);
+        window.removeEventListener("resize", draw);
+        host.innerHTML = "";
+      }
     };
   }
 
@@ -459,10 +501,12 @@ touch-action:none;cursor:grab;outline-offset:-3px}
 .undal-map-leg{stroke:#d97930;stroke-width:2.5;stroke-dasharray:2 6;stroke-linecap:round}
 .undal-map-kitchen{fill:#d97930;stroke:#fff;stroke-width:2}
 .undal-map-pin{position:absolute;left:50%;top:50%;transform:translate(-50%,-100%);pointer-events:none;filter:drop-shadow(0 4px 8px #20392c40)}
+.undal-map-pin svg{display:block}
 .undal-map-controls{position:absolute;right:12px;top:12px;display:flex;flex-direction:column;gap:8px}
 .undal-map-button{width:44px;height:44px;border-radius:14px;border:1px solid var(--line);background:#fffdf9;color:var(--ink);
 font-size:1.25rem;font-weight:700;line-height:1;cursor:pointer;box-shadow:0 4px 14px #20392c14}
 .undal-map-button:active{transform:scale(.96)}
+.undal-map-nudges{display:flex;justify-content:center;gap:10px;margin-top:12px}
 .undal-map-readout{font-size:.85rem;color:var(--muted);margin:10px 2px;line-height:1.5}
 .undal-map-locate{margin:0 0 8px;width:100%;min-height:44px}
 .undal-map-locate:disabled{opacity:.6}

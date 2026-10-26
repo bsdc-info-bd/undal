@@ -10,8 +10,13 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.Modifier
 import com.undal.syl.app.core.config.UndalBuildInfo
+import com.undal.syl.app.core.design.UndalPageIntro
+import com.undal.syl.app.core.design.UndalSecondaryButton
+import com.undal.syl.app.core.util.UndalPhone
 import com.undal.syl.app.core.design.UndalCard
 import com.undal.syl.app.core.design.UndalKeyValueRow
 import com.undal.syl.app.core.design.UndalScaffold
@@ -26,13 +31,17 @@ import com.undal.syl.app.core.theme.UndalDimens
  */
 @Composable
 fun SupportScreen(onBack: () -> Unit) {
-    UndalScaffold(title = "Delivery, payment and privacy", onBack = onBack) { _ ->
+    val context = LocalContext.current
+    UndalScaffold(title = "Good to know", onBack = onBack, contentMaxWidth = 760.dp) { _ ->
         Column(
             modifier = Modifier
                 .fillMaxSize()
                 .verticalScroll(rememberScrollState())
                 .padding(UndalDimens.screenPadding)
         ) {
+            UndalPageIntro("UNDAL · HELP", "Good food. Clear answers.",
+                "Delivery, cash payment and your privacy — explained before you order.")
+            Spacer(Modifier.height(UndalDimens.lg))
             UndalCard {
                 Text("How delivery works", style = MaterialTheme.typography.titleMedium)
                 Spacer(Modifier.height(UndalDimens.xs))
@@ -92,8 +101,12 @@ fun SupportScreen(onBack: () -> Unit) {
                 Spacer(Modifier.height(UndalDimens.xs))
                 UndalKeyValueRow(
                     "Support number",
-                    UndalBuildInfo.supportPhone.ifBlank { "Set the SUPPORT_PHONE repository secret" }
+                    UndalBuildInfo.supportPhone.ifBlank { "Phone support is not configured" }
                 )
+                if (UndalBuildInfo.supportPhone.isNotBlank()) {
+                    Spacer(Modifier.height(UndalDimens.sm))
+                    UndalSecondaryButton("Call the kitchen", onClick = { UndalPhone.dial(context, UndalBuildInfo.supportPhone) })
+                }
                 UndalKeyValueRow("App version", UndalBuildInfo.versionName)
             }
             Spacer(Modifier.height(UndalDimens.xl))

@@ -3,6 +3,7 @@ import { test } from "node:test";
 import { renderPage } from "../src/web/layout";
 import {
   handleAboutPage,
+  handleBasket,
   handleCheckout,
   handleOrderTracking,
   handleStoreFront,
@@ -290,4 +291,104 @@ test("an expired sign-in at the order button is renewed once, not shown as a bar
   assert.match(html, /response\.status === 401 && !retried && window\.undalRenewSession/);
   assert.match(html, /window\.undalRenewSession = function/);
   assert.match(html, /Your sign-in on this page ran out\./);
+});
+
+// ---------------------------------------------------------- redesign structure
+
+test("item detail pairs imagery and information without replacing its real add form", async () => {
+  const html = await (await handleStoreItem(env, new Request("https://undal.test/item/rice"), "rice")).text();
+  assert.match(html, /<article class="item-detail" aria-labelledby="dish-title">/);
+  assert.match(html, /<h2 id="dish-title">Rice &lt;script&gt;/);
+  assert.match(html, /class="card item-information"/);
+  assert.match(html, /class="undal-add undal-add-wide" method="post" action="\/basket\/add"/);
+  assert.match(html, /prep guide: 20 minutes, confirmed when accepted/);
+  assert.match(html, /class="back-link" href="\/store"/);
+});
+
+test("sold-out detail offers recovery without exposing an add form", async () => {
+  const soldOutEnv = { UNDAL_KV: { get: async () => ({ ...menu, dishes: menu.dishes.map(dish => ({ ...dish, available: false })) }) } } as unknown as Env;
+  const html = await (await handleStoreItem(soldOutEnv, new Request("https://undal.test/item/rice"), "rice")).text();
+  const article = html.slice(html.indexOf('<article class="item-detail"'), html.indexOf('</article>'));
+  assert.match(article, /not orderable right now/);
+  assert.doesNotMatch(article, /<form/);
+});
+
+test("basket uses dedicated review and guidance panels with a server checkout link", async () => {
+  const html = await (await handleBasket(env, new Request("https://undal.test/basket"))).text();
+  assert.match(html, /class="basket-layout"/);
+  assert.match(html, /class="card basket-review"/);
+  assert.match(html, /class="card basket-guidance"/);
+  assert.match(html, /href="\/checkout">Continue to delivery details/);
+});
+
+test("checkout details and receipt stay within one POST form with the original input IDs", async () => {
+  const configured = { UNDAL_KV: { get: async () => ({ ...menu, store: storeConfig }) }, FIREBASE_WEB_API_KEY: "sample-key" } as unknown as Env;
+  const html = await (await handleCheckout(configured, new Request("https://undal.test/checkout"))).text();
+  const form = html.slice(html.indexOf('<form method="post" action="/checkout/place"'), html.indexOf('</form>', html.indexOf('id="undal-checkout-form"')));
+  assert.match(form, /class="checkout-details"/);
+  assert.match(form, /<aside class="checkout-summary" aria-labelledby="summary-heading">/);
+  for (const id of ["name", "phone", "title", "desc", "note", "undal-lat", "undal-lng", "undal-lines", "undal-place"]) {
+    assert.equal((form.match(new RegExp('id="' + id + '"', 'g')) ?? []).length, 1, id);
+  }
+  assert.equal((form.match(/type="submit"/g) ?? []).length, 1);
+  assert.match(form, /id="undal-order-result" role="status" aria-live="polite"/);
+  assert.match(form, /Delivery check needed/);
+});
+
+test("menu category and sort controls have distinct navigation labels", async () => {
+  const html = await (await handleStoreFront(env, new Request("https://undal.test/store"))).text();
+  assert.match(html, /<nav class="chips" aria-label="Menu categories">/);
+  assert.match(html, /<nav class="chips" aria-label="Sort menu">/);
+});
+
+test("shared design supports rem-based panels, coupon cards and reduced-motion transforms", async () => {
+  const { DESIGN } = await import("../src/web/design");
+  assert.match(DESIGN, /@media\(min-width:60rem\)/);
+  assert.match(DESIGN, /minmax\(min\(100%,15.5rem\),1fr\)/);
+  assert.match(DESIGN, /\.coupon-banner\{display:flex;flex-direction:column/);
+  assert.match(DESIGN, /\.item:hover,\.item:hover img,\.button:active,\.mini-button:active\{transform:none!important\}/);
+});
+
+test("shipping web tokens maintain text and control contrast on warm surfaces", async () => {
+  const { DESIGN } = await import("../src/web/design");
+  const tokens: Record<string, string> = {};
+  for (const root of DESIGN.matchAll(/:root\{([^}]+)\}/g)) {
+    for (const token of root[1].matchAll(/--([\w-]+):#([\da-f]{6})/gi)) tokens[token[1]] = token[2];
+  }
+  const luminance = (hex: string): number => {
+    const rgb = [0, 2, 4].map(offset => parseInt(hex.slice(offset, offset + 2), 16) / 255)
+      .map(value => value <= .04045 ? value / 12.92 : ((value + .055) / 1.055) ** 2.4);
+    return rgb[0] * .2126 + rgb[1] * .7152 + rgb[2] * .0722;
+  };
+  const pairs: [string, string, number][] = [
+    [tokens.ink, tokens.paper, 4.5], [tokens.muted, tokens.paper, 4.5],
+    [tokens.brand, "ffffff", 4.5], ["ffffff", tokens.brand, 4.5],
+    [tokens["accent-ink"], "fff8e9", 4.5], [tokens.muted, "fff8e9", 4.5],
+    [tokens.control, "fffdf9", 3], [tokens["accent-ink"], tokens.paper, 3],
+  ];
+  for (const [foreground, background, minimum] of pairs) {
+    assert.ok(foreground && background, "theme token should resolve");
+    const values = [luminance(foreground), luminance(background)].sort((a, b) => a - b);
+    assert.ok((values[1] + .05) / (values[0] + .05) >= minimum, `${foreground} on ${background} needs ${minimum}:1`);
+  }
+});
+
+
+test("tracking uses paired receipt/progress panels and truthful live/error states", async () => {
+  const html = await (await handleOrderTracking("sampleOrder")).text();
+  assert.match(html, /class="tracking-layout"/);
+  assert.match(html, /class="card tracking-status" aria-label="Order progress"/);
+  assert.match(html, /id="undal-status-pill" role="status" aria-live="polite"/);
+  assert.match(html, /Status updates need JavaScript/);
+  assert.match(html, /Could not refresh/);
+  assert.doesNotMatch(html, /is looking at your order now/);
+});
+
+test("account shell offers an explicit no-script path and roving keyboard tabs", async () => {
+  const html = await (await handleAccountPage({ ...env, FIREBASE_WEB_API_KEY: "sample-key" } as Env,
+    new Request("https://undal.test/account"))).text();
+  assert.match(html, /Your account needs JavaScript here/);
+  assert.match(html, /class="account-workspace" hidden/);
+  assert.match(html, /event.key === "ArrowRight"/);
+  assert.match(html, /setAttribute\("tabindex", active/);
 });

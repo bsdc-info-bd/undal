@@ -8,7 +8,15 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.height
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.TextButton
+import androidx.compose.material3.Text
+import androidx.compose.ui.unit.dp
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Info
@@ -22,10 +30,15 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.undal.syl.app.core.design.UndalAlertBanner
+import com.undal.syl.app.core.design.ShimmerListRow
+import com.undal.syl.app.core.design.UndalSectionHeader
+import com.undal.syl.app.core.design.UndalLayoutPolicy
 import com.undal.syl.app.core.design.UndalScaffold
 import com.undal.syl.app.core.model.VendorQueueFilter
 import com.undal.syl.app.core.theme.UndalDimens
@@ -66,8 +79,9 @@ fun VendorOrdersScreen(
     }
 
     UndalScaffold(
-        title = "Order queue",
-        subtitle = "Newest waiting order first · taps open the order",
+        title = "Kitchen orders",
+        contentMaxWidth = 1100.dp,
+        subtitle = "Review an order to update its status",
         onBack = onBack
     ) { _ ->
         PullToRefreshBox(
@@ -76,10 +90,22 @@ fun VendorOrdersScreen(
             modifier = Modifier.fillMaxSize()
         ) {
             Column(modifier = Modifier.fillMaxSize()) {
+                UndalSectionHeader(
+                    title = if (state.loading) "Reading order queue…" else "${state.counts[VendorQueueFilter.NEW] ?: 0} waiting for an answer",
+                    subtitle = "Select a stage below. Open an order for details and actions.",
+                    modifier = Modifier.padding(horizontal = UndalDimens.screenPadding)
+                )
+                if (state.message != null) {
+                    UndalAlertBanner(
+                        text = state.message.orEmpty(), icon = Icons.Filled.Info,
+                        containerColour = MaterialTheme.colorScheme.errorContainer,
+                        contentColour = MaterialTheme.colorScheme.onErrorContainer,
+                        action = { TextButton(onClick = { refreshing = true }) { Text("Retry") } }
+                    )
+                }
                 if (state.fromCache) {
                     UndalAlertBanner(
-                        text = "Reading the last synced queue — Firestore will send the writes when the " +
-                            "signal returns.",
+                        text = "Showing the last synced queue. Reconnecting to check for newer orders.",
                         icon = Icons.Filled.Info,
                         modifier = Modifier.fillMaxWidth()
                     )
@@ -105,12 +131,19 @@ fun VendorOrdersScreen(
                     }
                 }
 
-                if (state.visible.isEmpty() && !state.loading) {
+                if (state.visible.isEmpty() && state.loading) {
+                    Column(modifier = Modifier.padding(UndalDimens.screenPadding)) {
+                        repeat(3) {
+                            ShimmerListRow()
+                            Spacer(Modifier.height(UndalDimens.sm))
+                        }
+                    }
+                } else if (state.visible.isEmpty()) {
                     VendorEmptyState(
                         icon = Icons.Filled.ShoppingCart,
                         title = "Nothing in ${state.filter.label.lowercase(Locale.ENGLISH)}",
                         message = when (state.filter) {
-                            VendorQueueFilter.NEW -> "No order is waiting for an answer. The alert loop is armed."
+                            VendorQueueFilter.NEW -> "No order is waiting for an answer. Check device readiness if alerts have been quiet."
                             VendorQueueFilter.PREPARING -> "Nothing is cooking right now."
                             VendorQueueFilter.READY -> "Nothing is packed and waiting for the rider."
                             VendorQueueFilter.OUT -> "No order is out for delivery."
@@ -121,7 +154,10 @@ fun VendorOrdersScreen(
                         onAction = null
                     )
                 } else {
-                        androidx.compose.foundation.lazy.LazyColumn(
+                        LazyVerticalGrid(
+                            columns = GridCells.Adaptive(minSize = (
+                                if (UndalLayoutPolicy.useSplit(LocalConfiguration.current.screenWidthDp.toFloat(), LocalDensity.current.fontScale)) 420.dp else 1100.dp
+                            )),
                             modifier = Modifier.fillMaxSize(),
                             contentPadding = PaddingValues(
                                 start = UndalDimens.screenPadding,
@@ -129,7 +165,8 @@ fun VendorOrdersScreen(
                                 top = UndalDimens.xs,
                                 bottom = UndalDimens.xl
                             ),
-                            verticalArrangement = Arrangement.spacedBy(UndalDimens.xs)
+                            verticalArrangement = Arrangement.spacedBy(UndalDimens.md),
+                            horizontalArrangement = Arrangement.spacedBy(UndalDimens.md)
                         ) {
                             // Keyed by the order, not by the row: a new order
                             // arriving at the top must not hand this row's

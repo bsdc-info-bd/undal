@@ -60,7 +60,7 @@ class VendorChatViewModel @Inject constructor(
      * shows messages.
      */
     private val guard = com.undal.syl.app.core.util.UndalGuards.viewModel("reading the kitchen's chats") { message ->
-        _state.value = _state.value.copy(message = message)
+        _state.value = _state.value.copy(message = message, loading = false)
     }
 
     private var orderId: String = ""
@@ -70,7 +70,7 @@ class VendorChatViewModel @Inject constructor(
         if (this.orderId == orderId) return
         this.orderId = orderId
         _state.value = _state.value.copy(
-            loading = false,
+            loading = true,
             draft = savedState.get<String>(draftKey(orderId)).orEmpty()
         )
 
@@ -112,6 +112,7 @@ class VendorChatViewModel @Inject constructor(
     }
 
     fun onDraftChange(value: String) {
+        if (_state.value.sending) return
         val body = value.take(ChatRepo.MAX_MESSAGE_LENGTH)
         _state.value = _state.value.copy(draft = body)
         savedState[draftKey(orderId)] = body
@@ -128,27 +129,31 @@ class VendorChatViewModel @Inject constructor(
 
     fun send() {
         val body = _state.value.draft.trim()
-        if (body.isEmpty() || _state.value.sending) return
+        if (body.isEmpty() || _state.value.sending || _state.value.order == null) return
         _state.value = _state.value.copy(sending = true)
         viewModelScope.launch(guard) {
-            when (chatRepo.sendAsVendor(orderId, body)) {
-                is UndalResult.Success -> {
-                    savedState[draftKey(orderId)] = ""
-                    typingPublished = false
-                    _state.value = _state.value.copy(sending = false, draft = "")
-                    // The customer's push is queued with retry, never dropped silently (V-102).
-                    NotifyRetryWorker.enqueue(
-                        context = context,
-                        orderId = orderId,
-                        kind = NotifyRetryWorker.KIND_CHAT,
-                        text = body.take(120)
+            try {
+                when (chatRepo.sendAsVendor(orderId, body)) {
+                    is UndalResult.Success -> {
+                        savedState[draftKey(orderId)] = ""
+                        typingPublished = false
+                        _state.value = _state.value.copy(sending = false, draft = "")
+                        // The customer's push is queued with retry, never dropped silently (V-102).
+                        NotifyRetryWorker.enqueue(
+                            context = context,
+                            orderId = orderId,
+                            kind = NotifyRetryWorker.KIND_CHAT,
+                            text = body.take(120)
+                        )
+                    }
+
+                    is UndalResult.Failure -> _state.value = _state.value.copy(
+                        sending = false,
+                        message = "The message did not send. It is still in the box — try again."
                     )
                 }
-
-                is UndalResult.Failure -> _state.value = _state.value.copy(
-                    sending = false,
-                    message = "The message did not send. It is still in the box — try again."
-                )
+            } finally {
+                _state.value = _state.value.copy(sending = false)
             }
         }
     }

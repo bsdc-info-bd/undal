@@ -48,14 +48,19 @@ class LocationSetupViewModel @Inject constructor(
         val titleError: String? = null,
         val descError: String? = null,
         val noteError: String? = null,
+        val name: String = "",
+        val nameError: String? = null,
         val phone: String = "",
         val phoneError: String? = null,
         val busy: Boolean = false,
         val locating: Boolean = false,
+        val pinConfirmed: Boolean = false,
         val permissionNeeded: Boolean = false,
         val saved: Boolean = false,
         val banner: String? = null
     ) {
+        val canSaveAddress: Boolean get() = pinConfirmed && !locating && !busy
+
         val location: UndalLocation
             get() = UndalLocation(lat, lng, title, desc, note, label, accuracyMeters)
 
@@ -82,15 +87,16 @@ class LocationSetupViewModel @Inject constructor(
         _state.value = _state.value.copy(banner = message, busy = false)
     }
 
-    private var displayName: String = ""
-
     init {
         viewModelScope.launch(guard) {
             // Restore anything already known: a saved address (re-pin flow), a
             // draft from an interrupted session, and the name/phone typed at
             // registration.
             val draftProfile = progress.draftProfile.first()
-            displayName = draftProfile?.name ?: authRepo.loadProfileName().orEmpty()
+            val knownName = draftProfile?.name?.takeIf { it.isNotBlank() }
+                ?: authRepo.loadProfileName()?.takeIf { it.isNotBlank() }
+                ?: auth.currentUser?.displayName.orEmpty()
+            _state.value = _state.value.copy(name = knownName.take(80))
 
             // The rider has to be able to call. The number typed at registration
             // is the usual source; an address re-pin falls back to the number
@@ -113,6 +119,7 @@ class LocationSetupViewModel @Inject constructor(
                 _state.value = _state.value.copy(
                     lat = restored.lat,
                     lng = restored.lng,
+                    pinConfirmed = false,
                     title = restored.title,
                     desc = restored.desc,
                     note = restored.note,
@@ -142,7 +149,7 @@ class LocationSetupViewModel @Inject constructor(
 
     fun captureCurrentLocation(context: Context) {
         viewModelScope.launch(guard) {
-            _state.value = _state.value.copy(locating = true, banner = null)
+            _state.value = _state.value.copy(locating = true, pinConfirmed = false, banner = null)
             when (val fix = controller.currentFix(context)) {
                 is UndalResult.Success -> {
                     val label = controller.describe(fix.value.lat, fix.value.lng)
@@ -174,6 +181,7 @@ class LocationSetupViewModel @Inject constructor(
         _state.value = _state.value.copy(
             lat = lat,
             lng = lng,
+            pinConfirmed = false,
             accuracyMeters = null,
             accuracyNote = "Pin placed by hand — drag it onto your building.",
             label = controller.geocoderFallback(lat, lng)
@@ -195,6 +203,10 @@ class LocationSetupViewModel @Inject constructor(
 
     fun onNoteChange(value: String) {
         _state.value = _state.value.copy(note = value, noteError = null, banner = null)
+    }
+
+    fun onNameChange(value: String) {
+        _state.value = _state.value.copy(name = value.take(80), nameError = null, banner = null)
     }
 
     /**
@@ -219,25 +231,37 @@ class LocationSetupViewModel @Inject constructor(
      */
     fun hasLocationPermission(context: Context): Boolean = controller.hasLocationPermission(context)
 
+    fun confirmPin(confirmed: Boolean) {
+        if (_state.value.busy || _state.value.locating) return
+        _state.value = _state.value.copy(pinConfirmed = confirmed)
+    }
+
     fun save(onSaved: () -> Unit) {
+        if (_state.value.busy) return
         val current = _state.value
+        if (!current.pinConfirmed || current.locating) {
+            _state.value = current.copy(banner = "Check the map and confirm your delivery pin before saving.")
+            return
+        }
         val titleError = Validators.addressTitle(current.title)
         val descError = Validators.addressDescription(current.desc)
         val noteError = Validators.deliveryNote(current.note)
         val phoneError = Validators.bdMobile(current.phone)
-        if (titleError != null || descError != null || noteError != null || phoneError != null) {
+        val nameError = Validators.name(current.name)
+        if (titleError != null || descError != null || noteError != null || phoneError != null || nameError != null) {
             _state.value = current.copy(
                 titleError = titleError,
                 descError = descError,
                 noteError = noteError,
-                phoneError = phoneError
+                phoneError = phoneError,
+                nameError = nameError
             )
             return
         }
 
         _state.value = current.copy(busy = true, banner = null)
         viewModelScope.launch(guard) {
-            val name = displayName.ifBlank { auth.currentUser?.displayName.orEmpty() }
+            val name = current.name.trim()
             // Keep the number on the device as well, so an interrupted save (a
             // call, a flat battery) does not lose it.
             progress.saveDraftProfile(

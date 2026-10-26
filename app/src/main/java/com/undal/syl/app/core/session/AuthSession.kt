@@ -55,6 +55,7 @@ sealed interface SessionState {
  */
 @Singleton
 class AuthSession @Inject constructor(
+    @dagger.hilt.android.qualifiers.ApplicationContext private val context: android.content.Context,
     private val auth: FirebaseAuth,
     private val messaging: com.google.firebase.messaging.FirebaseMessaging
 ) {
@@ -212,6 +213,16 @@ class AuthSession @Inject constructor(
             messaging.unsubscribeFromTopic(com.undal.syl.app.core.fcm.TokenRegistrar.PROMO_TOPIC).await()
         }
         auth.signOut()
+        // End the Credential Manager session too; the next sign-in must allow
+        // account selection rather than carrying a signed-out user's state.
+        try {
+            androidx.credentials.CredentialManager.create(context)
+                .clearCredentialState(androidx.credentials.ClearCredentialStateRequest())
+        } catch (cancelled: kotlinx.coroutines.CancellationException) {
+            throw cancelled
+        } catch (_: Exception) {
+            // Firebase sign-out has already succeeded. Provider cleanup is best-effort.
+        }
     }
 
     private fun FirebaseUser?.toSessionState(): SessionState {

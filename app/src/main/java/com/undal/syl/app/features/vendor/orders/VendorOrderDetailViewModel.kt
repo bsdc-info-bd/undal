@@ -87,7 +87,7 @@ class VendorOrderDetailViewModel @Inject constructor(
      * shows messages.
      */
     private val guard = com.undal.syl.app.core.util.UndalGuards.viewModel("reading this order") { message ->
-        _state.value = _state.value.copy(infoMessage = message, busy = false)
+        _state.value = _state.value.copy(infoMessage = message, busy = false, loading = false)
     }
 
     /**

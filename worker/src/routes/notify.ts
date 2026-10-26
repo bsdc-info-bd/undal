@@ -65,6 +65,8 @@ export async function handleOrderCreated(env: Env, request: Request): Promise<Re
   if (!order) throw new HttpError(404, "order-not-found");
   if (order.customerId !== claims.sub) throw new HttpError(403, "order-belongs-to-another-customer");
 
+  if (order.status !== "placed") return json({ ok: true, skipped: true, reason: "order-already-answered" });
+
   const items = Array.isArray(order.items) ? order.items : [];
   const total = Number(order.totalAmountPaisa ?? 0);
   const shortId = stringField(order, "shortId");
@@ -265,7 +267,7 @@ export async function handleTestAlert(env: Env, request: Request): Promise<Respo
       body: "This is a test. If you can hear this, the kitchen will ring for a real order.",
       ttl: "120s",
       test: true,
-      extra: { kind: "test" },
+      kind: "test",
     },
     undefined,
   );

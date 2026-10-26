@@ -1,0 +1,30 @@
+name: verify-worker
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "worker/**"
+      - "tools/check-*.mjs"
+      - ".github/workflows/verify-worker.yml"
+permissions:
+  contents: read
+jobs:
+  verify:
+    name: Worker tests and storefront contracts
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: worker/package-lock.json
+      - run: npm ci --no-audit --no-fund
+        working-directory: worker
+      - run: npm run typecheck && npm test
+        working-directory: worker
+      - run: |
+          node tools/check-web-compat.mjs
+          node tools/check-web-rules.mjs
+          node tools/check-coupon-parity.mjs
+          node tools/check-alert-ladder.mjs
