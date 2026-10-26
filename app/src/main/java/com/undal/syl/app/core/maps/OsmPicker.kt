@@ -8,8 +8,6 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Place
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -29,8 +27,8 @@ import kotlin.math.cos
  * cancellation. So the pin can be placed four ways, because four different people
  * use this screen:
  *
- *  · **drag** the pin — the ordinary way,
- *  · **long-press** anywhere on the map — the fastest way to say "here",
+ *  · **drag** the pin immediately — no long-press delay,
+ *  · **tap** or **long-press** anywhere on the map — quick or precise placement,
  *  · **nudge arrows** — for somebody holding the phone in one hand, or using
  *    TalkBack, for whom a drag is not a gesture at all,
  *  · **use my current location** — the GPS fix, which is the starting point
@@ -83,6 +81,7 @@ fun UndalOsmPicker(
             recentreLabel = recentreLabel,
             onRecentre = onRecentre,
             onPinDragged = { _, lat, lng -> onPicked(lat, lng) },
+            onMapTap = { lat, lng -> onPicked(lat, lng) },
             onLongPress = { lat, lng -> onPicked(lat, lng) },
             onPinTapped = { tapped -> if (!tapped.draggable) onPicked(tapped.lat, tapped.lng) },
             mapLabel = mapLabel
@@ -90,7 +89,7 @@ fun UndalOsmPicker(
 
         Spacer(Modifier.height(UndalDimens.xs))
         Text(
-            text = "Drag the pin, hold a finger on the map, or use the arrows. " + UndalMaps.ATTRIBUTION,
+            text = "Tap a spot, drag the pin, or hold on the map for a precise pick. " + UndalMaps.ATTRIBUTION,
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
@@ -103,14 +102,6 @@ fun UndalOsmPicker(
             )
         }
 
-        if (recentreLabel != null && onRecentre != null) {
-            Spacer(Modifier.height(UndalDimens.sm))
-            UndalSecondaryButton(
-                text = recentreLabel,
-                onClick = onRecentre,
-                icon = Icons.Filled.Place
-            )
-        }
     }
 }
 

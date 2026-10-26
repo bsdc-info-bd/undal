@@ -1,16 +1,16 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <!-- Undal brand palette. The Compose colour system in Response 2 reads these. -->
-    <color name="undal_brand">#0B5A2B</color>
-    <color name="undal_brand_dark">#073D1D</color>
-    <color name="undal_brand_light">#E4F3E7</color>
-    <color name="undal_accent">#E8871E</color>
-    <color name="undal_accent_light">#FFF1DE</color>
-    <color name="undal_danger">#B3261E</color>
-    <color name="undal_success">#1E7B43</color>
+    <!-- Undal's warm, Foodpanda-inspired berry palette (without third-party marks). -->
+    <color name="undal_brand">#D70F64</color>
+    <color name="undal_brand_dark">#8C0A41</color>
+    <color name="undal_brand_light">#FCE7F0</color>
+    <color name="undal_accent">#F3A62A</color>
+    <color name="undal_accent_light">#FFF0D5</color>
+    <color name="undal_danger">#B3263A</color>
+    <color name="undal_success">#167347</color>
 
-    <color name="undal_splash_background">#0B5A2B</color>
-    <color name="undal_window_background">#FFFBF4</color>
-    <color name="undal_mark_light">#FFFDF7</color>
-    <color name="undal_mark_dark">#073D1D</color>
+    <color name="undal_splash_background">#D70F64</color>
+    <color name="undal_window_background">#FFFFF9FB</color>
+    <color name="undal_mark_light">#FFFFFFFF</color>
+    <color name="undal_mark_dark">#8C0A41</color>
 </resources>

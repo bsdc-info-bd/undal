@@ -284,6 +284,7 @@ fun VendorStoreScreen(
                         UndalOsmPicker(
                             latitude = if (state.pinLat == 0.0) 24.8949 else state.pinLat,
                             longitude = if (state.pinLng == 0.0) 91.8687 else state.pinLng,
+                            height = UndalDimens.mapHeightTall,
                             onPicked = viewModel::onPinPicked,
                             recentreLabel = "My kitchen",
                             onRecentre = null

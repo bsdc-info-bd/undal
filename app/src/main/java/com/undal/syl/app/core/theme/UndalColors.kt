@@ -8,40 +8,43 @@ import androidx.compose.ui.graphics.Color
 /**
  * Undal brand palette.
  *
- * Deep kitchen green for trust and action, warm turmeric for appetite and
- * emphasis, and a paper-warm neutral surface in light mode so photographs of
- * food read correctly. Every pair below was picked to clear a 4.5:1 contrast
- * ratio against its own surface.
+ * Rich berry for appetite-led actions, warm saffron for emphasis, and a soft
+ * paper-white surface so real food photography stays vivid. Foodpanda references
+ * informed the colour energy and browsing hierarchy; Undal keeps its own mark,
+ * content and voice. Text/status pairings retain separate semantic contrast.
  */
 object UndalPalette {
-    val Brand = Color(0xFF0B5A2B)
-    val BrandDark = Color(0xFF073D1D)
-    val BrandLight = Color(0xFFE4F3E7)
-    val BrandMid = Color(0xFF137A3B)
+    // Food-forward, high-contrast berry with Undal's own warm kitchen accent.
+    // The reference screenshots informed the energy and hierarchy, not a reuse
+    // of Foodpanda marks or artwork.
+    val Brand = Color(0xFFD70F64)
+    val BrandDark = Color(0xFF8C0A41)
+    val BrandLight = Color(0xFFFCE7F0)
+    val BrandMid = Color(0xFFB20D53)
 
-    val Accent = Color(0xFFE8871E)
-    val AccentDark = Color(0xFF97510B)
-    val AccentLight = Color(0xFFFFF1DE)
+    val Accent = Color(0xFFF3A62A)
+    val AccentDark = Color(0xFF8B4A00)
+    val AccentLight = Color(0xFFFFF0D5)
 
-    val Danger = Color(0xFFB3261E)
-    val DangerLight = Color(0xFFFDECEC)
-    val Success = Color(0xFF1E7B43)
-    val SuccessLight = Color(0xFFE7F5EC)
-    val Warning = Color(0xFF9A6700)
-    val WarningLight = Color(0xFFFFF4DC)
+    val Danger = Color(0xFFB3263A)
+    val DangerLight = Color(0xFFFCE9EC)
+    val Success = Color(0xFF167347)
+    val SuccessLight = Color(0xFFE5F4EC)
+    val Warning = Color(0xFF8A5A00)
+    val WarningLight = Color(0xFFFFF3D8)
 
-    val Paper = Color(0xFFFAF8F2)
-    val Ink = Color(0xFF14261B)
-    val Muted = Color(0xFF5B6B60)
-    val Outline = Color(0xFF737D72)
-    val OutlineSoft = Color(0xFFDFE5D9)
+    val Paper = Color(0xFFFFF9FB)
+    val Ink = Color(0xFF21151B)
+    val Muted = Color(0xFF665B62)
+    val Outline = Color(0xFF81747B)
+    val OutlineSoft = Color(0xFFF0DCE5)
 
-    val NightSurface = Color(0xFF101613)
-    val NightSurfaceHigh = Color(0xFF1A211C)
-    val NightInk = Color(0xFFE6EDE7)
-    val NightMuted = Color(0xFFA9B6AC)
-    val NightBrand = Color(0xFF63D08A)
-    val NightAccent = Color(0xFFFFB865)
+    val NightSurface = Color(0xFF141015)
+    val NightSurfaceHigh = Color(0xFF211920)
+    val NightInk = Color(0xFFFFF1F7)
+    val NightMuted = Color(0xFFC9B7C1)
+    val NightBrand = Color(0xFFFF73B5)
+    val NightAccent = Color(0xFFFFC36F)
 }
 
 val UndalLightScheme: ColorScheme = lightColorScheme(
@@ -59,7 +62,7 @@ val UndalLightScheme: ColorScheme = lightColorScheme(
     onBackground = UndalPalette.Ink,
     surface = Color.White,
     onSurface = UndalPalette.Ink,
-    surfaceVariant = Color(0xFFF1F4EE),
+    surfaceVariant = Color(0xFFF4EDF1),
     onSurfaceVariant = UndalPalette.Muted,
     outline = UndalPalette.Outline,
     outlineVariant = UndalPalette.OutlineSoft,
@@ -71,9 +74,9 @@ val UndalLightScheme: ColorScheme = lightColorScheme(
 
 val UndalDarkScheme: ColorScheme = darkColorScheme(
     primary = UndalPalette.NightBrand,
-    onPrimary = Color(0xFF04310F),
-    primaryContainer = Color(0xFF14502A),
-    onPrimaryContainer = Color(0xFFD5F5DF),
+    onPrimary = Color(0xFF3A001B),
+    primaryContainer = Color(0xFF5B1438),
+    onPrimaryContainer = Color(0xFFFFD8E7),
     secondary = UndalPalette.NightAccent,
     onSecondary = Color(0xFF3A2200),
     secondaryContainer = Color(0xFF5A3A0B),
@@ -84,10 +87,10 @@ val UndalDarkScheme: ColorScheme = darkColorScheme(
     onBackground = UndalPalette.NightInk,
     surface = UndalPalette.NightSurfaceHigh,
     onSurface = UndalPalette.NightInk,
-    surfaceVariant = Color(0xFF232B24),
+    surfaceVariant = Color(0xFF2C2228),
     onSurfaceVariant = UndalPalette.NightMuted,
-    outline = Color(0xFF8C998D),
-    outlineVariant = Color(0xFF3C483E),
+    outline = Color(0xFFA08B96),
+    outlineVariant = Color(0xFF4A3B43),
     error = Color(0xFFFFB4AB),
     onError = Color(0xFF690005),
     errorContainer = Color(0xFF8C1D18),

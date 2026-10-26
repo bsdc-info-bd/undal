@@ -5,8 +5,10 @@ import android.graphics.Canvas
 import android.graphics.Color as AndroidColor
 import android.graphics.Paint
 import android.graphics.Path
+import android.graphics.Point
 import android.graphics.drawable.Drawable
 import android.view.MotionEvent
+import android.view.ViewConfiguration
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -284,7 +286,7 @@ private class UndalPinDrawable(
  * rather than a teardown. Everything here runs on the main thread, because every
  * caller is a Compose effect.
  */
-private class UndalMapRenderer(private val mapView: MapView) {
+private class UndalMapRenderer(private val mapView: UndalMapView) {
 
     private val markers = LinkedHashMap<String, Marker>()
     private var radiusCircle: Polygon? = null
@@ -328,18 +330,13 @@ private class UndalMapRenderer(private val mapView: MapView) {
             }
             marker.setPosition(GeoPoint(pin.lat, pin.lng))
             marker.setTitle(pin.title)
-            marker.setDraggable(pin.draggable)
+            // osmdroid only starts a Marker drag after its long-press detector
+            // fires. That is easy to mistake for a dead pin, and a fast finger
+            // pans the map instead. UndalMapView owns an immediate, slop-aware
+            // drag for destination pins below; keep the built-in handler off so
+            // there can never be two gesture owners fighting for one touch.
+            marker.setDraggable(false)
             marker.setIcon(pinIcon(pin.role, accentColour, brandColour))
-            marker.setOnMarkerDragListener(object : Marker.OnMarkerDragListener {
-                override fun onMarkerDrag(marker: Marker) = Unit
-
-                override fun onMarkerDragEnd(marker: Marker) {
-                    val point = marker.position
-                    onDragged(pin.id, point.latitude, point.longitude)
-                }
-
-                override fun onMarkerDragStart(marker: Marker) = Unit
-            })
             // Returning true consumes the tap: osmdroid's own bubble is never used,
             // because the title of a pin is already printed in the caption below
             // the map, in the app's own type and language.
@@ -348,6 +345,12 @@ private class UndalMapRenderer(private val mapView: MapView) {
                 true
             }
         }
+        val dragTargets = pins
+            .asSequence()
+            .filter { it.draggable }
+            .mapNotNull { pin -> markers[pin.id]?.let { UndalDraggablePin(pin.id, it) } }
+            .toList()
+        mapView.setDraggablePins(dragTargets, onDragged)
         mapView.invalidate()
     }
 
@@ -368,7 +371,7 @@ private class UndalMapRenderer(private val mapView: MapView) {
         val white = AndroidColor.WHITE
         return when (role) {
             UndalPinRole.Destination -> UndalPinDrawable(
-                fill = accentColour,
+                fill = brandColour,
                 ring = white,
                 sizePx = (46 * density).toInt(),
                 teardrop = true,
@@ -532,6 +535,7 @@ fun UndalOsmMap(
     recentreLabel: String? = null,
     onRecentre: (() -> Unit)? = null,
     onPinDragged: ((String, Double, Double) -> Unit)? = null,
+    onMapTap: ((Double, Double) -> Unit)? = null,
     onLongPress: ((Double, Double) -> Unit)? = null,
     onPinTapped: ((UndalMapPin) -> Unit)? = null,
     mapLabel: String = "Map",
@@ -544,6 +548,7 @@ fun UndalOsmMap(
     // lambda on every recomposition must not rebuild the marker diff.
     val dragCallback by rememberUpdatedState(onPinDragged)
     val tapCallback by rememberUpdatedState(onPinTapped)
+    val mapTapCallback by rememberUpdatedState(onMapTap)
     val longPressCallback by rememberUpdatedState(onLongPress)
     val recentreCallback by rememberUpdatedState(onRecentre)
 
@@ -591,12 +596,17 @@ fun UndalOsmMap(
     }
     val renderer = remember(mapView) {
         UndalMapRenderer(mapView).also { created ->
-            if (interactive && longPressCallback != null) {
+            if (interactive && (longPressCallback != null || mapTapCallback != null)) {
                 created.installEvents(object : MapEventsReceiver {
-                    override fun singleTapConfirmedHelper(p: GeoPoint): Boolean = false
+                    override fun singleTapConfirmedHelper(p: GeoPoint): Boolean {
+                        val callback = mapTapCallback ?: return false
+                        callback(p.latitude, p.longitude)
+                        return true
+                    }
 
                     override fun longPressHelper(p: GeoPoint): Boolean {
-                        longPressCallback?.invoke(p.latitude, p.longitude)
+                        val callback = longPressCallback ?: return false
+                        callback(p.latitude, p.longitude)
                         return true
                     }
                 })
@@ -732,21 +742,173 @@ fun UndalOsmMap(
  * scrolled the page instead. While a finger is on an interactive map, the parent
  * is asked to keep its hands off; Compose's interop honours the request.
  */
+private data class UndalDraggablePin(val id: String, val marker: Marker)
+
+/**
+ * A MapView that keeps map gestures and owns direct, forgiving pin drags.
+ *
+ * osmdroid's built-in Marker requires a long press before it enters drag mode.
+ * A quick drag therefore pans the map and makes a customer think the pin is
+ * broken. We capture a touch that starts on a draggable pin, preserve the
+ * finger-to-anchor offset, and translate subsequent local pixels through the
+ * current map projection. All other gestures still go to osmdroid unchanged.
+ */
 private class UndalMapView(
     context: Context,
     private val holdsGestures: Boolean
 ) : MapView(context) {
 
+    private data class ActiveDrag(
+        val target: UndalDraggablePin,
+        val pointerId: Int,
+        val downX: Float,
+        val downY: Float,
+        val anchorOffsetX: Float,
+        val anchorOffsetY: Float,
+        val origin: GeoPoint,
+        var moved: Boolean = false
+    )
+
+    private var draggablePins: List<UndalDraggablePin> = emptyList()
+    private var onPinDragEnd: ((String, Double, Double) -> Unit)? = null
+    private var activeDrag: ActiveDrag? = null
+    private val touchSlop = ViewConfiguration.get(context).scaledTouchSlop
+
+    fun setDraggablePins(
+        pins: List<UndalDraggablePin>,
+        onDragEnd: (String, Double, Double) -> Unit
+    ) {
+        draggablePins = pins
+        onPinDragEnd = onDragEnd
+        if (activeDrag?.target?.let { active -> pins.none { it.marker === active.marker } } == true) {
+            cancelPinDrag()
+        }
+    }
+
     override fun dispatchTouchEvent(event: MotionEvent): Boolean {
-        if (holdsGestures) {
+        if (holdsGestures && event.actionMasked != MotionEvent.ACTION_UP &&
+            event.actionMasked != MotionEvent.ACTION_CANCEL
+        ) {
+            // This map lives inside a scrolling Compose form. A vertical pin drag
+            // must belong to the map, not be stolen by the page underneath it.
+            parent?.requestDisallowInterceptTouchEvent(true)
+        }
+
+        val drag = activeDrag
+        if (drag != null) {
             when (event.actionMasked) {
-                MotionEvent.ACTION_DOWN, MotionEvent.ACTION_MOVE ->
-                    parent?.requestDisallowInterceptTouchEvent(true)
-                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL ->
+                MotionEvent.ACTION_MOVE -> {
+                    if (event.pointerCount > 1) {
+                        cancelPinDrag()
+                    } else {
+                        movePinWithFinger(drag, event, drag.pointerId)
+                    }
+                    return true
+                }
+
+                MotionEvent.ACTION_UP -> {
+                    finishPinDrag(drag, event, drag.pointerId)
                     parent?.requestDisallowInterceptTouchEvent(false)
+                    return true
+                }
+
+                MotionEvent.ACTION_POINTER_DOWN -> {
+                    // A second finger means the user changed their mind and wants
+                    // a map gesture; do not leave a half-moved pin behind.
+                    cancelPinDrag()
+                    return true
+                }
+
+                MotionEvent.ACTION_CANCEL -> {
+                    cancelPinDrag()
+                    parent?.requestDisallowInterceptTouchEvent(false)
+                    return true
+                }
+
+                else -> return true
             }
         }
-        return super.dispatchTouchEvent(event)
+
+        if (event.actionMasked == MotionEvent.ACTION_DOWN) {
+            findDraggablePin(event)?.let { target ->
+                val anchor = Point()
+                projection.toPixels(target.marker.position, anchor)
+                activeDrag = ActiveDrag(
+                    target = target,
+                    pointerId = event.getPointerId(0),
+                    downX = event.x,
+                    downY = event.y,
+                    anchorOffsetX = event.x - anchor.x,
+                    anchorOffsetY = event.y - anchor.y,
+                    origin = GeoPoint(target.marker.position.latitude, target.marker.position.longitude)
+                )
+                parent?.requestDisallowInterceptTouchEvent(true)
+                return true
+            }
+        }
+
+        val handled = super.dispatchTouchEvent(event)
+        if (holdsGestures && (event.actionMasked == MotionEvent.ACTION_UP ||
+                    event.actionMasked == MotionEvent.ACTION_CANCEL)
+        ) {
+            parent?.requestDisallowInterceptTouchEvent(false)
+        }
+        return handled
+    }
+
+    private fun findDraggablePin(event: MotionEvent): UndalDraggablePin? {
+        val density = resources.displayMetrics.density
+        return draggablePins.asReversed().firstOrNull { target ->
+            val marker = target.marker
+            if (!marker.isEnabled) return@firstOrNull false
+            val screen = Point()
+            projection.toPixels(marker.position, screen)
+            val icon = marker.icon
+            val iconWidth = icon?.intrinsicWidth?.takeIf { it > 0 } ?: (46f * density).toInt()
+            val iconHeight = icon?.intrinsicHeight?.takeIf { it > 0 } ?: (46f * density).toInt()
+            val extra = (10f * density).toInt()
+            // The destination pin uses a bottom-centre anchor: its geographic
+            // point is the tip, not the visual centre of the teardrop.
+            val left = screen.x - iconWidth / 2 - extra
+            val right = screen.x + iconWidth / 2 + extra
+            val top = screen.y - iconHeight - extra
+            val bottom = screen.y + extra
+            event.x >= left && event.x <= right && event.y >= top && event.y <= bottom
+        }
+    }
+
+    private fun movePinWithFinger(drag: ActiveDrag, event: MotionEvent, pointerId: Int) {
+        val index = event.findPointerIndex(pointerId)
+        if (index < 0) return
+        val x = event.getX(index)
+        val y = event.getY(index)
+        if (!drag.moved && kotlin.math.hypot((x - drag.downX).toDouble(), (y - drag.downY).toDouble()) < touchSlop) {
+            return
+        }
+        drag.moved = true
+        val point = projection.fromPixels(
+            (x - drag.anchorOffsetX).toInt(),
+            (y - drag.anchorOffsetY).toInt()
+        ) as? GeoPoint ?: return
+        drag.target.marker.position = point
+        invalidate()
+    }
+
+    private fun finishPinDrag(drag: ActiveDrag, event: MotionEvent, pointerId: Int) {
+        movePinWithFinger(drag, event, pointerId)
+        activeDrag = null
+        if (drag.moved) {
+            val point = drag.target.marker.position
+            onPinDragEnd?.invoke(drag.target.id, point.latitude, point.longitude)
+        }
+        invalidate()
+    }
+
+    private fun cancelPinDrag() {
+        val drag = activeDrag ?: return
+        drag.target.marker.position = drag.origin
+        activeDrag = null
+        invalidate()
     }
 }
 

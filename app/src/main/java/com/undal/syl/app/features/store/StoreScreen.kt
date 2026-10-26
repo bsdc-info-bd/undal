@@ -6,6 +6,7 @@ import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -33,6 +34,7 @@ import androidx.compose.material.icons.filled.ShoppingCart
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
@@ -40,6 +42,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.TextButtonDefaults
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -51,11 +54,14 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
@@ -63,9 +69,9 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import coil3.compose.AsyncImage
+import com.undal.syl.app.R
 import com.undal.syl.app.core.design.UndalAdaptivePair
 import com.undal.syl.app.core.design.UndalLayoutPolicy
-import com.undal.syl.app.core.design.UndalPageIntro
 import com.undal.syl.app.core.design.UndalSectionHeader
 import com.undal.syl.app.core.design.ShimmerListRow
 import com.undal.syl.app.core.design.UndalAlertBanner
@@ -79,6 +85,7 @@ import com.undal.syl.app.core.model.Campaign
 import com.undal.syl.app.core.model.MenuCard
 import com.undal.syl.app.core.model.MenuSort
 import com.undal.syl.app.core.theme.UndalDimens
+import com.undal.syl.app.core.theme.UndalPalette
 import com.undal.syl.app.core.util.CouponMath
 import com.undal.syl.app.core.util.Distance
 import com.undal.syl.app.core.util.Money
@@ -106,6 +113,14 @@ fun StoreScreen(
     val focus = LocalFocusManager.current
     var showAccountMenu by remember { mutableStateOf(false) }
     val menuCardWidth = UndalLayoutPolicy.menuCardWidth(LocalConfiguration.current.screenWidthDp.toFloat(), LocalDensity.current.fontScale).dp
+    val heroCard = remember(state.menu) {
+        state.menu.cards.firstOrNull { card ->
+            card.available && (card as? MenuCard.Dish)?.item?.featured == true
+        } ?: state.menu.cards.firstOrNull { it.available && it.imageUrl.isNotBlank() }
+    }
+    val hasActiveFilters = state.query.isNotBlank() || state.categoryId != null ||
+        state.subcategoryId != null || state.vegetarianOnly || state.popularOnly ||
+        state.hideUnavailable || state.sort != MenuSort.RECOMMENDED
     var refreshing by remember { mutableStateOf(false) }
 
     LaunchedEffect(Unit) {
@@ -174,16 +189,17 @@ fun StoreScreen(
                 item(span = { GridItemSpan(maxLineSpan) }) {
                     UndalAdaptivePair(
                         primary = {
-                            UndalPageIntro(
-                                eyebrow = state.store.storeName,
-                                title = "A little taste of home.",
-                                subtitle = "Find your favourites, choose your doorstep, and leave the cooking to us. Pay cash when your order arrives."
+                            StoreHeader(
+                                state = state,
+                                reachabilityLine = viewModel.reachabilityLine(state.reachability),
+                                onEditAddress = onEditAddress
                             )
                         },
                         secondary = {
-                            StoreHeader(state = state,
-                                reachabilityLine = viewModel.reachabilityLine(state.reachability),
-                                onEditAddress = onEditAddress)
+                            StoreHeroCard(
+                                featured = heroCard,
+                                onOpenFeatured = { heroCard?.let { onOpenItem(it.id) } }
+                            )
                         }
                     )
                 }
@@ -202,6 +218,19 @@ fun StoreScreen(
                             }
                         )
                     }
+                }
+
+                item(span = { GridItemSpan(maxLineSpan) }) {
+                    UndalTextField(
+                        value = state.query,
+                        onValueChange = viewModel::onQueryChange,
+                        label = "Search the menu",
+                        hint = "kacchi, biryani, tea …",
+                        leadingIcon = Icons.Filled.Search,
+                        keyboardType = KeyboardType.Text,
+                        imeAction = ImeAction.Search,
+                        onImeAction = { focus.clearFocus() }
+                    )
                 }
 
                 if (state.offers.isNotEmpty()) {
@@ -223,23 +252,6 @@ fun StoreScreen(
                     )
                 }
 
-                item(span = { GridItemSpan(maxLineSpan) }) {
-                    UndalTextField(
-                        value = state.query,
-                        onValueChange = viewModel::onQueryChange,
-                        label = "Search the menu",
-                        hint = "kacchi, biryani, tea …",
-                        leadingIcon = Icons.Filled.Search,
-                        keyboardType = KeyboardType.Text,
-                        imeAction = ImeAction.Search,
-                        // The Search key on a Bangla or English keyboard used to
-                        // do nothing at all, leaving the keyboard covering the
-                        // menu the customer was searching. Now it puts the
-                        // keyboard away, which is what the key means.
-                        onImeAction = { focus.clearFocus() }
-                    )
-                }
-
                 if (state.menu.categories.isNotEmpty()) {
                     item(span = { GridItemSpan(maxLineSpan) }) {
                         CategoryRow(
@@ -247,6 +259,20 @@ fun StoreScreen(
                             categories = state.menu.categoriesWithSubcategories(),
                             hasCombos = state.menu.combos.isNotEmpty(),
                             onSelect = viewModel::onCategorySelected
+                        )
+                    }
+                }
+
+                if (state.menu.cards.isNotEmpty()) {
+                    item(span = { GridItemSpan(maxLineSpan) }) {
+                        QuickFilterRow(
+                            vegetarianOnly = state.vegetarianOnly,
+                            popularOnly = state.popularOnly,
+                            hideUnavailable = state.hideUnavailable,
+                            showPopular = state.menu.items.any { it.isPopular },
+                            onVegetarianChange = viewModel::setVegetarianOnly,
+                            onPopularChange = viewModel::setPopularOnly,
+                            onHideUnavailableChange = viewModel::setHideUnavailable
                         )
                     }
                 }
@@ -270,6 +296,7 @@ fun StoreScreen(
                     SortRow(
                         selected = state.sort,
                         resultCount = state.cards.size,
+                        hasFilters = hasActiveFilters,
                         onSelect = viewModel::onSortSelected,
                         onClear = viewModel::clearFilters
                     )
@@ -306,6 +333,143 @@ fun StoreScreen(
                     }
                 }
             }
+        }
+    }
+}
+
+@Composable
+private fun StoreHeroCard(
+    featured: MenuCard?,
+    onOpenFeatured: () -> Unit
+) {
+    val fontScale = LocalDensity.current.fontScale
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(UndalDimens.radiusLg),
+        color = MaterialTheme.colorScheme.primary
+    ) {
+        BoxWithConstraints(
+            modifier = Modifier
+                .fillMaxWidth()
+                .background(Brush.linearGradient(listOf(MaterialTheme.colorScheme.primary, UndalPalette.BrandMid)))
+        ) {
+            val compact = maxWidth < 360.dp || fontScale > 1.3f
+            if (compact) {
+                Column(modifier = Modifier.fillMaxWidth().padding(UndalDimens.lg)) {
+                    StoreHeroArtwork(
+                        featured = featured,
+                        modifier = Modifier.fillMaxWidth().height(132.dp)
+                    )
+                    Spacer(Modifier.height(UndalDimens.md))
+                    StoreHeroCopy(featured = featured, onOpenFeatured = onOpenFeatured)
+                }
+            } else {
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(UndalDimens.lg),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    StoreHeroCopy(
+                        featured = featured,
+                        onOpenFeatured = onOpenFeatured,
+                        modifier = Modifier.weight(1f)
+                    )
+                    Spacer(Modifier.width(UndalDimens.sm))
+                    StoreHeroArtwork(
+                        featured = featured,
+                        modifier = Modifier
+                            .width((maxWidth * 0.34f).coerceIn(112.dp, 170.dp))
+                            .height(148.dp)
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun StoreHeroCopy(
+    featured: MenuCard?,
+    onOpenFeatured: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val white = Color.White
+    Column(modifier = modifier) {
+        Text(
+            text = "UNDAL · SYLHET KITCHEN",
+            style = MaterialTheme.typography.labelSmall,
+            color = white
+        )
+        Spacer(Modifier.height(UndalDimens.xs))
+        Text(
+            text = "A little taste of home.",
+            style = MaterialTheme.typography.headlineSmall,
+            color = white
+        )
+        Spacer(Modifier.height(UndalDimens.xs))
+        Text(
+            text = "Home-cooked favourites, made with care.",
+            style = MaterialTheme.typography.bodySmall,
+            color = white,
+            maxLines = 2,
+            overflow = TextOverflow.Ellipsis
+        )
+        if (featured != null) {
+            Spacer(Modifier.height(UndalDimens.sm))
+            Text(
+                text = "KITCHEN FAVOURITE",
+                style = MaterialTheme.typography.labelSmall,
+                color = white
+            )
+            Text(
+                text = featured.name,
+                style = MaterialTheme.typography.titleSmall,
+                color = white,
+                maxLines = if (LocalDensity.current.fontScale > 1.3f) 2 else 1,
+                overflow = TextOverflow.Ellipsis
+            )
+            Text(
+                text = Money.format(featured.amountPaisa),
+                style = MaterialTheme.typography.labelLarge,
+                color = white
+            )
+            Spacer(Modifier.height(UndalDimens.xs))
+            Surface(shape = RoundedCornerShape(UndalDimens.radiusPill), color = white) {
+                TextButton(
+                    onClick = onOpenFeatured,
+                    contentPadding = PaddingValues(horizontal = UndalDimens.md),
+                    colors = TextButtonDefaults.textButtonColors(contentColor = UndalPalette.BrandDark)
+                ) {
+                    Text("Explore dish  ›", style = MaterialTheme.typography.labelMedium)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun StoreHeroArtwork(featured: MenuCard?, modifier: Modifier = Modifier) {
+    val white = Color.White
+    Box(
+        modifier = modifier
+            .clip(RoundedCornerShape(UndalDimens.radiusMd))
+            .background(white.copy(alpha = 0.16f)),
+        contentAlignment = Alignment.Center
+    ) {
+        if (featured?.imageUrl?.isNotBlank() == true) {
+            AsyncImage(
+                model = featured.imageUrl,
+                contentDescription = featured.name,
+                error = painterResource(R.drawable.ic_undal_mark),
+                contentScale = ContentScale.Crop,
+                modifier = Modifier.fillMaxSize()
+            )
+        } else {
+            Icon(
+                painter = painterResource(R.drawable.ic_undal_mark),
+                contentDescription = null,
+                tint = white,
+                modifier = Modifier.size(56.dp)
+            )
         }
     }
 }
@@ -602,30 +766,122 @@ private fun CategoryRow(
     hasCombos: Boolean,
     onSelect: (String?) -> Unit
 ) {
-    LazyRow(horizontalArrangement = Arrangement.spacedBy(UndalDimens.xs)) {
-        item {
-            FilterPill(
+    LazyRow(horizontalArrangement = Arrangement.spacedBy(UndalDimens.sm)) {
+        item(key = "all") {
+            FoodCategoryTile(
                 label = "All",
+                imageUrl = "",
                 selected = selectedId == null,
                 onClick = { onSelect(null) }
             )
         }
         items(categories, key = { it.id }) { category ->
-            FilterPill(
+            FoodCategoryTile(
                 label = category.name,
+                imageUrl = category.iconUrl,
                 selected = selectedId == category.id,
                 onClick = { onSelect(category.id) }
             )
         }
         if (hasCombos) {
-            item {
-                FilterPill(
+            item(key = MenuCard.COMBO_CATEGORY) {
+                FoodCategoryTile(
                     label = "Combos",
+                    imageUrl = "",
                     selected = selectedId == MenuCard.COMBO_CATEGORY,
                     onClick = { onSelect(MenuCard.COMBO_CATEGORY) }
                 )
             }
         }
+    }
+}
+
+@Composable
+private fun QuickFilterRow(
+    vegetarianOnly: Boolean,
+    popularOnly: Boolean,
+    hideUnavailable: Boolean,
+    showPopular: Boolean,
+    onVegetarianChange: (Boolean) -> Unit,
+    onPopularChange: (Boolean) -> Unit,
+    onHideUnavailableChange: (Boolean) -> Unit
+) {
+    Column {
+        Text(
+            text = "Quick filters",
+            style = MaterialTheme.typography.labelMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        LazyRow(horizontalArrangement = Arrangement.spacedBy(UndalDimens.xs)) {
+            item(key = "vegetarian") {
+                FilterChip(
+                    selected = vegetarianOnly,
+                    onClick = { onVegetarianChange(!vegetarianOnly) },
+                    label = { Text("Vegetarian") }
+                )
+            }
+            if (showPopular) {
+                item(key = "popular") {
+                    FilterChip(
+                        selected = popularOnly,
+                        onClick = { onPopularChange(!popularOnly) },
+                        label = { Text("Popular dishes") }
+                    )
+                }
+            }
+            item(key = "hide-finished") {
+                FilterChip(
+                    selected = hideUnavailable,
+                    onClick = { onHideUnavailableChange(!hideUnavailable) },
+                    label = { Text("Hide finished") }
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun FoodCategoryTile(
+    label: String,
+    imageUrl: String,
+    selected: Boolean,
+    onClick: () -> Unit
+) {
+    val tileShape = RoundedCornerShape(UndalDimens.radiusMd)
+    Column(
+        modifier = Modifier.width(76.dp).clickable(onClick = onClick),
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        Box(
+            modifier = Modifier
+                .size(64.dp)
+                .clip(tileShape)
+                .background(if (selected) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant),
+            contentAlignment = Alignment.Center
+        ) {
+            Text(
+                text = label.take(1),
+                style = MaterialTheme.typography.titleLarge,
+                color = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            if (imageUrl.isNotBlank()) {
+                AsyncImage(
+                    model = imageUrl,
+                    contentDescription = null,
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier.fillMaxSize()
+                )
+            }
+        }
+        Text(
+            text = label,
+            style = MaterialTheme.typography.labelSmall,
+            color = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+            maxLines = 2,
+            overflow = TextOverflow.Ellipsis,
+            textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+            modifier = Modifier.fillMaxWidth().padding(top = UndalDimens.xs)
+        )
     }
 }
 
@@ -649,16 +905,25 @@ private fun FilterPill(label: String, selected: Boolean, onClick: () -> Unit) {
 private fun SortRow(
     selected: MenuSort,
     resultCount: Int,
+    hasFilters: Boolean,
     onSelect: (MenuSort) -> Unit,
     onClear: () -> Unit
 ) {
-    Row(verticalAlignment = Alignment.CenterVertically) {
-        Text(
-            text = "$resultCount dishes",
-            style = MaterialTheme.typography.labelMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant
-        )
-        Spacer(Modifier.width(UndalDimens.sm))
+    Column {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                text = "$resultCount menu picks",
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.weight(1f)
+            )
+            if (hasFilters) {
+                TextButton(onClick = onClear) {
+                    Icon(Icons.Filled.Clear, contentDescription = null, modifier = Modifier.size(16.dp))
+                    Text("Clear")
+                }
+            }
+        }
         LazyRow(horizontalArrangement = Arrangement.spacedBy(UndalDimens.xs)) {
             items(MenuSort.entries.toList(), key = { it.name }) { sort ->
                 FilterPill(
@@ -666,12 +931,6 @@ private fun SortRow(
                     selected = sort == selected,
                     onClick = { onSelect(sort) }
                 )
-            }
-        }
-        if (resultCount == 0) {
-            TextButton(onClick = onClear) {
-                Icon(Icons.Filled.Clear, contentDescription = null, modifier = Modifier.size(16.dp))
-                Text("Clear")
             }
         }
     }

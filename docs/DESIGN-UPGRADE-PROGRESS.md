@@ -1,6 +1,6 @@
 # Design upgrade — implementation progress
 
-26 October 2026 · six source implementation batches. First whole-product source migration pass complete; release QA remains.
+26 October 2026 · six earlier source implementation batches plus a Foodpanda-reference-informed native app refresh. Native release QA remains.
 
 This records actual source changes, not a claim that every screen has been redesigned or tested on a device.
 
@@ -217,3 +217,13 @@ No FCM payload/alert-service changes or pricing/business-rule changes were made 
 | Release quality | Static/regression checks pass; native build/device/accessibility gates outstanding |
 
 Next: PR CI/source integration, followed by native instrumentation, screenshots, accessibility and real-device release QA. Source coverage is recorded in `docs/DESIGN-COVERAGE.md`; do not treat it as certification of those release gates. Do not mark all screens complete based only on inherited token changes.
+
+## Foodpanda-reference-informed Android refresh — 26 October 2026
+
+- Updated the shared native theme/resources to Undal berry, warm saffron and near-white surfaces. Foodpanda screenshots informed the colour energy and browsing patterns; no Foodpanda logo, mascot or screenshot image was added to the app.
+- Added a shared customer bottom bar (Home, Orders, Basket, Account) through the scaffold composition local, so the customer home, dish, cart, history, tracking, inbox and profile routes keep core destinations one tap away. Vendor/auth routes do not receive customer tabs.
+- Reworked the store landing hierarchy: saved delivery/open status first, a responsive hero using a real featured menu image when one exists, search before offers, and compact picture-led category tiles that use the kitchen's own category image URLs with readable fallbacks.
+- Added Vegetarian, Popular dishes and Hide finished quick filters, plus a clear-filters action whenever any search/category/sort/filter is active. Popular is derived from the existing real order-count threshold; vegetarian bundles qualify only when every component reference resolves to a vegetarian dish. Model unit tests cover these rules but still need CI execution.
+- Replaced the map picker's long-press-only feel with direct touch-and-drag from the marker, plus map tap and long-press placement. A larger 320dp picker frame and single current-location affordance improve visibility. Pin drags are handled in the map view and release at the selected coordinates; address persistence and confirmation rules are unchanged.
+- Updated both customer and kitchen pin-picker surfaces to the larger frame. No pricing, order, notification or backend contract changed.
+- Static checks run for this follow-up: 26 theme contrast pairs, Kotlin shape/import contracts and `git diff --check` pass. The local Gradle attempt could not start because no Java/JDK is installed; no Android compile, screenshot, emulator or live-map QA is claimed. Device verification remains a release gate.

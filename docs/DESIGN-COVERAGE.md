@@ -9,7 +9,7 @@
 | Splash | Static brand, safe insets, bounded scroll, polite progress announcement |
 | Login / registration | Bounded forms, warm hierarchy, Google/email pending states |
 | Delivery setup | Adaptive map/details panels, explicit confirmed pin, persistent save |
-| Store / item | Editorial entry, adaptive catalogue/cards, image/details split, sticky guarded add |
+| Store / item | Editorial entry, adaptive catalogue/cards, image/details split, sticky guarded add, dietary/popularity/availability quick filters |
 | Basket / checkout | Adaptive delivery/receipt panels, total/blockers, wrapping quantity/remove actions |
 | Tracking / history | Status/timeline/receipt hierarchy, chat/call controls, active-before-paging lazy history |
 | Profile | Readable identity/security groups, responsive actions, initial-read recovery |
@@ -23,7 +23,7 @@
 | Safe-mode recovery | Existing dependency-light, selectable native-view report and scrollable recovery retained intentionally; not replaced with Compose in a crash handler |
 | Order alert / full-screen action | Uses Android notification/full-screen intents into the existing order confirmation sheets; no separate Compose overlay route exists. OS delivery, data-only payload and continuous alarm semantics retained |
 
-All surfaces inherit the shared warm-paper/evergreen theme, spacing, bounded scaffold, typography and accessible button foundations as appropriate. The debug design gallery is a specimen, not a new production destination.
+All surfaces inherit the shared warm-paper/berry theme, spacing, bounded scaffold, typography and accessible button foundations as appropriate. Customer routes use persistent Home/Orders/Basket/Account navigation; auth and kitchen routes stay separate. The debug design gallery is a specimen, not a new production destination.
 
 ## Website inventory
 

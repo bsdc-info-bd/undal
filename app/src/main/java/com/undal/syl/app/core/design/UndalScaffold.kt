@@ -57,6 +57,7 @@ fun UndalScaffold(
     content: @Composable (PaddingValues) -> Unit
 ) {
     val hostState = snackbarHostState ?: remember { SnackbarHostState() }
+    val customerNavigation = LocalUndalCustomerNavigation.current
     // The title bar hides itself as the page scrolls, which is what gives a long
     // menu or a long order list the whole screen back on a small phone. It is a
     // standard Material effect driven by the page's own scroll, so it costs the
@@ -73,8 +74,17 @@ fun UndalScaffold(
         snackbarHost = { SnackbarHost(hostState) },
         floatingActionButton = floatingActionButton,
         bottomBar = {
-            Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
-                Box(Modifier.widthIn(max = contentMaxWidth).fillMaxWidth()) { bottomBar() }
+            Column(modifier = Modifier.fillMaxWidth()) {
+                Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
+                    Box(Modifier.widthIn(max = contentMaxWidth).fillMaxWidth()) { bottomBar() }
+                }
+                if (customerNavigation != null) {
+                    Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
+                        Box(Modifier.widthIn(max = contentMaxWidth).fillMaxWidth()) {
+                            UndalCustomerNavigationBar(customerNavigation)
+                        }
+                    }
+                }
             }
         },
         topBar = {

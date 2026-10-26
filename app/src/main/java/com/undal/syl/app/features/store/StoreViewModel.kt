@@ -75,6 +75,9 @@ class StoreViewModel @Inject constructor(
         val categoryId: String? = null,
         val subcategoryId: String? = null,
         val sort: MenuSort = MenuSort.RECOMMENDED,
+        val vegetarianOnly: Boolean = false,
+        val popularOnly: Boolean = false,
+        val hideUnavailable: Boolean = false,
         val address: UndalLocation? = null,
         val reachability: Reachability = Reachability.Unknown,
         val feeLabel: String = "",
@@ -111,7 +114,10 @@ class StoreViewModel @Inject constructor(
         val query: String = "",
         val categoryId: String? = null,
         val subcategoryId: String? = null,
-        val sort: MenuSort = MenuSort.RECOMMENDED
+        val sort: MenuSort = MenuSort.RECOMMENDED,
+        val vegetarianOnly: Boolean = false,
+        val popularOnly: Boolean = false,
+        val hideUnavailable: Boolean = false
     )
 
     init {
@@ -142,13 +148,19 @@ class StoreViewModel @Inject constructor(
                 filterAndQuantities
             ) { store, menu, cart, address, (filter, quantities) ->
                 val openState = StoreOpenState.of(store)
+                val dietaryIds = if (filter.vegetarianOnly) menu.vegetarianCardIds() else emptySet()
+                val popularIds = if (filter.popularOnly) menu.popularDishIds() else emptySet()
                 val cards = menuRepo.filter(
                     snapshot = menu,
                     categoryId = filter.categoryId,
                     subcategoryId = filter.subcategoryId,
                     query = filter.query,
                     sort = filter.sort
-                )
+                ).filter { card ->
+                    (!filter.vegetarianOnly || card.id in dietaryIds) &&
+                        (!filter.popularOnly || card.id in popularIds) &&
+                        (!filter.hideUnavailable || card.available)
+                }
                 State(
                     loading = false,
                     store = store,
@@ -160,6 +172,9 @@ class StoreViewModel @Inject constructor(
                     categoryId = filter.categoryId,
                     subcategoryId = filter.subcategoryId,
                     sort = filter.sort,
+                    vegetarianOnly = filter.vegetarianOnly,
+                    popularOnly = filter.popularOnly,
+                    hideUnavailable = filter.hideUnavailable,
                     address = address,
                     reachability = reachabilityOf(store, address),
                     feeLabel = "${Money.format(store.deliveryPerKmAmountPaisa)} per km",
@@ -243,6 +258,18 @@ class StoreViewModel @Inject constructor(
 
     fun onSortSelected(sort: MenuSort) {
         filterFlow.value = filterFlow.value.copy(sort = sort)
+    }
+
+    fun setVegetarianOnly(enabled: Boolean) {
+        filterFlow.value = filterFlow.value.copy(vegetarianOnly = enabled)
+    }
+
+    fun setPopularOnly(enabled: Boolean) {
+        filterFlow.value = filterFlow.value.copy(popularOnly = enabled)
+    }
+
+    fun setHideUnavailable(enabled: Boolean) {
+        filterFlow.value = filterFlow.value.copy(hideUnavailable = enabled)
     }
 
     fun clearFilters() {
