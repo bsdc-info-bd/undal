@@ -143,10 +143,15 @@ jobs:
       - name: Compile adaptive previews and instrumentation tests
         run: |
           set -o pipefail
-          # Compile-only: the production Firebase JSON need not register the .debug app.
-          # No debug APK/device test is produced or run here. Release Google Services
-          # processing and release input validation remain mandatory below.
-          ./gradlew :app:compileDebugAndroidTestKotlin -x :app:processDebugGoogleServices \
+          # Offline, compile-only fixture: never copy production credentials into
+          # the unregistered .debug app. This step does not produce/run a debug APK.
+          # Keep the real task graph intact: excluding GoogleServices breaks AGP's
+          # generated-resource providers. Remove the fixture before release build.
+          trap 'rm -f app/src/debug/google-services.json' EXIT
+          cat > app/src/debug/google-services.json <<'JSON'
+          {"project_info":{"project_number":"0","project_id":"undal-ci-compile-only"},"client":[{"client_info":{"mobilesdk_app_id":"1:0:android:0000000000000000","android_client_info":{"package_name":"com.undal.syl.app.debug"}},"api_key":[{"current_key":"CI_COMPILE_ONLY_NOT_A_CREDENTIAL"}]}],"configuration_version":"1"}
+          JSON
+          ./gradlew :app:compileDebugAndroidTestKotlin \
             --no-daemon --stacktrace 2>&1 | tee -a "$RUNNER_TEMP/undal-build.log"
 
       - name: Assemble signed-ready release APK
