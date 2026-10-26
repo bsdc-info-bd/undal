@@ -585,12 +585,9 @@ private fun ConnectionCard(summary: PresenceSummary, loaded: Boolean) {
         }
     ) {
         Column {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(UndalDimens.xs)
-            ) {
+            UndalActionGroup(primary = {
                 VendorStatCard(
-                            modifier = Modifier.fillMaxWidth(),                    label = "Uptime",
+                    label = "Uptime",
                     value = if (loaded) summary.uptimeLabel else "—",
                     caption = if (summary.sampledMinutes > 0) {
                         "${summary.sampledMinutes} min sampled"
@@ -598,16 +595,17 @@ private fun ConnectionCard(summary: PresenceSummary, loaded: Boolean) {
                         "no samples yet"
                     },
                     highlight = summary.heartbeatHealthy,
-                    modifier = Modifier.weight(1f)
+                    modifier = Modifier.fillMaxWidth()
                 )
+            }, secondary = {
                 VendorStatCard(
-                            modifier = Modifier.fillMaxWidth(),                    label = "Offline",
+                    label = "Offline",
                     value = PresenceSummary.formatMinutes(summary.offlineMinutes),
                     caption = "in 7 days",
                     highlight = summary.heartbeatAgeMillis > PresenceHeartbeat.STALE_AGE_MILLIS,
-                    modifier = Modifier.weight(1f)
+                    modifier = Modifier.fillMaxWidth()
                 )
-            }
+            })
             Spacer(Modifier.height(UndalDimens.sm))
             UndalKeyValueRow(
                 label = "This phone",
