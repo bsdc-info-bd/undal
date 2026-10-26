@@ -34,6 +34,7 @@ import androidx.compose.material.icons.filled.ShoppingCart
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -42,7 +43,6 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.material3.TextButtonDefaults
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -353,7 +353,8 @@ private fun StoreHeroCard(
                 .fillMaxWidth()
                 .background(Brush.linearGradient(listOf(MaterialTheme.colorScheme.primary, UndalPalette.BrandMid)))
         ) {
-            val compact = maxWidth < 360.dp || fontScale > 1.3f
+            val availableWidth = maxWidth
+            val compact = availableWidth < 360.dp || fontScale > 1.3f
             if (compact) {
                 Column(modifier = Modifier.fillMaxWidth().padding(UndalDimens.lg)) {
                     StoreHeroArtwork(
@@ -377,7 +378,7 @@ private fun StoreHeroCard(
                     StoreHeroArtwork(
                         featured = featured,
                         modifier = Modifier
-                            .width((maxWidth * 0.34f).coerceIn(112.dp, 170.dp))
+                            .width((availableWidth * 0.34f).coerceIn(112.dp, 170.dp))
                             .height(148.dp)
                     )
                 }
@@ -437,7 +438,7 @@ private fun StoreHeroCopy(
                 TextButton(
                     onClick = onOpenFeatured,
                     contentPadding = PaddingValues(horizontal = UndalDimens.md),
-                    colors = TextButtonDefaults.textButtonColors(contentColor = UndalPalette.BrandDark)
+                    colors = ButtonDefaults.textButtonColors(contentColor = UndalPalette.BrandDark)
                 ) {
                     Text("Explore dish  ›", style = MaterialTheme.typography.labelMedium)
                 }
