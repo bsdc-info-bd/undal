@@ -515,7 +515,14 @@ private fun DishRow(
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
-                Spacer(Modifier.weight(1f))
+            }
+            // Four actions on a 360 dp phone with a large system font is wider
+            // than the screen, so they wrap instead of being clipped: a button the
+            // customer cannot see is a button that does not exist.
+            FlowRow(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(UndalDimens.xs)
+            ) {
                 UndalTextButton(
                     text = if (item.featured) "Unfeature" else "Feature",
                     onClick = onToggleFeatured,
@@ -720,7 +727,6 @@ private fun SectionCard(
             Spacer(Modifier.height(UndalDimens.xs))
             FlowRow(horizontalArrangement = Arrangement.spacedBy(UndalDimens.xs)) {
                 UndalTextButton(text = "Edit", onClick = onEdit, icon = Icons.Filled.Edit)
-                UndalTextButton(text = "Copy", onClick = onDuplicate, icon = Icons.Filled.Add)
                 UndalTextButton(text = "Delete", onClick = onDelete, icon = Icons.Filled.Delete)
             }
             extra()
