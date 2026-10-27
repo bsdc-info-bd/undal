@@ -59,7 +59,6 @@ export interface WebDish {
   prepMinutes: number;
   featured: boolean;
   /** Source lists a starting price; the kitchen must configure the exact option. */
-  priceFrom: boolean;
 }
 
 export interface WebCombo {
@@ -139,7 +138,6 @@ function toDish(record: FsRecord): WebDish {
   const amountPaisa = num(record.amountPaisa);
   const discountAmountPaisa = num(record.discountAmountPaisa);
   const hasDiscount = discountAmountPaisa > 0 && discountAmountPaisa < amountPaisa;
-  const priceFrom = bool(record.priceFrom);
   return {
     id: String(record.id),
     kind: "dish",
@@ -148,9 +146,9 @@ function toDish(record: FsRecord): WebDish {
     amountPaisa,
     payablePaisa: hasDiscount ? amountPaisa - discountAmountPaisa : amountPaisa,
     discountAmountPaisa: hasDiscount ? discountAmountPaisa : 0,
-    // A source price marked "from" is not orderable until the vendor has
-    // replaced it with a verified exact option price and cleared the flag.
-    available: bool(record.available, true) && !priceFrom,
+    // A published price is the price. "Sold out" is the only switch that takes a
+    // dish off sale — there is no second, hidden state a customer has to guess at.
+    available: bool(record.available, true),
     veg: bool(record.veg),
     spiceLevel: num(record.spiceLevel),
     tags: Array.isArray(record.tags) ? record.tags.filter((tag): tag is string => typeof tag === "string") : [],
@@ -160,7 +158,6 @@ function toDish(record: FsRecord): WebDish {
     imageUrl: str(record.imageUrl),
     prepMinutes: num(record.prepMinutes, 0),
     featured: bool(record.featured),
-    priceFrom,
   };
 }
 

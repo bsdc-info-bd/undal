@@ -127,11 +127,20 @@ pin), `config/promos` (the offer rotation the 18:00 cron walks through),
 `counters/orders` (shortId counter starting at `UND-1001`), and the 67-item
 catalogue transcribed from [the Undal menu page](https://sylhetbites.pages.dev/undal/).
 Categories and dishes are created only when missing, so rerunning the workflow
-never overwrites vendor edits. Photos link to that page's published dish images.
-The menu starts unavailable: the kitchen must review stock, images, current
-prices/options and preparation details in the vendor app before enabling an item.
-The source marks some prices “from”; those items are visibly labeled with a
-starting price and must be configured by the kitchen before orders are enabled.
+never overwrites vendor edits. Each dish is written with the published selling
+price and is **on sale immediately**: the price a kitchen publishes is the price a
+customer pays, and the one switch that takes a dish off sale is the sold-out
+toggle in the vendor app. There is no "price to be confirmed" state — it used to
+leave every seeded dish unsellable, and a document still carrying that old flag is
+repaired by the next seed run.
+
+Photos are probed before they are written: the seed checks each published image
+URL (and the other three common extensions) and, when a picture cannot be fetched,
+seeds the dish without a link so the storefront and the app draw their own food
+artwork instead of a broken image. Upload a real photo from the vendor app to give
+a dish its own picture. If a photo link is present but fails to load, both front
+ends fall back to that artwork, and the Worker's image policy allows the catalog
+host and Cloudinary.
 The workflow then deploys the Firestore rules, composite indexes and RTDB rules.
 
 > The seeded kitchen pin is Zindabazar, Sylhet. **Move it** with the pin picker

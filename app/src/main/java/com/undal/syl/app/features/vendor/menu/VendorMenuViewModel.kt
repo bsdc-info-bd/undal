@@ -11,6 +11,8 @@ import com.undal.syl.app.core.model.ComboDraft
 import com.undal.syl.app.core.model.ComboRefDraft
 import com.undal.syl.app.core.model.CouponDraft
 import com.undal.syl.app.core.model.MenuDraft
+import com.undal.syl.app.core.model.MenuAudit
+import com.undal.syl.app.core.model.MenuHealth
 import com.undal.syl.app.core.model.MenuItem
 import com.undal.syl.app.core.model.MenuSnapshot
 import com.undal.syl.app.core.model.MenuSort
@@ -101,6 +103,15 @@ class VendorMenuViewModel @Inject constructor(
         val categoryId: String = "",
         val subcategoryId: String = "",
         val sort: MenuSort = MenuSort.RECOMMENDED,
+        /**
+         * The three questions a kitchen actually asks of its own menu: what is off
+         * sale right now, what has no photo, and what is not on the front page.
+         * They are filters, not reports — tapping one narrows the list you are
+         * already editing.
+         */
+        val onlySoldOut: Boolean = false,
+        val onlyMissingPhoto: Boolean = false,
+        val onlyUnfeatured: Boolean = false,
         val bulkMode: Boolean = false,
         val selectedIds: Set<String> = emptySet(),
         val dragIndex: Int = -1,
@@ -223,68 +234,28 @@ class VendorMenuViewModel @Inject constructor(
         _state.value = _state.value.copy(sort = sort)
     }
 
-    /** Dishes the manager should show right now, before the sort is applied. */
-    fun visibleDishes(): List<MenuItem> {
-        val state = _state.value
-        return state.menu.items
-            .filter { state.categoryId.isBlank() || it.categoryId == state.categoryId }
-            .filter { state.subcategoryId.isBlank() || it.subcategoryId == state.subcategoryId }
-            .filter { it.matches(state.query) }
-            .sortedWith(
-                when (state.sort) {
-                    MenuSort.PRICE_LOW -> compareBy { it.payablePaisa }
-                    MenuSort.PRICE_HIGH -> compareByDescending { it.payablePaisa }
-                    MenuSort.POPULAR -> compareByDescending { it.orderCount }
-                    MenuSort.RECOMMENDED -> compareByDescending<MenuItem> { it.featured }.thenByDescending { it.orderCount }
-                }
-            )
+    fun toggleOnlySoldOut() {
+        _state.value = _state.value.copy(onlySoldOut = !_state.value.onlySoldOut)
     }
 
-    fun countFor(categoryId: String): Int = _state.value.menu.items.count { it.categoryId == categoryId }
-
-    fun subcategoriesOf(categoryId: String): List<Subcategory> =
-        _state.value.menu.subcategories.filter { it.categoryId == categoryId }.sortedBy { it.order }
-
-    // ----------------------------------------------------------------- bulk mode
-
-    fun toggleBulkMode() {
-        val bulk = !_state.value.bulkMode
-        _state.value = _state.value.copy(bulkMode = bulk, selectedIds = emptySet())
+    fun toggleOnlyMissingPhoto() {
+        _state.value = _state.value.copy(onlyMissingPhoto = !_state.value.onlyMissingPhoto)
     }
 
-    fun toggleSelected(itemId: String) {
-        val selected = _state.value.selectedIds.toMutableSet()
-        if (!selected.add(itemId)) selected.remove(itemId)
-        _state.value = _state.value.copy(selectedIds = selected)
+    fun toggleOnlyUnfeatured() {
+        _state.value = _state.value.copy(onlyUnfeatured = !_state.value.onlyUnfeatured)
     }
 
-    fun selectAllVisible() {
-        _state.value = _state.value.copy(selectedIds = visibleDishes().map { it.id }.toSet())
+    fun clearQuickFilters() {
+        _state.value = _state.value.copy(
+            onlySoldOut = false,
+            onlyMissingPhoto = false,
+            onlyUnfeatured = false
+        )
     }
 
-    fun clearSelection() {
-        _state.value = _state.value.copy(selectedIds = emptySet())
-    }
-
-    fun applyBulk(available: Boolean) {
-        val ids = _state.value.selectedIds.toList()
-        if (ids.isEmpty()) return
-        _state.value = _state.value.copy(busy = true)
-        viewModelScope.launch(guard) {
-            val result = vendorMenuRepo.setAvailabilityBulk(ids, available)
-            _state.value = _state.value.copy(
-                busy = false,
-                selectedIds = emptySet(),
-                bulkMode = false,
-                message = when (result) {
-                    is UndalResult.Success ->
-                        "${ids.size} dish(es) are now ${if (available) "available" else "sold out"}."
-
-                    is UndalResult.Failure -> result.message
-                }
-            )
-        }
-    }
+    /** What the kitchen should look at before service; counted in [MenuAudit]. */
+    fun health(): MenuHealth = MenuAudit.of(_state.value.menu.items)
 
     // -------------------------------------------------------------------- dishes
 

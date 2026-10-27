@@ -47,6 +47,10 @@ input[type=checkbox],input[type=radio]{width:auto;min-height:0}
 .item img{height:auto;aspect-ratio:4/3}
 .price{font-size:1.15rem;color:var(--brand)}
 .tag{padding:4px 9px;font-size:.72rem}
+.food-art{position:relative;display:block;background:radial-gradient(ellipse at center,#fff9e7,#ecf0e4)}
+.food-art>img{display:block;width:100%;height:auto;aspect-ratio:4/3;object-fit:cover}
+.food-art>.food-placeholder{display:none}
+.food-art.no-photo>.food-placeholder{display:grid}
 .food-placeholder{aspect-ratio:4/3;display:grid;place-content:center;text-align:center;background:radial-gradient(ellipse at center,#fff9e7,#ecf0e4);color:var(--brand);gap:8px}
 .food-placeholder span{font-size:3rem}.food-placeholder small{font-weight:600;letter-spacing:.12em;text-transform:uppercase;font-size:.65rem}
 .store-hero{display:grid;grid-template-columns:1.3fr 1fr;align-items:center;gap:40px;padding:clamp(24px,5vw,64px);background:#edf2e6;border:1px solid #e1e8d9;border-radius:32px;margin-bottom:24px;overflow:hidden;position:relative}

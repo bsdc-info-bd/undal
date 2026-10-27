@@ -16,7 +16,7 @@ import type { Env } from "../env";
 import { projectId } from "../env";
 import { fsGet, fsPatchWithServerTimestamps } from "../firestore";
 import { raiseKitchenAlert } from "../alerting";
-import { rtdbSet } from "../rtdb";
+import { rtdbGet, rtdbSet } from "../rtdb";
 import { HttpError, json, readJson } from "../util/http";
 import { formatPaisa } from "../util/money";
 import {
@@ -877,10 +877,36 @@ export async function handleStoreCouponsApi(env: Env): Promise<Response> {
 }
 
 /** `GET /api/store/order/{id}` — status polling for the tracking page. */
+/**
+ * The further of two copies of one order's status.
+ *
+ * A cancellation is terminal and can be reached from either writer, so it always
+ * wins; otherwise the status later in the journey wins, because the only way a
+ * status is "behind" is a mirror or a document that has not caught up. This is the
+ * same rule the Android tracking screen applies (`OrderStateMachine.newest`), so
+ * the phone in the customer's hand and the tab on their desk cannot disagree.
+ */
+function newerOrderStatus(documentStatus: string, mirrorStatus: string): string {
+  const sequence = ["placed", "accepted", "ready", "in_delivery", "delivered"];
+  const known = (value: string): boolean => value === "cancelled" || sequence.includes(value);
+  if (!known(mirrorStatus)) return documentStatus;
+  if (documentStatus === "cancelled" || mirrorStatus === "cancelled") return "cancelled";
+  if (!known(documentStatus)) return documentStatus;
+  return sequence.indexOf(mirrorStatus) > sequence.indexOf(documentStatus) ? mirrorStatus : documentStatus;
+}
+
 export async function handleStoreOrderStatus(env: Env, orderId: string): Promise<Response> {
   const order = await fsGet(env, `orders/${orderId}`).catch(() => null);
   if (!order) throw new HttpError(404, "order-not-found");
-  const raw = str(order.status, "placed");
+  // The Realtime Database mirror is written the instant the kitchen taps, by the
+  // kitchen's own phone as well as by the relay below. Firestore is the record and
+  // stays the answer wherever it has one — but a cancellation is written to the
+  // mirror a beat earlier, and a browser tab left open on the tracking page is
+  // exactly the place that must not miss it. Reading it is best effort: no mirror,
+  // no problem.
+  const mirror = await rtdbGet<Record<string, unknown>>(env, `orderLive/${orderId}`).catch(() => null);
+  const raw = newerOrderStatus(str(order.status, "placed"), str(mirror?.status, ""));
+  const mirrorNote = str(mirror?.vendorNote);
   const receipt = receiptLines(order.items);
   return json(
     {
@@ -890,7 +916,7 @@ export async function handleStoreOrderStatus(env: Env, orderId: string): Promise
         shortId: str(order.shortId),
         status: raw,
         note: str(order.note),
-        cancelNote: str(order.cancelNote),
+        cancelNote: str(order.cancelNote) || (raw === "cancelled" ? mirrorNote : ""),
         prepEndsAt: str(order.prepEndsAt),
         // The bill, row by row. A customer who ordered in this browser has no
         // app to open, so the tracking page prints the same receipt the app

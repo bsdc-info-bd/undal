@@ -35,7 +35,7 @@ Legend: `[x]` shipped and wired · `[ ]` still to ship.
 - [x] C-010 · Location permission rationale sheet
 - [x] C-011 · Runtime permission flow with deny → app settings deep link
 - [x] C-012 · GPS auto-capture with accuracy indicator
-- [x] C-013 · Drag-pin fine adjustment on the osmdroid picker
+- [x] C-013 · Drag-pin fine adjustment on the osmdroid picker: the pin is drawn at the exact centre of the card and the map moves under it (the web picker's model), so the pin cannot be stranded in a corner of the card, and nudge arrows still move it six metres a tap
 - [x] C-014 · The pin is placed on an OpenStreetMap street map drawn by osmdroid in this process — drag the pin, long-press the map, nudge it five metres at a time, or take the GPS fix. There is no embed and no third party between the app and the picture of the street. The map is built once per screen and torn down only when the screen goes (it used to detach itself the instant it was built, which left every map a blank grid), and a drag inside a scrolling screen moves the pin, not the page
 - [x] C-015 · Address title as a required field
 - [x] C-016 · Address description as a required field
@@ -91,7 +91,7 @@ Legend: `[x]` shipped and wired · `[ ]` still to ship.
 - [x] C-066 · In-delivery state with rider-neutral copy
 - [x] C-067 · Delivered celebration with order summary
 - [x] C-068 · Cancelled view showing the kitchen note verbatim plus Call kitchen
-- [x] C-069 · Sub-second updates through the RTDB orderLive mirror
+- [x] C-069 · Sub-second updates through the RTDB orderLive mirror — the customer's tracking page merges the document and the mirror and never shows the older of the two, so a cancellation the mirror carried first appears immediately, with the kitchen's reason, while the history list and the tracking page can no longer disagree
 - [x] C-070 · In-order chat
 - [x] C-071 · Unread message badge
 - [x] C-072 · Call the kitchen through the dialer
@@ -140,7 +140,7 @@ Legend: `[x]` shipped and wired · `[ ]` still to ship.
 - [x] V-031 · "Is the order ready?" alert that sets ready, notifies the customer and stops the sound tick
 - [x] V-032 · Mark in delivery with a customer push
 - [x] V-033 · Mark delivered with a customer push, celebration and the collected-cash checkbox
-- [x] V-034 · Sticky countdown notification with a ten-second tick
+- [x] V-034 · Sticky countdown notification with a ten-second tick — the tick sounds only while the promise is still being kept, stops at the deadline, is silenced by a real switch in store settings, and the countdown ends itself the moment the order is marked ready, collected, delivered or cancelled (on this phone or on the other kitchen phone) instead of ticking through a cancelled order
 - [x] V-035 · Overdue escalation with a red banner and an extra push
 - [x] V-036 · Per-order chat shortcut
 - [x] V-037 · Unread customer message badge on the order
@@ -163,7 +163,7 @@ Legend: `[x]` shipped and wired · `[ ]` still to ship.
 - [x] V-054 · Item edit with dirty-state awareness
 - [x] V-055 · Item delete with confirmation and a summary of orders affected
 - [x] V-056 · Instant availability toggle reflected in the customer app
-- [x] V-057 · Bulk availability mode
+- [x] V-057 · Bulk mode: availability, home-highlight and "move to section" in one atomic batch, with select-all over the current filter — plus quick filters for sold out, missing photo and not-featured dishes, a menu-health card that says what needs a look before service, and dish duplication that opens the copy in the editor switched off
 - [x] V-058 · Search inside the manage list
 - [x] V-059 · Combo builder: pick at least two items, quantities, combo price and automatic savings against regular price
 - [x] V-060 · Combo create, read, update, delete with photo

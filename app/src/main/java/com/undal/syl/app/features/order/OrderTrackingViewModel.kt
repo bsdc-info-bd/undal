@@ -57,6 +57,12 @@ class OrderTrackingViewModel @Inject constructor(
         val detail: OrderRepo.OrderDetail? = null,
         val liveStatus: OrderStatus? = null,
         val displayStatus: OrderStatus = OrderStatus.PLACED,
+        /**
+         * The kitchen's words for a cancellation, from the order document or —
+         * while that write is still in flight — from the live mirror that moved
+         * the status first. Blank for every order that was not cancelled.
+         */
+        val cancelReason: String = "",
         val steps: List<OrderStatus> = OrderStateMachine.timeline,
         val stepIndex: Int = -1,
         val timelineRows: List<Pair<OrderStatus, String>> = emptyList(),
@@ -242,7 +248,13 @@ class OrderTrackingViewModel @Inject constructor(
         work: WorkView
     ): State {
         val liveStatus = detail?.liveStatus?.let { OrderStatus.fromWire(it) }
-        val display = liveStatus ?: detail?.status ?: OrderStatus.PLACED
+        // The further of the two, never the older of the two: a cancellation that
+        // the mirror carried first is still a cancellation, and a stale mirror
+        // saying "accepted" must never drag a cancelled order back to life.
+        val display = OrderStateMachine.newest(
+            firestoreStatus = detail?.status ?: OrderStatus.PLACED,
+            liveStatus = liveStatus
+        )
         val cancelled = display == OrderStatus.CANCELLED
 
         // Where the order stopped: for a cancelled order the last step that was
@@ -275,6 +287,7 @@ class OrderTrackingViewModel @Inject constructor(
             detail = detail,
             liveStatus = liveStatus,
             displayStatus = display,
+            cancelReason = detail?.cancelNote.orEmpty().ifBlank { detail?.liveNote.orEmpty() },
             stepIndex = stepIndex,
             timelineRows = rows,
             countdownLabel = if (prepEndsAt != null) TimeDhaka.countdown(prepEndsAt, now) else "",

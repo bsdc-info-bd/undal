@@ -168,7 +168,7 @@ function addForm(item: WebItem, options: { next?: "basket" | "store"; label?: st
   <input type="hidden" name="id" value="${escapeHtml(item.id)}">
   <input type="hidden" name="qty" value="1">
   <input type="hidden" name="next" value="${next}">
-  <button class="button" type="submit"${item.available ? "" : " disabled"}>${escapeHtml(item.available ? label : item.kind === "dish" && item.priceFrom ? "Price to be confirmed" : "Sold out")}</button>
+  <button class="button" type="submit"${item.available ? "" : " disabled"}>${escapeHtml(item.available ? label : "Sold out")}</button>
 </form>`;
 }
 
@@ -223,15 +223,33 @@ function couponStrip(coupons: CouponBoardEntry[], now = Date.now()): string {
   return `<section class="coupon-strip" aria-label="Offers running today">${cards}</section>`;
 }
 
+/**
+ * The picture of a dish, with the kitchen's own artwork underneath it.
+ *
+ * A dish photo is the only thing on this storefront that this Worker does not
+ * serve: it comes from Cloudinary (the kitchen's uploads) or from the published
+ * catalog the menu was seeded from. Either can be missing — a dish the owner has
+ * not photographed yet, a URL seeded before the photo was uploaded, a project that
+ * moved — and an `<img>` that 404s is a hole in the grid that reads as a broken
+ * shop. So the artwork is always in the markup, hidden behind the photo, and the
+ * photo reveals it if it fails to load. No empty boxes, whatever the network says.
+ */
+function foodArt(imageUrl: string): string {
+  const photo = imageUrl
+    ? `<img src="${escapeHtml(imageUrl)}" alt="" loading="lazy" decoding="async" width="480" height="360" ` +
+      `onerror="this.style.display='none';var host=this.parentNode;if(host){host.className='food-art no-photo';}">`
+    : "";
+  return `<div class="food-art${imageUrl ? "" : " no-photo"}">${photo}` +
+    `<div class="food-placeholder" aria-hidden="true"><span>♨</span><small>From our kitchen</small></div></div>`;
+}
+
 function itemCard(item: WebItem, sectionName: string): string {
-  const image = item.imageUrl
-    ? `<img src="${escapeHtml(item.imageUrl)}" alt="" loading="lazy" width="480" height="360">`
-    : `<div class="food-placeholder" aria-hidden="true"><span>♨</span><small>From our kitchen</small></div>`;
+  const image = foodArt(item.imageUrl);
   const tags: string[] = [];
   if (item.kind === "dish" && item.veg) tags.push(`<span class="tag">Veg</span>`);
   if (item.discountAmountPaisa > 0) tags.push(`<span class="tag off">Save ${formatPaisa(item.discountAmountPaisa)}</span>`);
   if (item.kind === "combo") tags.push(`<span class="tag">Combo</span>`);
-  if (!item.available) tags.push(`<span class="tag warn">${item.kind === "dish" && item.priceFrom ? "Price to be confirmed" : "Sold out"}</span>`);
+  if (!item.available) tags.push(`<span class="tag warn">Sold out</span>`);
   const was = item.kind === "dish" && item.discountAmountPaisa > 0
     ? `<span class="was">${formatPaisa(item.amountPaisa)}</span>`
     : "";
@@ -249,7 +267,7 @@ ${image}
 </div>
 </a>
 <div class="body card-tail">
-  <span class="price">${item.kind === "dish" && item.priceFrom ? "From " : ""}${formatPaisa(item.payablePaisa)}${was}</span>
+  <span class="price">${formatPaisa(item.payablePaisa)}${was}</span>
   <span class="smallprint">${escapeHtml(sectionName)}</span>
 </div>
 ${addForm(item, { label: "Add", next: "store" })}
@@ -438,7 +456,9 @@ export async function handleStoreItem(env: Env, request: Request, id: string): P
 <a class="back-link" href="/store">← Back to the menu</a>
 <article class="item-detail" aria-labelledby="dish-title">
   <div class="item-photo">${item.imageUrl
-    ? `<img class="hero" src="${escapeHtml(item.imageUrl)}" alt="${escapeHtml(item.name)}">`
+    ? `<img class="hero" src="${escapeHtml(item.imageUrl)}" alt="${escapeHtml(item.name)}" ` +
+      `onerror="this.style.display='none';var host=this.parentNode;if(host){host.className='item-photo no-photo';}">` +
+      `<div class="food-placeholder" aria-hidden="true"><span>♨</span><small>From our kitchen</small></div>`
     : `<div class="food-placeholder" aria-hidden="true"><span>♨</span><small>From our kitchen</small></div>`}</div>
   <section class="card item-information">
   <span class="eyebrow">${escapeHtml(section?.name ?? (item.kind === "combo" ? "Combo" : "Menu"))}</span>
@@ -453,17 +473,17 @@ export async function handleStoreItem(env: Env, request: Request, id: string): P
   <p>${escapeHtml(item.description)}</p>
   ${comboContents ? `<p class="muted">${escapeHtml(comboContents)}</p>` : ""}
   ${item.kind === "dish" && item.tags.length ? `<p class="muted">${escapeHtml(item.tags.join(" · "))}</p>` : ""}
-  <p class="price" style="font-size:1.3rem">${item.kind === "dish" && item.priceFrom ? "From " : ""}${formatPaisa(item.payablePaisa)}${
+  <p class="price" style="font-size:1.3rem">${formatPaisa(item.payablePaisa)}${
     item.kind === "dish" && item.discountAmountPaisa > 0
       ? `<span class="was">${formatPaisa(item.amountPaisa)}</span>`
       : ""
   }</p>
-  ${item.kind === "dish" && item.priceFrom ? `<p class="muted">Starting price only. The kitchen must confirm the selected option before orders are enabled.</p>` : ""}
+
   ${
     item.available
       ? addForm(item, { next: "basket", label: "Add to basket", wide: true }) +
         `<a class="button secondary" href="/basket">View your basket</a>`
-      : `<div class="notice">${item.kind === "dish" && item.priceFrom ? "The published amount is a starting price. The kitchen must confirm the exact option before this dish can be ordered." : "This dish is finished for today. The kitchen keeps it on the menu so you know what they cook — it is not orderable right now."}</div>`
+      : `<div class="notice">This dish is finished for today. The kitchen keeps it on the menu so you know what they cook — it is not orderable right now.</div>`
   }
   </section>
 </article>
@@ -1260,6 +1280,9 @@ export async function handleOrderTracking(orderId: string): Promise<Response> {
   }
 
   function poll() {
+    // A tab in the background has nobody reading it; the next tick after it comes
+    // forward refreshes everything anyway.
+    if (document.hidden === true) return;
     fetch("/api/store/order/" + encodeURIComponent(orderId))
       .then(function (response) {
         // 400 and 404 are the server's last word on that id; anything else —
@@ -1284,7 +1307,10 @@ export async function handleOrderTracking(orderId: string): Promise<Response> {
       });
   }
   poll();
-  window._undalPoll = window.setInterval(poll, 20000);
+  // Eight seconds, not twenty: the kitchen's tap and the customer's screen were
+  // twenty seconds apart, which reads as "the page is not updating" for the one
+  // update a customer is waiting for. A finished order stops the clock entirely.
+  window._undalPoll = window.setInterval(poll, 8000);
 })();
 </script>`,
     nav: nav("track"),

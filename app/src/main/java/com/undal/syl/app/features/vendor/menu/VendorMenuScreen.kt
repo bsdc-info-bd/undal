@@ -200,6 +200,8 @@ private fun DishesTab(
     val dishes = viewModel.visibleDishes()
     Column(modifier = Modifier.fillMaxSize()) {
         Column(modifier = Modifier.padding(horizontal = UndalDimens.screenPadding)) {
+            MenuHealthCard(state = state, viewModel = viewModel)
+            Spacer(Modifier.height(UndalDimens.xs))
             UndalTextField(
                 value = state.query,
                 onValueChange = viewModel::onQuery,
@@ -225,6 +227,33 @@ private fun DishesTab(
                         label = sort.label,
                         selected = state.sort == sort,
                         onClick = { viewModel.onSort(sort) }
+                    )
+                }
+            }
+            // The three states an owner hunts for by hand: off sale, no photo, not
+            // on the front page. One tap narrows the list to them.
+            Spacer(Modifier.height(UndalDimens.xs))
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(UndalDimens.xs)) {
+                VendorChip(
+                    label = "Sold out · ${viewModel.health().soldOut}",
+                    selected = state.onlySoldOut,
+                    onClick = viewModel::toggleOnlySoldOut
+                )
+                VendorChip(
+                    label = "No photo · ${viewModel.health().missingPhoto}",
+                    selected = state.onlyMissingPhoto,
+                    onClick = viewModel::toggleOnlyMissingPhoto
+                )
+                VendorChip(
+                    label = "Not featured · ${viewModel.health().unfeatured}",
+                    selected = state.onlyUnfeatured,
+                    onClick = viewModel::toggleOnlyUnfeatured
+                )
+                if (state.onlySoldOut || state.onlyMissingPhoto || state.onlyUnfeatured) {
+                    VendorChip(
+                        label = "Clear filters",
+                        selected = false,
+                        onClick = viewModel::clearQuickFilters
                     )
                 }
             }
@@ -272,6 +301,41 @@ private fun DishesTab(
                                 modifier = Modifier.weight(1f)
                             )
                         }
+                        Spacer(Modifier.height(UndalDimens.xs))
+                        Row(horizontalArrangement = Arrangement.spacedBy(UndalDimens.xs)) {
+                            UndalSecondaryButton(
+                                text = "Feature",
+                                onClick = { viewModel.applyBulkFeatured(true) },
+                                enabled = state.selectedIds.isNotEmpty() && !state.busy,
+                                modifier = Modifier.weight(1f)
+                            )
+                            UndalSecondaryButton(
+                                text = "Unfeature",
+                                onClick = { viewModel.applyBulkFeatured(false) },
+                                enabled = state.selectedIds.isNotEmpty() && !state.busy,
+                                modifier = Modifier.weight(1f)
+                            )
+                        }
+                        Spacer(Modifier.height(UndalDimens.xs))
+                        Text(
+                            text = "Move the selection into a section",
+                            style = MaterialTheme.typography.labelLarge,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Spacer(Modifier.height(UndalDimens.xs))
+                        FlowRow(horizontalArrangement = Arrangement.spacedBy(UndalDimens.xs)) {
+                            state.menu.categories.sortedBy { it.order }.forEach { category ->
+                                VendorChip(
+                                    label = category.name,
+                                    selected = false,
+                                    onClick = {
+                                        if (state.selectedIds.isNotEmpty()) {
+                                            viewModel.applyBulkCategory(category.id)
+                                        }
+                                    }
+                                )
+                            }
+                        }
                     }
                 }
             }
@@ -306,7 +370,70 @@ private fun DishesTab(
                         onToggleAvailability = { viewModel.toggleAvailability(item) },
                         onToggleFeatured = { viewModel.toggleFeatured(item) },
                         onEdit = { viewModel.editDish(item) },
+                        onDuplicate = { viewModel.duplicateDish(item) },
                         onDelete = { viewModel.askDeleteDish(item) }
+                    )
+                }
+            }
+        }
+    }
+}
+
+/**
+ * The menu at a glance, and a way into each problem it names.
+ *
+ * A kitchen that has never had a dashboard asks three questions before service:
+ * how many dishes are on sale, which ones have no photo, and which ones have no
+ * prep time. Each number is also a filter, so the card is not a report about a
+ * problem — it is the way to the problem.
+ */
+@Composable
+private fun MenuHealthCard(state: VendorMenuViewModel.State, viewModel: VendorMenuViewModel) {
+    val health = viewModel.health()
+    UndalCard(modifier = Modifier.fillMaxWidth()) {
+        Column(modifier = Modifier.padding(UndalDimens.sm)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    text = if (health.isHealthy) "The menu is ready for service" else "Before service",
+                    style = MaterialTheme.typography.titleSmall,
+                    modifier = Modifier.weight(1f)
+                )
+                UndalStatusPill(
+                    text = if (health.isHealthy) "Ready" else "Needs a look",
+                    containerColour = if (health.isHealthy) {
+                        MaterialTheme.undalSemantics.successContainer
+                    } else {
+                        MaterialTheme.undalSemantics.warningContainer
+                    },
+                    contentColour = if (health.isHealthy) {
+                        MaterialTheme.undalSemantics.onSuccessContainer
+                    } else {
+                        MaterialTheme.undalSemantics.onWarningContainer
+                    }
+                )
+            }
+            Spacer(Modifier.height(UndalDimens.xs))
+            Text(
+                text = "${health.onSale} of ${health.dishes} dishes are on sale · " +
+                    "${health.soldOut} sold out · ${health.missingPhoto} without a photo · " +
+                    "${health.missingPrep} without a prep time",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Spacer(Modifier.height(UndalDimens.xs))
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(UndalDimens.xs)) {
+                if (health.missingPhoto > 0) {
+                    UndalTextButton(
+                        text = "Fix the ${health.missingPhoto} photo(s)",
+                        onClick = { if (!state.onlyMissingPhoto) viewModel.toggleOnlyMissingPhoto() },
+                        icon = Icons.Filled.Warning
+                    )
+                }
+                if (health.soldOut > 0) {
+                    UndalTextButton(
+                        text = "See what is sold out",
+                        onClick = { if (!state.onlySoldOut) viewModel.toggleOnlySoldOut() },
+                        icon = Icons.Filled.Info
                     )
                 }
             }
@@ -323,6 +450,7 @@ private fun DishRow(
     onToggleAvailability: () -> Unit,
     onToggleFeatured: () -> Unit,
     onEdit: () -> Unit,
+    onDuplicate: () -> Unit,
     onDelete: () -> Unit
 ) {
     UndalCard(modifier = Modifier.fillMaxWidth()) {
@@ -336,7 +464,6 @@ private fun DishRow(
                     Text(text = item.name, style = MaterialTheme.typography.titleSmall)
                     Text(
                         text = buildString {
-                            if (item.priceFrom) append("Price needs exact options · from ")
                             append(Money.format(item.payablePaisa))
                             if (item.hasDiscount) {
                                 append(" · was ")
@@ -357,15 +484,13 @@ private fun DishRow(
                 }
                 Switch(
                     checked = item.available,
-                    onCheckedChange = { onToggleAvailability() },
-                    enabled = !item.priceFrom
+                    onCheckedChange = { onToggleAvailability() }
                 )
             }
             Spacer(Modifier.height(UndalDimens.xs))
             Row(verticalAlignment = Alignment.CenterVertically) {
                 UndalStatusPill(
                     text = when {
-                        item.priceFrom -> "Set exact price"
                         !item.available -> "Sold out"
                         item.featured -> "Chef's pick"
                         item.isPopular -> "Popular"
@@ -397,6 +522,7 @@ private fun DishRow(
                     icon = Icons.Filled.Star
                 )
                 UndalTextButton(text = "Edit", onClick = onEdit, icon = Icons.Filled.Edit)
+                UndalTextButton(text = "Copy", onClick = onDuplicate, icon = Icons.Filled.Add)
                 UndalTextButton(text = "Delete", onClick = onDelete, icon = Icons.Filled.Delete)
             }
         }
@@ -594,6 +720,7 @@ private fun SectionCard(
             Spacer(Modifier.height(UndalDimens.xs))
             FlowRow(horizontalArrangement = Arrangement.spacedBy(UndalDimens.xs)) {
                 UndalTextButton(text = "Edit", onClick = onEdit, icon = Icons.Filled.Edit)
+                UndalTextButton(text = "Copy", onClick = onDuplicate, icon = Icons.Filled.Add)
                 UndalTextButton(text = "Delete", onClick = onDelete, icon = Icons.Filled.Delete)
             }
             extra()

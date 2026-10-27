@@ -655,6 +655,13 @@ export class FakeFirebase {
     }
     // GET, including the shallow reads: top-level keys only, which is all the
     // diagnosis asks for.
+    // A real Realtime Database read returns whatever lives at that exact path — a
+    // leaf object like `orderLive/abc` included. This used to only look for
+    // children, so a GET of a node the test had just written answered `null` and a
+    // reader that trusts it (the tracking page's mirror fallback) looked broken.
+    if (!shallow && this.rtdb.has(relative)) {
+      return new Response(JSON.stringify(this.rtdb.get(relative)), { status: 200 });
+    }
     const value = relative === ""
       ? Object.fromEntries([...this.rtdb.keys()].map((key) => [key.split("/")[0], true]))
       : shallow

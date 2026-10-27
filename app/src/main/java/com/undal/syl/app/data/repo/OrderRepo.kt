@@ -96,6 +96,17 @@ class OrderRepo @Inject constructor(
         val shortId: String,
         val status: OrderStatus,
         val liveStatus: String?,
+        /**
+         * The note the live mirror carried when the status arrived.
+         *
+         * A cancellation is written in two places: the order document (with
+         * `cancelNote`) and the Realtime Database mirror (with `vendorNote`). The
+         * mirror lands first, by design — it is what makes the customer's screen
+         * move in under a second — so between the two writes the tracking page has
+         * a status of "cancelled" and no reason to print with it. This field is
+         * that reason, and the page shows it until the document catches up.
+         */
+        val liveNote: String,
         val customerName: String,
         val phone: String,
         val addressTitle: String,
@@ -404,11 +415,20 @@ class OrderRepo @Inject constructor(
             awaitClose { registration.remove() }
         }.catch { emit(null) }
 
+        // The mirror is read as a *node*, not as its `status` child, because a
+        // cancellation carries its reason in the same write. Reading only the
+        // status was why the tracking page could say "cancelled" with no reason
+        // for the second or two before the order document committed.
         val liveFlow = callbackFlow {
-            val reference = database.getReference(LIVE).child(orderId).child("status")
+            val reference = database.getReference(LIVE).child(orderId)
             val listener = object : com.google.firebase.database.ValueEventListener {
                 override fun onDataChange(snapshot: com.google.firebase.database.DataSnapshot) {
-                    trySend(snapshot.getValue(String::class.java))
+                    trySend(
+                        LiveMirror(
+                            status = snapshot.child("status").getValue(String::class.java),
+                            vendorNote = snapshot.child("vendorNote").getValue(String::class.java).orEmpty()
+                        )
+                    )
                 }
 
                 override fun onCancelled(error: com.google.firebase.database.DatabaseError) {
@@ -419,10 +439,16 @@ class OrderRepo @Inject constructor(
             awaitClose { reference.removeEventListener(listener) }
         }.catch { emit(null) }
 
-        return combine(firestoreFlow, liveFlow) { detail, liveStatus ->
-            detail?.copy(liveStatus = liveStatus)
+        return combine(firestoreFlow, liveFlow) { detail, live ->
+            detail?.copy(
+                liveStatus = live?.status,
+                liveNote = live?.vendorNote.takeUnless { it.isNullOrBlank() } ?: detail.liveNote
+            )
         }
     }
+
+    /** What the Realtime Database's live mirror says about one order. */
+    private data class LiveMirror(val status: String?, val vendorNote: String)
 
     /**
      * Reorder (C-076): rebuilds cart lines from a past order and reports which
@@ -560,6 +586,7 @@ class OrderRepo @Inject constructor(
             shortId = getString("shortId").orEmpty(),
             status = OrderStatus.fromWire(getString("status")) ?: OrderStatus.PLACED,
             liveStatus = null,
+            liveNote = getString("cancelNote").orEmpty(),
             customerName = getString("customerName").orEmpty(),
             phone = getString("phone").orEmpty(),
             addressTitle = (address?.get("title") as? String).orEmpty(),

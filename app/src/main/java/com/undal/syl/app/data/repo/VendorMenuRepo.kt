@@ -273,6 +273,43 @@ class VendorMenuRepo @Inject constructor(
         onFailure = { UndalResult.Failure(UndalErrors.firestore(it, operation = "changing availability for several dishes"), it) }
     )
 
+    /**
+     * Bulk mode's other half: one batch, one confirmation, any set of dishes.
+     *
+     * A busy kitchen thinks in groups ("everything in Fish Curry is finished",
+     * "these four are today's picks"), and doing that one dish at a time is a
+     * minute of tapping on a phone propped against a pot. Every write in the batch
+     * carries `updatedAt` because `firestore.rules` requires it on every menu
+     * update, and the whole batch is atomic: a selection is either all applied or
+     * all refused, never half applied with no way to see which half landed.
+     */
+    /**
+     * One atomic write across several dishes, returning the sentence to show.
+     *
+     * The message is part of the result rather than a field on the repository: a
+     * `var lastBulkNote` is shared state that two screens (or two taps) can
+     * overwrite each other with, and it makes the caller read the answer to a
+     * question it did not ask.
+     */
+    suspend fun patchItemsBulk(
+        ids: List<String>,
+        extra: Map<String, Any?>,
+        successNote: String
+    ): UndalResult<String> = runCatching {
+        if (ids.isEmpty()) error("Pick at least one dish first.")
+        if (ids.size > 200) error("A batch can hold at most 200 dishes — narrow the filter and do it in two goes.")
+        val fields = extra.toMutableMap()
+        fields["updatedAt"] = FieldValue.serverTimestamp()
+        val batch = firestore.batch()
+        ids.forEach { id -> batch.update(firestore.collection(MENU_ITEMS).document(id), fields) }
+        batch.commit().await()
+        val count = ids.size
+        successNote.ifBlank { "$count dish(es) updated." }
+    }.fold(
+        onSuccess = { UndalResult.Success(it) },
+        onFailure = { UndalResult.Failure(UndalErrors.firestore(it, operation = "changing several dishes"), it) }
+    )
+
     private suspend fun patchItem(id: String, extra: Map<String, Any?>): UndalResult<Unit> = runCatching {
         val payload = extra.toMutableMap()
         payload["updatedAt"] = FieldValue.serverTimestamp()

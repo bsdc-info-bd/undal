@@ -105,8 +105,8 @@ fun ItemDetailScreen(
                         Spacer(Modifier.height(UndalDimens.sm))
                         UndalPrimaryButton(
                             text = when {
-                                card.available -> "Add to basket · ${Money.format(Money.lineTotal(card.amountPaisa, state.quantity))}"
-                                (card as? MenuCard.Dish)?.item?.priceFrom == true -> "Price needs confirming"
+                                card.available ->
+                                    "Add to basket · ${Money.format(Money.lineTotal(card.amountPaisa, state.quantity))}"
                                 else -> "Not available today"
                             },
                             onClick = { viewModel.addToCart(onOpenCart) },
@@ -251,17 +251,9 @@ fun ItemDetailScreen(
                             Column(verticalArrangement = Arrangement.spacedBy(UndalDimens.sm)) {
                                 Column {
                                     Text(
-                                        text = (if (dish?.priceFrom == true) "From " else "") +
-                                            Money.format(card.amountPaisa),
+                                        text = Money.format(card.amountPaisa),
                                         style = MaterialTheme.typography.headlineSmall
                                     )
-                                    if (dish?.priceFrom == true) {
-                                        Text(
-                                            "Starting price — the kitchen must confirm the chosen option.",
-                                            style = MaterialTheme.typography.bodySmall,
-                                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                                        )
-                                    }
                                     if (dish != null && dish.hasDiscount) {
                                         Text(
                                             text = Money.format(dish.amountPaisa),
