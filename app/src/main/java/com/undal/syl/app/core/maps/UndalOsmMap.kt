@@ -8,6 +8,7 @@ import android.graphics.Path
 import android.graphics.Point
 import android.graphics.drawable.Drawable
 import android.view.MotionEvent
+import android.view.View
 import android.view.ViewConfiguration
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -292,6 +293,35 @@ private class UndalMapRenderer(private val mapView: UndalMapView) {
     private var radiusCircle: Polygon? = null
     private var accuracyCircle: Polygon? = null
     private var eventsOverlay: MapEventsOverlay? = null
+    private data class CameraTarget(val lat: Double, val lng: Double, val zoom: Double)
+    private var cameraPendingLayout: CameraTarget? = null
+    private var fitPendingLayout: List<UndalMapPin>? = null
+    private var cameraHasBeenPositioned = false
+    private val cameraLayoutListener: View.OnLayoutChangeListener = object : View.OnLayoutChangeListener {
+        override fun onLayoutChange(
+            view: View,
+            left: Int,
+            top: Int,
+            right: Int,
+            bottom: Int,
+            oldLeft: Int,
+            oldTop: Int,
+            oldRight: Int,
+            oldBottom: Int
+        ) {
+            if (view.width <= 0 || view.height <= 0) return
+            view.removeOnLayoutChangeListener(this)
+            val fit = fitPendingLayout
+            fitPendingLayout = null
+            if (fit != null) {
+                fitPins(fit)
+            } else {
+                val target = cameraPendingLayout ?: return
+                cameraPendingLayout = null
+                moveCamera(target.lat, target.lng, target.zoom, animate = false, force = true)
+            }
+        }
+    }
 
     fun installEvents(receiver: MapEventsReceiver) {
         if (eventsOverlay != null) return
@@ -449,15 +479,35 @@ private class UndalMapRenderer(private val mapView: UndalMapView) {
         mapView.invalidate()
     }
 
-    fun moveCamera(lat: Double, lng: Double, zoom: Double, animate: Boolean = true) {
+    fun moveCamera(
+        lat: Double,
+        lng: Double,
+        zoom: Double,
+        animate: Boolean = true,
+        force: Boolean = false
+    ) {
+        // A remembered MapView is created during Compose before AndroidView has
+        // measured it. osmdroid can report the requested centre at that point,
+        // even though no screen projection exists yet; the old equality fast-path
+        // then skipped the only camera update and left the real pin at a corner.
+        // Defer one latest target until layout and apply it without animation.
+        if (mapView.width <= 0 || mapView.height <= 0) {
+            cameraPendingLayout = CameraTarget(lat, lng, zoom)
+            fitPendingLayout = null
+            mapView.removeOnLayoutChangeListener(cameraLayoutListener)
+            mapView.addOnLayoutChangeListener(cameraLayoutListener)
+            return
+        }
+        val firstCameraPosition = !cameraHasBeenPositioned
+        cameraHasBeenPositioned = true
         val target = GeoPoint(lat, lng)
         val current = mapView.mapCenter
         val alreadyThere = current != null &&
             kotlin.math.abs(current.latitude - lat) < 0.0000001 &&
             kotlin.math.abs(current.longitude - lng) < 0.0000001 &&
             kotlin.math.abs(mapView.zoomLevelDouble - zoom) < 0.001
-        if (alreadyThere) return
-        if (animate) {
+        if (alreadyThere && !force && !firstCameraPosition) return
+        if (animate && !firstCameraPosition) {
             mapView.controller.animateTo(target, zoom, CAMERA_ANIMATION_MILLIS)
         } else {
             mapView.controller.setZoom(zoom)
@@ -473,8 +523,16 @@ private class UndalMapRenderer(private val mapView: UndalMapView) {
      */
     fun fitPins(pins: List<UndalMapPin>) {
         if (pins.isEmpty()) return
+        if (mapView.width <= 0 || mapView.height <= 0) {
+            fitPendingLayout = pins.toList()
+            cameraPendingLayout = null
+            mapView.removeOnLayoutChangeListener(cameraLayoutListener)
+            mapView.addOnLayoutChangeListener(cameraLayoutListener)
+            return
+        }
+        cameraHasBeenPositioned = true
         if (pins.size == 1) {
-            moveCamera(pins[0].lat, pins[0].lng, mapView.zoomLevelDouble, animate = true)
+            moveCamera(pins[0].lat, pins[0].lng, mapView.zoomLevelDouble, animate = false, force = true)
             return
         }
         var north = pins[0].lat

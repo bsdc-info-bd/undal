@@ -69,7 +69,9 @@ data class MenuItem(
     val subcategoryId: String,
     val imageUrl: String,
     val prepMinutes: Int,
-    val featured: Boolean = false
+    val featured: Boolean = false,
+    /** Source lists a starting price because the vendor must configure the variant. */
+    val priceFrom: Boolean = false
 ) {
 
     val hasDiscount: Boolean get() = discountAmountPaisa > 0 && discountAmountPaisa < amountPaisa
@@ -91,23 +93,27 @@ data class MenuItem(
         /** Ten orders is the point where "popular" stops being a lie. */
         const val POPULAR_THRESHOLD = 10L
 
-        fun fromDocument(id: String, map: Map<String, Any?>): MenuItem = MenuItem(
-            id = id,
-            name = (map["name"] as? String).orEmpty(),
-            description = (map["description"] as? String).orEmpty(),
-            amountPaisa = (map["amountPaisa"] as? Number)?.toLong() ?: 0L,
-            discountAmountPaisa = (map["discountAmountPaisa"] as? Number)?.toLong() ?: 0L,
-            available = map["available"] as? Boolean ?: false,
-            veg = map["veg"] as? Boolean ?: false,
-            spiceLevel = (map["spiceLevel"] as? Number)?.toInt() ?: 0,
-            tags = (map["tags"] as? List<*>)?.mapNotNull { it as? String }.orEmpty(),
-            orderCount = (map["orderCount"] as? Number)?.toLong() ?: 0L,
-            categoryId = (map["categoryId"] as? String).orEmpty(),
-            subcategoryId = (map["subcategoryId"] as? String).orEmpty(),
-            imageUrl = (map["imageUrl"] as? String).orEmpty(),
-            prepMinutes = (map["prepMinutes"] as? Number)?.toInt() ?: 20,
-            featured = map["featured"] as? Boolean ?: false
-        )
+        fun fromDocument(id: String, map: Map<String, Any?>): MenuItem {
+            val priceFrom = map["priceFrom"] as? Boolean ?: false
+            return MenuItem(
+                id = id,
+                name = (map["name"] as? String).orEmpty(),
+                description = (map["description"] as? String).orEmpty(),
+                amountPaisa = (map["amountPaisa"] as? Number)?.toLong() ?: 0L,
+                discountAmountPaisa = (map["discountAmountPaisa"] as? Number)?.toLong() ?: 0L,
+                available = (map["available"] as? Boolean ?: false) && !priceFrom,
+                veg = map["veg"] as? Boolean ?: false,
+                spiceLevel = (map["spiceLevel"] as? Number)?.toInt() ?: 0,
+                tags = (map["tags"] as? List<*>)?.mapNotNull { it as? String }.orEmpty(),
+                orderCount = (map["orderCount"] as? Number)?.toLong() ?: 0L,
+                categoryId = (map["categoryId"] as? String).orEmpty(),
+                subcategoryId = (map["subcategoryId"] as? String).orEmpty(),
+                imageUrl = (map["imageUrl"] as? String).orEmpty(),
+                prepMinutes = (map["prepMinutes"] as? Number)?.toInt() ?: 0,
+                featured = map["featured"] as? Boolean ?: false,
+                priceFrom = priceFrom
+            )
+        }
     }
 }
 
@@ -173,7 +179,7 @@ sealed interface MenuCard {
         override val amountPaisa: Long get() = item.payablePaisa
         override val imageUrl: String get() = item.imageUrl
         override val categoryId: String get() = item.categoryId
-        override val available: Boolean get() = item.available
+        override val available: Boolean get() = item.available && !item.priceFrom
         override val searchText: String get() = item.searchText()
     }
 

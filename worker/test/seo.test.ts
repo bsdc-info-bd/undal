@@ -77,7 +77,7 @@ const menu: WebMenu = {
     id: "kacchi", kind: "dish", name: "Kacchi biryani", description: "Mutton, aged rice",
     amountPaisa: 32000, payablePaisa: 28000, discountAmountPaisa: 4000, available: true, veg: false,
     spiceLevel: 2, tags: ["signature"], orderCount: 12, categoryId: "rice", subcategoryId: "",
-    imageUrl: "https://res.cloudinary.com/undal/kacchi.jpg", prepMinutes: 45, featured: true,
+    imageUrl: "https://res.cloudinary.com/undal/kacchi.jpg", prepMinutes: 45, featured: true, priceFrom: false,
   }],
 };
 

@@ -4,6 +4,7 @@
 # Publishes the real bootstrap documents the app needs on first launch:
 #   config/store    store identity, weekly hours, delivery economics, kitchen pin
 #   config/promos   the offer rotation the 18:00 cron walks through
+#   categories/menuItems source-backed dishes, created only when missing
 #   counters/orders shortId generator starting at UND-1001
 # and deploys the Firestore rules/indexes plus the Realtime Database rules with
 # the Firebase CLI (the owner never types a command — Actions does it).
@@ -58,10 +59,15 @@ jobs:
           printf '%s' "$FIREBASE_SA_JSON" > "$RUNNER_TEMP/firebase-sa.json"
           echo "GOOGLE_APPLICATION_CREDENTIALS=$RUNNER_TEMP/firebase-sa.json" >> "$GITHUB_ENV"
 
+      - name: Validate source-backed menu catalogue
+        run: node tools/check-undal-menu.mjs
+
       - name: Seed Firestore bootstrap documents
         env:
           FIREBASE_SA_JSON: ${{ secrets.FIREBASE_SA_JSON }}
-        run: node tools/seed-config.mjs
+        run: |
+          node tools/seed-config.mjs
+          node tools/seed-menu.mjs
 
       - name: Deploy Firestore rules, indexes and Realtime Database rules
         run: |
@@ -77,5 +83,7 @@ jobs:
             echo ""
             echo "- Firestore rules, indexes and RTDB rules deployed."
             echo "- config/store, config/promos and counters/orders are present."
+            echo "- The source-backed menu catalogue was created only for missing documents; existing vendor edits were preserved."
+            echo "- New dishes start unavailable until the kitchen verifies current prices, options, photos and stock."
             echo "- The kitchen pin defaults to Zindabazar, Sylhet — move it with the store-location picker in the vendor app."
           } >> "$GITHUB_STEP_SUMMARY"

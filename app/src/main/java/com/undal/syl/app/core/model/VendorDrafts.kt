@@ -36,7 +36,8 @@ data class MenuDraft(
     val imageUrl: String = "",
     val available: Boolean = true,
     val featured: Boolean = false,
-    val prepMinutes: Int = 20
+    val prepMinutes: Int = 0,
+    val priceFrom: Boolean = false
 ) {
 
     val isNew: Boolean get() = id == null
@@ -117,8 +118,9 @@ data class MenuDraft(
         "categoryId" to categoryId,
         "subcategoryId" to subcategoryId,
         "imageUrl" to imageUrl,
-        "prepMinutes" to prepMinutes.coerceIn(5, 180),
-        "featured" to featured
+        "prepMinutes" to prepMinutes.coerceIn(0, 180),
+        "featured" to featured,
+        "priceFrom" to priceFrom
     )
 
     /** True when nothing has changed, so the editor can warn before leaving (V-054). */
@@ -135,7 +137,8 @@ data class MenuDraft(
             imageUrl == item.imageUrl &&
             available == item.available &&
             featured == item.featured &&
-            prepMinutes.coerceIn(5, 180) == item.prepMinutes
+            prepMinutes.coerceIn(0, 180) == item.prepMinutes &&
+            priceFrom == item.priceFrom
 
     companion object {
         fun of(item: MenuItem): MenuDraft {
@@ -155,7 +158,8 @@ data class MenuDraft(
                 imageUrl = item.imageUrl,
                 available = item.available,
                 featured = item.featured,
-                prepMinutes = item.prepMinutes
+                prepMinutes = item.prepMinutes,
+                priceFrom = item.priceFrom
             )
         }
     }

@@ -104,7 +104,11 @@ fun ItemDetailScreen(
                         )
                         Spacer(Modifier.height(UndalDimens.sm))
                         UndalPrimaryButton(
-                            text = if (card.available) "Add to basket · ${Money.format(Money.lineTotal(card.amountPaisa, state.quantity))}" else "Not available today",
+                            text = when {
+                                card.available -> "Add to basket · ${Money.format(Money.lineTotal(card.amountPaisa, state.quantity))}"
+                                (card as? MenuCard.Dish)?.item?.priceFrom == true -> "Price needs confirming"
+                                else -> "Not available today"
+                            },
                             onClick = { viewModel.addToCart(onOpenCart) },
                             enabled = card.available && !state.adding,
                             loading = state.adding,
@@ -247,9 +251,17 @@ fun ItemDetailScreen(
                             Column(verticalArrangement = Arrangement.spacedBy(UndalDimens.sm)) {
                                 Column {
                                     Text(
-                                        text = Money.format(card.amountPaisa),
+                                        text = (if (dish?.priceFrom == true) "From " else "") +
+                                            Money.format(card.amountPaisa),
                                         style = MaterialTheme.typography.headlineSmall
                                     )
+                                    if (dish?.priceFrom == true) {
+                                        Text(
+                                            "Starting price — the kitchen must confirm the chosen option.",
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                    }
                                     if (dish != null && dish.hasDiscount) {
                                         Text(
                                             text = Money.format(dish.amountPaisa),

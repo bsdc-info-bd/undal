@@ -19,7 +19,7 @@ const menu: WebMenu = {
     description: "Home cooked", amountPaisa: 12000, payablePaisa: 12000,
     discountAmountPaisa: 0, available: true, veg: true, spiceLevel: 0,
     tags: [], orderCount: 1, categoryId: "rice", subcategoryId: "", imageUrl: "",
-    prepMinutes: 20, featured: true }],
+    prepMinutes: 20, featured: true, priceFrom: true }],
 };
 const env = { UNDAL_KV: { get: async () => menu } } as unknown as Env;
 
@@ -44,7 +44,19 @@ test("storefront renders cached catalogue safely without external services", asy
   assert.match(html, /Rice &lt;script&gt;/);
   assert.doesNotMatch(html, /Rice <script>/);
   assert.match(html, /food-placeholder/);
+  assert.match(html, /From ৳ 120/);
   assert.match(html, /href="\/item\/rice"/);
+});
+
+test("source-listed starting prices are labeled and never become orderable", async () => {
+  const sourceMenu = { ...menu, dishes: menu.dishes.map((dish) => ({ ...dish, available: false })) };
+  const sourceEnv = { UNDAL_KV: { get: async () => sourceMenu } } as unknown as Env;
+  const storefront = await (await handleStoreFront(sourceEnv, new Request("https://undal.test/store"))).text();
+  const detail = await (await handleStoreItem(sourceEnv, new Request("https://undal.test/item/rice"), "rice")).text();
+  assert.match(storefront, /From ৳ 120/);
+  assert.match(storefront, /Price to be confirmed/);
+  assert.match(detail, /Starting price only/);
+  assert.doesNotMatch(detail, /class="undal-add/);
 });
 
 test("search retains the query and offers an empty-state recovery link", async () => {
@@ -306,7 +318,7 @@ test("item detail pairs imagery and information without replacing its real add f
 });
 
 test("sold-out detail offers recovery without exposing an add form", async () => {
-  const soldOutEnv = { UNDAL_KV: { get: async () => ({ ...menu, dishes: menu.dishes.map(dish => ({ ...dish, available: false })) }) } } as unknown as Env;
+  const soldOutEnv = { UNDAL_KV: { get: async () => ({ ...menu, dishes: menu.dishes.map(dish => ({ ...dish, available: false, priceFrom: false })) }) } } as unknown as Env;
   const html = await (await handleStoreItem(soldOutEnv, new Request("https://undal.test/item/rice"), "rice")).text();
   const article = html.slice(html.indexOf('<article class="item-detail"'), html.indexOf('</article>'));
   assert.match(article, /not orderable right now/);
