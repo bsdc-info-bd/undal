@@ -38,8 +38,9 @@ data class MenuHealth(
             if (missingPrep > 0) add("${plural(missingPrep, "dish has", "dishes have")} no prep time")
         }
 
+    /** "3 dishes have" / "1 dish has" — the number belongs in the sentence. */
     private fun plural(count: Int, one: String, many: String): String =
-        if (count == 1) one else many
+        if (count == 1) "1 $one" else "$count $many"
 }
 
 object MenuAudit {
