@@ -10,8 +10,8 @@ import com.undal.syl.app.core.model.Combo
 import com.undal.syl.app.core.model.ComboDraft
 import com.undal.syl.app.core.model.ComboRefDraft
 import com.undal.syl.app.core.model.CouponDraft
-import com.undal.syl.app.core.model.MenuDraft
 import com.undal.syl.app.core.model.MenuAudit
+import com.undal.syl.app.core.model.MenuDraft
 import com.undal.syl.app.core.model.MenuHealth
 import com.undal.syl.app.core.model.MenuItem
 import com.undal.syl.app.core.model.MenuSnapshot
@@ -256,6 +256,144 @@ class VendorMenuViewModel @Inject constructor(
 
     /** What the kitchen should look at before service; counted in [MenuAudit]. */
     fun health(): MenuHealth = MenuAudit.of(_state.value.menu.items)
+
+    /**
+     * The dishes on screen: the menu, narrowed by the search field, the section
+     * chips, and the three quick filters that exist because they are the three
+     * states an owner otherwise hunts for by scrolling.
+     */
+    fun visibleDishes(): List<MenuItem> {
+        val state = _state.value
+        return state.menu.items
+            .filter { state.categoryId.isBlank() || it.categoryId == state.categoryId }
+            .filter { state.subcategoryId.isBlank() || it.subcategoryId == state.subcategoryId }
+            .filter { it.matches(state.query) }
+            .filter { !state.onlySoldOut || !it.available }
+            .filter { !state.onlyMissingPhoto || it.imageUrl.isBlank() }
+            .filter { !state.onlyUnfeatured || !it.featured }
+            .sortedWith(
+                when (state.sort) {
+                    MenuSort.PRICE_LOW -> compareBy { it.payablePaisa }
+                    MenuSort.PRICE_HIGH -> compareByDescending { it.payablePaisa }
+                    MenuSort.POPULAR -> compareByDescending { it.orderCount }
+                    MenuSort.RECOMMENDED -> compareByDescending<MenuItem> { it.featured }.thenByDescending { it.orderCount }
+                }
+            )
+    }
+
+    fun countFor(categoryId: String): Int = _state.value.menu.items.count { it.categoryId == categoryId }
+
+    fun subcategoriesOf(categoryId: String): List<Subcategory> =
+        _state.value.menu.subcategories.filter { it.categoryId == categoryId }.sortedBy { it.order }
+
+    // ----------------------------------------------------------------- bulk mode
+
+    fun toggleBulkMode() {
+        val bulk = !_state.value.bulkMode
+        _state.value = _state.value.copy(bulkMode = bulk, selectedIds = emptySet())
+    }
+
+    fun toggleSelected(itemId: String) {
+        val selected = _state.value.selectedIds.toMutableSet()
+        if (!selected.add(itemId)) selected.remove(itemId)
+        _state.value = _state.value.copy(selectedIds = selected)
+    }
+
+    fun selectAllVisible() {
+        _state.value = _state.value.copy(selectedIds = visibleDishes().map { it.id }.toSet())
+    }
+
+    fun clearSelection() {
+        _state.value = _state.value.copy(selectedIds = emptySet())
+    }
+
+    /** Everything selected, on sale or sold out, in one atomic write. */
+    fun applyBulk(available: Boolean) {
+        val count = _state.value.selectedIds.size
+        runBulk(
+            extra = mapOf("available" to available),
+            note = "$count dish(es) are now " + if (available) "available." else "sold out."
+        )
+    }
+
+    /** Featured or not, for everything selected, in one write. */
+    fun applyBulkFeatured(featured: Boolean) {
+        runBulk(
+            extra = mapOf("featured" to featured),
+            note = if (featured) {
+                "Selected dishes are now in the home highlight."
+            } else {
+                "Selected dishes left the home highlight."
+            }
+        )
+    }
+
+    /** Move everything selected into one section — the cure for a mis-filed menu. */
+    fun applyBulkCategory(categoryId: String) {
+        if (categoryId.isBlank()) {
+            _state.value = _state.value.copy(message = "Pick the section to move them into.")
+            return
+        }
+        val name = _state.value.menu.categories.firstOrNull { it.id == categoryId }?.name.orEmpty()
+        runBulk(
+            extra = mapOf("categoryId" to categoryId, "subcategoryId" to ""),
+            note = "Selected dishes moved to ${name.ifBlank { "the chosen section" }}."
+        )
+    }
+
+    /**
+     * One batch, one sentence.
+     *
+     * The selection is only cleared when the write actually happened: a failed
+     * batch keeps the ticks so the same tap can be retried without re-picking
+     * twenty dishes on a phone.
+     */
+    private fun runBulk(extra: Map<String, Any?>, note: String) {
+        val ids = _state.value.selectedIds.toList()
+        if (ids.isEmpty()) {
+            _state.value = _state.value.copy(message = "Pick at least one dish first.")
+            return
+        }
+        if (_state.value.busy) return
+        _state.value = _state.value.copy(busy = true)
+        viewModelScope.launch(guard) {
+            val result = vendorMenuRepo.patchItemsBulk(ids, extra, note)
+            val done = result is UndalResult.Success
+            _state.value = _state.value.copy(
+                busy = false,
+                selectedIds = if (done) emptySet() else _state.value.selectedIds,
+                bulkMode = if (done) false else _state.value.bulkMode,
+                message = when (result) {
+                    is UndalResult.Success -> result.value
+                    is UndalResult.Failure -> result.message
+                }
+            )
+        }
+    }
+
+    /**
+     * Copy a dish, without copying the thing that makes it unsellable.
+     *
+     * The copy opens in the editor as a *new* dish — no id, the name marked as a
+     * copy, and switched off — so nothing reaches the storefront until the owner
+     * has looked at it. That is the honest shape of "duplicate": the work is
+     * copied, the decision is not.
+     */
+    fun duplicateDish(item: MenuItem) {
+        val copy = MenuDraft.of(item).copy(
+            id = null,
+            name = copyNameFor(item.name),
+            available = false
+        )
+        _state.value = _state.value.copy(
+            itemDraft = copy,
+            dirtyWarning = false,
+            tab = Tab.DISHES,
+            message = "${item.name} copied. Check the price and the photo, then save it."
+        )
+    }
+
+    private fun copyNameFor(name: String): String = "${name.trim().take(60)} copy".take(80)
 
     // -------------------------------------------------------------------- dishes
 
