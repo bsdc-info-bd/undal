@@ -12,9 +12,15 @@ import android.os.IBinder
 import android.os.Looper
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
+import com.google.firebase.database.DataSnapshot
+import com.google.firebase.database.DatabaseError
+import com.google.firebase.database.DatabaseReference
+import com.google.firebase.database.FirebaseDatabase
+import com.google.firebase.database.ValueEventListener
 import com.undal.syl.app.MainActivity
 import com.undal.syl.app.R
 import com.undal.syl.app.core.fcm.AlarmChannels
+import com.undal.syl.app.core.util.OrderStatus
 import com.undal.syl.app.core.util.TimeDhaka
 import java.time.Instant
 
@@ -37,6 +43,23 @@ class PrepTimerService : Service() {
     private var prepEndsAtMillis: Long = 0L
     private var orderId: String = ""
     private var shortId: String = ""
+
+    /**
+     * The order's live mirror.
+     *
+     * The countdown is started by whichever phone accepted the order, but it can be
+     * *ended* by another device: the second kitchen phone marks the food ready, the
+     * owner cancels from the dashboard, the Worker's cleanup removes a finished
+     * order. None of those reach this service as an intent, so it watches the same
+     * `orderLive/{id}/status` flag every other screen watches and stops itself the
+     * moment the order is no longer being cooked.
+     *
+     * Without this the notification kept counting down to a promise nobody had to
+     * keep, and the ten-second tick kept playing over the cancel sheet that had
+     * just dismissed it.
+     */
+    private var liveReference: DatabaseReference? = null
+    private var liveListener: ValueEventListener? = null
 
     private val ticker = object : Runnable {
         override fun run() {
@@ -109,6 +132,48 @@ class PrepTimerService : Service() {
     private fun startTimer() {
         handler.removeCallbacks(ticker)
         handler.post(ticker)
+        watchOrderState()
+    }
+
+    /** Follows the order's own live flag, so a cancel anywhere ends the tick here. */
+    private fun watchOrderState() {
+        detachOrderState()
+        if (orderId.isBlank()) return
+        val reference = FirebaseDatabase.getInstance().getReference(LIVE).child(orderId).child("status")
+        val listener = object : ValueEventListener {
+            override fun onDataChange(snapshot: DataSnapshot) {
+                val status = OrderStatus.fromWire(snapshot.getValue(String::class.java)) ?: return
+                // "placed" or "accepted" is this countdown's own business. Anything
+                // past cooking — or a cancellation — means there is nothing left to
+                // count down to.
+                if (status == OrderStatus.READY || status == OrderStatus.IN_DELIVERY ||
+                    status == OrderStatus.DELIVERED || status == OrderStatus.CANCELLED
+                ) {
+                    stopTimer()
+                }
+            }
+
+            override fun onCancelled(error: DatabaseError) {
+                // No mirror is not a reason to stop counting: the countdown still
+                // tells the truth about the promise, and the alert watchdog on the
+                // other side reports the connection.
+            }
+        }
+        runCatching {
+            reference.addValueEventListener(listener)
+            liveReference = reference
+            liveListener = listener
+        }
+    }
+
+    private fun detachOrderState() {
+        val reference = liveReference
+        val listener = liveListener
+        if (reference != null && listener != null) {
+            runCatching { reference.removeEventListener(listener) }
+        }
+        liveReference = null
+        liveListener = null
     }
 
     private fun buildNotification(id: String, short: String, overdue: Boolean): Notification {
@@ -155,13 +220,17 @@ class PrepTimerService : Service() {
             NotificationManagerCompat.from(this)
                 .notify(AlarmChannels.PREP_TIMER_NOTIFICATION_ID, notification)
         }
-        if (!overdue && tickSoundId != 0) {
+        // The tick is a nudge, not an alarm: it plays only while the promise is
+        // still being kept, and only on a kitchen that has left it switched on.
+        val tickAllowed = !overdue && tickSoundId != 0 && PrepTickSettings.enabled(this)
+        if (tickAllowed) {
             soundPool?.play(tickSoundId, TICK_VOLUME, TICK_VOLUME, 1, 0, 1f)
         }
     }
 
     private fun stopTimer() {
         handler.removeCallbacks(ticker)
+        detachOrderState()
         UndalForeground.leave(this, AlarmChannels.PREP_TIMER_NOTIFICATION_ID)
         stopSelf()
     }
@@ -173,6 +242,7 @@ class PrepTimerService : Service() {
      */
     override fun onDestroy() {
         handler.removeCallbacks(ticker)
+        detachOrderState()
         UndalForeground.leave(this, AlarmChannels.PREP_TIMER_NOTIFICATION_ID)
         runCatching { soundPool?.release() }
         soundPool = null
@@ -186,6 +256,7 @@ class PrepTimerService : Service() {
         const val EXTRA_SHORT_ID = "shortId"
         const val EXTRA_PREP_ENDS_AT = "prepEndsAt"
 
+        private const val LIVE = "orderLive"
         private const val TICK_INTERVAL_MILLIS = 10_000L
         private const val TICK_VOLUME = 0.65f
 

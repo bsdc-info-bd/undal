@@ -43,6 +43,30 @@ object OrderStateMachine {
         status == OrderStatus.PLACED || status == OrderStatus.ACCEPTED ||
             status == OrderStatus.READY || status == OrderStatus.IN_DELIVERY
 
+    /**
+     * The status the customer should see, from the two places it is written.
+     *
+     * Firestore carries the order document; the Realtime Database mirror carries
+     * the same status a beat earlier. The screen must never go **backwards** — a
+     * stale mirror still saying "accepted" after the kitchen cancelled is not an
+     * older truth, it is a wrong one, and the customer's page froze on it while the
+     * history list (which reads only Firestore) already said "cancelled".
+     *
+     * So the rule is: a cancellation anywhere wins immediately (it is terminal, and
+     * there is exactly one way to reach it), and otherwise the status further along
+     * the timeline wins. Nothing can move this backwards, which means the screen
+     * that a customer leaves open cannot disagree with the list they open next.
+     */
+    fun newest(firestoreStatus: OrderStatus, liveStatus: OrderStatus?): OrderStatus {
+        if (liveStatus == null) return firestoreStatus
+        if (firestoreStatus == OrderStatus.CANCELLED || liveStatus == OrderStatus.CANCELLED) {
+            return OrderStatus.CANCELLED
+        }
+        val firestoreStep = timeline.indexOf(firestoreStatus)
+        val liveStep = timeline.indexOf(liveStatus)
+        return if (liveStep > firestoreStep) liveStatus else firestoreStatus
+    }
+
     /** Ordered step list used by the customer timeline (cancelled is shown apart). */
     val timeline: List<OrderStatus> = listOf(
         OrderStatus.PLACED,

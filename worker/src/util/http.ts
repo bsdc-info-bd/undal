@@ -66,7 +66,14 @@ export function securityHeaders(extra: Record<string, string> = {}): Record<stri
     "permissions-policy": "geolocation=(self), camera=(), microphone=()",
     "cross-origin-opener-policy": "same-origin",
     "content-security-policy":
-      "default-src 'self'; img-src 'self' data: https://res.cloudinary.com https://tile.openstreetmap.org; " +
+      // `img-src` is the one directive that has to name the places a dish photo can
+      // come from, because a picture is the one thing on the menu that is not
+      // served by this Worker. Cloudinary is where the kitchen's own uploads land;
+      // the published catalog host is where the seeded dishes' photos live. When
+      // neither answered, the CSP refused the image and the storefront showed an
+      // empty box — which is what "the seed menu has no pictures" was.
+      "default-src 'self'; img-src 'self' data: https://res.cloudinary.com https://*.cloudinary.com " +
+      "https://tile.openstreetmap.org https://sylhetbites.pages.dev https://undal-menu.pages.dev; " +
       "style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; connect-src 'self' " +
       "https://firestore.googleapis.com https://identitytoolkit.googleapis.com " +
       "https://securetoken.googleapis.com https://nominatim.openstreetmap.org " +

@@ -2,6 +2,8 @@ package com.undal.syl.app.data.repo
 
 import java.util.Locale
 import android.content.Context
+import com.google.firebase.database.FirebaseDatabase
+import com.google.firebase.database.ServerValue
 import com.google.firebase.firestore.FieldValue
 import com.google.firebase.firestore.FirebaseFirestore
 import com.undal.syl.app.core.background.NotifyRetryWorker
@@ -41,6 +43,7 @@ import dagger.hilt.android.qualifiers.ApplicationContext
 @Singleton
 class OrderStatusRepo @Inject constructor(
     private val firestore: FirebaseFirestore,
+    private val database: FirebaseDatabase,
     private val workerApi: WorkerApi,
     private val telemetry: UndalTelemetry,
     @ApplicationContext private val context: Context
@@ -49,6 +52,8 @@ class OrderStatusRepo @Inject constructor(
     data class OrderSnapshot(
         val id: String,
         val shortId: String,
+        /** Who placed it — the mirror's own read rule keys off this. */
+        val customerId: String,
         val status: OrderStatus,
         val totalAmountPaisa: Long,
         val createdAt: Instant?,
@@ -84,6 +89,7 @@ class OrderStatusRepo @Inject constructor(
                     OrderSnapshot(
                         id = snapshot.id,
                         shortId = snapshot.getString("shortId").orEmpty(),
+                        customerId = snapshot.getString("customerId").orEmpty(),
                         status = status,
                         totalAmountPaisa = snapshot.getLong("totalAmountPaisa") ?: 0L,
                         createdAt = snapshot.getTimestamp("createdAt")?.toDate()?.toInstant(),
@@ -196,6 +202,14 @@ class OrderStatusRepo @Inject constructor(
         localPrepMinutes: Int = 0
     ): UndalResult<Unit> {
         val document = firestore.collection(ORDERS).document(orderId)
+        // The reason written by this transition, kept for the live mirror (see
+        // below): a cancellation's reason belongs on the customer's screen in the
+        // same breath as the word "cancelled".
+        var transitionalNote = ""
+        // Who the order belongs to, read in the same transaction that moves it.
+        var transitionalCustomerId = ""
+        // The order's number as the customer knows it (UND-1042), for the notice.
+        var transitionalShortId = ""
 
         val outcome = runCatching {
             firestore.runTransaction { transaction ->
@@ -219,6 +233,7 @@ class OrderStatusRepo @Inject constructor(
                 val view = OrderSnapshot(
                     id = snapshot.id,
                     shortId = snapshot.getString("shortId").orEmpty(),
+                    customerId = snapshot.getString("customerId").orEmpty(),
                     status = current,
                     totalAmountPaisa = snapshot.getLong("totalAmountPaisa") ?: 0L,
                     createdAt = snapshot.getTimestamp("createdAt")?.toDate()?.toInstant(),
@@ -239,6 +254,9 @@ class OrderStatusRepo @Inject constructor(
                 }
 
                 val update = build(view).toMutableMap()
+                transitionalNote = (update["cancelNote"] as? String).orEmpty()
+                transitionalCustomerId = view.customerId
+                transitionalShortId = view.shortId
                 // The rules require exactly one appended entry per transition,
                 // carrying only the new status. Per-step times are the dedicated
                 // server-stamped fields (acceptedAt, readyAt, inDeliveryAt,
@@ -259,6 +277,16 @@ class OrderStatusRepo @Inject constructor(
         )
 
         if (outcome is UndalResult.Success) {
+            // The live mirror is written *here*, not only by the notification
+            // relay, and it is written first-class rather than as a side effect of
+            // a push succeeding: it is what every customer and kitchen screen
+            // listens to, and a mirror that only moves when WorkManager gets a
+            // 200 is a screen that does not move when the Worker is down, rate
+            // limited, or simply slower than the order. A cancellation in
+            // particular must be visible on the customer's tracking page while
+            // they are still looking at it.
+            mirrorStatus(orderId, target, transitionalNote, transitionalCustomerId)
+
             // Local reconciliation on this device: an accepted or cancelled order
             // must stop ringing immediately, and an accepted order starts the
             // sticky prep countdown with its ten-second tick (V-034).
@@ -269,7 +297,7 @@ class OrderStatusRepo @Inject constructor(
                         PrepTimerService.start(
                             context = context,
                             orderId = orderId,
-                            shortId = orderId.takeLast(4),
+                            shortId = transitionalShortId.ifBlank { orderId.takeLast(4) },
                             prepEndsAtMillis = Instant.now()
                                 .plusSeconds(localPrepMinutes * 60L)
                                 .toEpochMilli()
@@ -277,7 +305,16 @@ class OrderStatusRepo @Inject constructor(
                     }
                 }
 
-                OrderStatus.CANCELLED -> OrderAlertService.silence(context, orderId)
+                OrderStatus.CANCELLED -> {
+                    OrderAlertService.silence(context, orderId)
+                    // A cancelled order has nothing left to cook, so the prep
+                    // countdown — and its ten-second tick — ends with it. It used
+                    // to be left running: the kitchen cancelled an order, the
+                    // sticky countdown kept counting down to a promise nobody had
+                    // to keep, and the phone ticked every ten seconds until the
+                    // process was killed.
+                    PrepTimerService.stop(context)
+                }
 
                 OrderStatus.READY, OrderStatus.IN_DELIVERY, OrderStatus.DELIVERED ->
                     PrepTimerService.stop(context)
@@ -297,7 +334,35 @@ class OrderStatusRepo @Inject constructor(
         return outcome
     }
 
+    /**
+     * The live mirror write for one transition.
+     *
+     * Fire-and-forget on purpose: the Firebase SDK queues it in memory and persists
+     * it until the device is online again, so an order accepted in a lift with no
+     * signal still reaches the customer's screen a minute later. Nothing about an
+     * order transition is rolled back because this failed — Firestore is still the
+     * authority, and the Worker's relay writes the same node.
+     */
+    private fun mirrorStatus(orderId: String, status: OrderStatus, note: String, customerId: String) {
+        runCatching {
+            val payload = mutableMapOf<String, Any>(
+                "status" to status.wire,
+                "updatedAt" to ServerValue.TIMESTAMP
+            )
+            // The customer's own read rule is `customerId === auth.uid`, and a
+            // mirror first written by a phone that did not have the field would be
+            // readable by the kitchen and invisible to the person waiting for the
+            // food. It is written on every transition, so the field cannot go
+            // missing.
+            if (customerId.isNotBlank()) payload["customerId"] = customerId
+            if (note.isNotBlank()) payload["vendorNote"] = note.take(300)
+            database.getReference(LIVE).child(orderId).updateChildren(payload)
+        }
+    }
+
+
     companion object {
         private const val ORDERS = "orders"
+        private const val LIVE = "orderLive"
     }
 }

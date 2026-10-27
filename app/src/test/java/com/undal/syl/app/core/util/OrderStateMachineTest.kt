@@ -110,6 +110,41 @@ class OrderStateMachineTest {
         assertEquals(null, OrderStatus.fromWire("cooking"))
     }
 
+    /**
+     * The customer's tracking screen reads two copies of the status (the order
+     * document and the live mirror) and must show the newer one. The bug this pins
+     * down: the mirror still said "accepted" while the kitchen had already
+     * cancelled, so the open tracking page kept showing a cooking order while the
+     * history list on the next tab said "cancelled".
+     */
+    @Test
+    fun theTrackingScreenNeverShowsAnOlderStatus() {
+        // The mirror has not caught up: the document is the truth.
+        assertEquals(
+            OrderStatus.READY,
+            OrderStateMachine.newest(OrderStatus.READY, OrderStatus.ACCEPTED)
+        )
+        // The mirror is ahead: the customer sees the tap, not the commit.
+        assertEquals(
+            OrderStatus.IN_DELIVERY,
+            OrderStateMachine.newest(OrderStatus.READY, OrderStatus.IN_DELIVERY)
+        )
+        // A cancellation anywhere is final, whichever writer got there first.
+        assertEquals(
+            OrderStatus.CANCELLED,
+            OrderStateMachine.newest(OrderStatus.ACCEPTED, OrderStatus.CANCELLED)
+        )
+        assertEquals(
+            OrderStatus.CANCELLED,
+            OrderStateMachine.newest(OrderStatus.CANCELLED, OrderStatus.ACCEPTED)
+        )
+        // No mirror at all is the ordinary case on a cold start.
+        assertEquals(
+            OrderStatus.PLACED,
+            OrderStateMachine.newest(OrderStatus.PLACED, null)
+        )
+    }
+
     @Test
     fun stepIndexDrivesTheCustomerTimeline() {
         assertEquals(0, OrderStateMachine.stepIndex(OrderStatus.PLACED))

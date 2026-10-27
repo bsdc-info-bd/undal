@@ -30,6 +30,7 @@ import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Slider
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -43,6 +44,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
+import com.undal.syl.app.core.background.PrepTickSettings
 import com.undal.syl.app.core.config.UndalBuildInfo
 import com.undal.syl.app.core.design.UndalFullScreenLoader
 import com.undal.syl.app.core.design.UndalEmptyState
@@ -402,6 +404,25 @@ fun VendorStoreScreen(
             }
 
             item {
+                UndalCard(modifier = Modifier.fillMaxWidth()) {
+                    Column(modifier = Modifier.padding(UndalDimens.sm)) {
+                        Text(text = "Kitchen countdown", style = MaterialTheme.typography.titleSmall)
+                        Spacer(Modifier.height(UndalDimens.xs))
+                        PrepTickToggle()
+                        Spacer(Modifier.height(UndalDimens.xs))
+                        Text(
+                            text = "The countdown and the overdue reminder always work. This switch only " +
+                                "decides whether the phone makes a short tick every ten seconds while an " +
+                                "order is still cooking — and it stops by itself the moment the order is " +
+                                "ready, on its way, delivered or cancelled.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+            }
+
+            item {
                 VendorSection(title = "Storage & history", subtitle = "Keep your kitchen database lean without touching live orders.") {
                     Column(verticalArrangement = Arrangement.spacedBy(UndalDimens.md)) {
                         Text("Permanently delete delivered and cancelled orders, their chats, live mirrors, and this kitchen account’s notification history. Customer order history and sales reports will also lose those orders. Export records you need first.",
@@ -497,5 +518,36 @@ fun VendorStoreScreen(
         }
         context.startActivity(Intent.createChooser(intent, "Share the store link"))
         shareText = ""
+    }
+}
+
+/**
+ * The ten-second preparation tick, on or off (V-034).
+ *
+ * It reads and writes its own preference, so the switch is honest the instant it
+ * is touched — no save button, no "waiting for the network", and no way to leave
+ * the screen believing something it did not do. The service reads the same flag
+ * every tick, which means a change lands on the very next one.
+ */
+@Composable
+private fun PrepTickToggle() {
+    val context = LocalContext.current
+    var enabled by remember { mutableStateOf(PrepTickSettings.enabled(context)) }
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Column(modifier = Modifier.weight(1f)) {
+            Text(text = "Ten-second tick while cooking", style = MaterialTheme.typography.bodyLarge)
+            Text(
+                text = if (enabled) "On — a short tick every ten seconds." else "Off — the countdown stays silent.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+        Switch(
+            checked = enabled,
+            onCheckedChange = { next ->
+                enabled = next
+                PrepTickSettings.setEnabled(context, next)
+            }
+        )
     }
 }

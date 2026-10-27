@@ -19,7 +19,7 @@ const menu: WebMenu = {
     description: "Home cooked", amountPaisa: 12000, payablePaisa: 12000,
     discountAmountPaisa: 0, available: true, veg: true, spiceLevel: 0,
     tags: [], orderCount: 1, categoryId: "rice", subcategoryId: "", imageUrl: "",
-    prepMinutes: 20, featured: true, priceFrom: true }],
+    prepMinutes: 20, featured: true }],
 };
 const env = { UNDAL_KV: { get: async () => menu } } as unknown as Env;
 
@@ -43,20 +43,44 @@ test("storefront renders cached catalogue safely without external services", asy
   assert.match(html, /aria-current="page"/);
   assert.match(html, /Rice &lt;script&gt;/);
   assert.doesNotMatch(html, /Rice <script>/);
+  // A dish with no photo still shows the kitchen's artwork, and its price is its
+  // price: there is no "from" prefix and no "price to be confirmed" state.
   assert.match(html, /food-placeholder/);
-  assert.match(html, /From ৳ 120/);
+  assert.match(html, /৳ 120/);
+  assert.doesNotMatch(html, /From ৳/);
   assert.match(html, /href="\/item\/rice"/);
 });
 
-test("source-listed starting prices are labeled and never become orderable", async () => {
+test("a sold-out dish is still visible, and cannot be ordered", async () => {
+  // "Finished for today" is information the customer wants: the dish stays on the
+  // page at its real price with a badge, and the only thing that disappears is the
+  // button. There is no second, hidden state that says "price to be confirmed".
   const sourceMenu = { ...menu, dishes: menu.dishes.map((dish) => ({ ...dish, available: false })) };
   const sourceEnv = { UNDAL_KV: { get: async () => sourceMenu } } as unknown as Env;
   const storefront = await (await handleStoreFront(sourceEnv, new Request("https://undal.test/store"))).text();
   const detail = await (await handleStoreItem(sourceEnv, new Request("https://undal.test/item/rice"), "rice")).text();
-  assert.match(storefront, /From ৳ 120/);
-  assert.match(storefront, /Price to be confirmed/);
-  assert.match(detail, /Starting price only/);
+  assert.match(storefront, /৳ 120/);
+  assert.match(storefront, /Sold out/);
+  assert.doesNotMatch(storefront, /Price to be confirmed/);
+  assert.doesNotMatch(storefront, /From ৳/);
+  assert.match(detail, /finished for today/);
   assert.doesNotMatch(detail, /class="undal-add/);
+});
+
+test("a dish photo that will not load falls back to the kitchen's own artwork", async () => {
+  // The photo is the only thing on the storefront this Worker does not serve. The
+  // artwork is always in the markup behind it, so a 404 leaves a picture of the
+  // kitchen rather than a hole in the grid.
+  const photographed = {
+    ...menu,
+    dishes: menu.dishes.map((dish) => ({ ...dish, imageUrl: "https://sylhetbites.pages.dev/undal/img/dishes/rice.webp" })),
+  };
+  const photoEnv = { UNDAL_KV: { get: async () => photographed } } as unknown as Env;
+  const storefront = await (await handleStoreFront(photoEnv, new Request("https://undal.test/store"))).text();
+  assert.match(storefront, /class="food-art"/);
+  assert.match(storefront, /onerror=/);
+  assert.match(storefront, /food-placeholder/);
+  assert.match(storefront, /sylhetbites\.pages\.dev/);
 });
 
 test("search retains the query and offers an empty-state recovery link", async () => {
@@ -318,7 +342,7 @@ test("item detail pairs imagery and information without replacing its real add f
 });
 
 test("sold-out detail offers recovery without exposing an add form", async () => {
-  const soldOutEnv = { UNDAL_KV: { get: async () => ({ ...menu, dishes: menu.dishes.map(dish => ({ ...dish, available: false, priceFrom: false })) }) } } as unknown as Env;
+  const soldOutEnv = { UNDAL_KV: { get: async () => ({ ...menu, dishes: menu.dishes.map(dish => ({ ...dish, available: false })) }) } } as unknown as Env;
   const html = await (await handleStoreItem(soldOutEnv, new Request("https://undal.test/item/rice"), "rice")).text();
   const article = html.slice(html.indexOf('<article class="item-detail"'), html.indexOf('</article>'));
   assert.match(article, /not orderable right now/);

@@ -447,8 +447,7 @@ private fun CancelledBlock(
             color = MaterialTheme.colorScheme.surfaceVariant
         ) {
             Text(
-                text = state.detail?.cancelNote?.ifBlank { "No reason was written on the order." }
-                    ?: "No reason was written on the order.",
+                text = state.cancelReason.ifBlank { "No reason was written on the order." },
                 style = MaterialTheme.typography.bodyMedium,
                 modifier = Modifier.padding(UndalDimens.sm)
             )

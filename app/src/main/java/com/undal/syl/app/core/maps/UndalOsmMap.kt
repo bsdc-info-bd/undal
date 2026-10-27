@@ -10,6 +10,7 @@ import android.graphics.drawable.Drawable
 import android.view.MotionEvent
 import android.view.View
 import android.view.ViewConfiguration
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -17,6 +18,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -494,6 +496,7 @@ private class UndalMapRenderer(private val mapView: UndalMapView) {
         if (mapView.width <= 0 || mapView.height <= 0) {
             cameraPendingLayout = CameraTarget(lat, lng, zoom)
             fitPendingLayout = null
+            mapView.rememberCamera(lat, lng, zoom)
             mapView.removeOnLayoutChangeListener(cameraLayoutListener)
             mapView.addOnLayoutChangeListener(cameraLayoutListener)
             return
@@ -506,12 +509,20 @@ private class UndalMapRenderer(private val mapView: UndalMapView) {
             kotlin.math.abs(current.latitude - lat) < 0.0000001 &&
             kotlin.math.abs(current.longitude - lng) < 0.0000001 &&
             kotlin.math.abs(mapView.zoomLevelDouble - zoom) < 0.001
-        if (alreadyThere && !force && !firstCameraPosition) return
+        if (alreadyThere && !force && !firstCameraPosition) {
+            // The centre osmdroid reports is the centre it was *told*, not the one
+            // it drew: before the first layout it writes the scroll offset from a
+            // zero-sized viewport, and the pin then sits in the top-left corner
+            // forever. A laid-out map that has never been positioned is therefore
+            // always re-applied, however equal its reported centre looks.
+            if (!mapView.hasPlacedCamera) mapView.placeCamera(lat, lng, zoom)
+            return
+        }
         if (animate && !firstCameraPosition) {
             mapView.controller.animateTo(target, zoom, CAMERA_ANIMATION_MILLIS)
+            mapView.rememberCamera(lat, lng, zoom)
         } else {
-            mapView.controller.setZoom(zoom)
-            mapView.controller.setCenter(target)
+            mapView.placeCamera(lat, lng, zoom)
         }
     }
 
@@ -533,6 +544,7 @@ private class UndalMapRenderer(private val mapView: UndalMapView) {
         cameraHasBeenPositioned = true
         if (pins.size == 1) {
             moveCamera(pins[0].lat, pins[0].lng, mapView.zoomLevelDouble, animate = false, force = true)
+            mapView.markCameraPlaced()
             return
         }
         var north = pins[0].lat
@@ -547,12 +559,14 @@ private class UndalMapRenderer(private val mapView: UndalMapView) {
         }
         if (north == south && east == west) {
             moveCamera(north, east, ZOOM_FIT_SINGLE_POINT, animate = true)
+            mapView.markCameraPlaced()
             return
         }
         val box = BoundingBox(north, east, south, west)
         // A single tap-mode fit: osmdroid animates the zoom and the centre, and the
         // border keeps a pin's 46 dp teardrop from touching the card's edge.
         runCatching { mapView.zoomToBoundingBox(box, true, FIT_BORDER_PIXELS) }
+        mapView.markCameraPlaced()
     }
 
     private fun withAlpha(colour: Int, alpha: Int): Int =
@@ -592,6 +606,20 @@ fun UndalOsmMap(
     showScaleBar: Boolean = true,
     recentreLabel: String? = null,
     onRecentre: (() -> Unit)? = null,
+    /**
+     * Draws the destination pin *fixed* to the middle of the card and reports the
+     * point under it while the map moves — the way the web picker works.
+     *
+     * This is the second half of the corner-pin fix. A marker is drawn wherever
+     * the projection says its coordinate is, so any drift in the scroll offset
+     * shows up as a pin in the wrong place; a pin that is a Compose overlay at the
+     * centre of a Box cannot be in the wrong place, because "the centre" is the
+     * only thing it can be. Panning, zoom buttons, the nudge arrows and tap-to-move
+     * all keep working exactly as before.
+     */
+    centredPin: Boolean = false,
+    /** Told the point under a [centredPin] while it moves. */
+    onCentreMoved: ((Double, Double) -> Unit)? = null,
     onPinDragged: ((String, Double, Double) -> Unit)? = null,
     onMapTap: ((Double, Double) -> Unit)? = null,
     onLongPress: ((Double, Double) -> Unit)? = null,
@@ -609,6 +637,8 @@ fun UndalOsmMap(
     val mapTapCallback by rememberUpdatedState(onMapTap)
     val longPressCallback by rememberUpdatedState(onLongPress)
     val recentreCallback by rememberUpdatedState(onRecentre)
+    val centreCallback by rememberUpdatedState(onCentreMoved)
+    val centredPinState by rememberUpdatedState(centredPin)
 
     // ONE MapView for the whole life of this composable, created here — not inside
     // the AndroidView factory — and never replaced.
@@ -635,8 +665,10 @@ fun UndalOsmMap(
             isNestedScrollingEnabled = false
             isVerticalScrollBarEnabled = false
             isHorizontalScrollBarEnabled = false
-            controller.setZoom(zoom)
-            controller.setCenter(GeoPoint(latitude, longitude))
+            // Remembered, not applied: before the first layout osmdroid would
+            // compute the scroll offset from a zero-sized viewport (see
+            // [UndalMapView.onLayout]) and draw every pin in the top-left corner.
+            placeCamera(latitude, longitude, zoom)
             // Attribution is mandatory under the OpenStreetMap tile policy and is
             // drawn on the tiles themselves, so it survives every screenshot and
             // every zoom change.
@@ -658,12 +690,23 @@ fun UndalOsmMap(
                 created.installEvents(object : MapEventsReceiver {
                     override fun singleTapConfirmedHelper(p: GeoPoint): Boolean {
                         val callback = mapTapCallback ?: return false
+                        // With a pin fixed to the middle of the card, the point a
+                        // finger touches has to become the middle — otherwise the
+                        // address would be the tapped spot while the pin visibly
+                        // sat somewhere else, and the pin is the thing the
+                        // customer is being asked to trust.
+                        if (centredPinState) {
+                            created.moveCamera(p.latitude, p.longitude, mapView.zoomLevelDouble, animate = true, force = true)
+                        }
                         callback(p.latitude, p.longitude)
                         return true
                     }
 
                     override fun longPressHelper(p: GeoPoint): Boolean {
                         val callback = longPressCallback ?: return false
+                        if (centredPinState) {
+                            created.moveCamera(p.latitude, p.longitude, mapView.zoomLevelDouble, animate = true, force = true)
+                        }
                         callback(p.latitude, p.longitude)
                         return true
                     }
@@ -701,6 +744,10 @@ fun UndalOsmMap(
                 factory = { mapView }
             )
 
+            if (centredPin) {
+                UndalCentredPin(modifier = Modifier.align(Alignment.Center))
+            }
+
             if (showZoomButtons && interactive) {
                 UndalMapZoomControls(
                     onZoomIn = { mapView.controller.zoomIn() },
@@ -734,6 +781,37 @@ fun UndalOsmMap(
                     }
                 }
             }
+
+            // A map that has been dragged away from its own pin has no way back
+            // without a gesture the customer has to guess at. This is that way
+            // back: it re-centres on the pin, and it is the same control on every
+            // read-only map in the app.
+            if (interactive && !centredPin && pins.isNotEmpty() && recentreLabel == null) {
+                Surface(
+                    shape = CircleShape,
+                    color = MaterialTheme.colorScheme.surface,
+                    tonalElevation = UndalDimens.elevationRaised,
+                    shadowElevation = UndalDimens.elevationRaised,
+                    modifier = Modifier
+                        .align(Alignment.BottomStart)
+                        .padding(UndalDimens.sm)
+                ) {
+                    IconButton(
+                        onClick = {
+                            val first = pins.first()
+                            renderer.moveCamera(first.lat, first.lng, zoom, animate = true, force = true)
+                        },
+                        modifier = Modifier.size(UndalDimens.touchTarget)
+                    ) {
+                        Icon(
+                            Icons.Filled.LocationOn,
+                            contentDescription = "Centre the map on the pin",
+                            tint = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.size(UndalDimens.iconMd)
+                        )
+                    }
+                }
+            }
         }
 
         if (footer != null) {
@@ -747,7 +825,9 @@ fun UndalOsmMap(
         renderer.renderCircle(circle, brandColour)
         renderer.renderAccuracy(accuracy, brandColour)
         renderer.renderPins(
-            pins = pins,
+            // A centred pin is drawn by Compose, not by the map: drawing the same
+            // destination twice would show a second, drifting copy of it.
+            pins = if (centredPin) pins.filter { it.role != UndalPinRole.Destination } else pins,
             accentColour = accentColour,
             brandColour = brandColour,
             onDragged = { id, lat, lng -> dragCallback?.invoke(id, lat, lng) },
@@ -759,10 +839,19 @@ fun UndalOsmMap(
     // produced is already on screen, so the renderer skips the animation for it.
     LaunchedEffect(renderer, latitude, longitude, zoom, fitPins, pins) {
         if (fitPins) {
-            renderer.fitPins(pins)
+            renderer.fitPins(if (centredPin) pins.filter { it.role != UndalPinRole.Destination } else pins)
         } else {
             renderer.moveCamera(latitude, longitude, zoom)
         }
+    }
+
+    // A centred pin is told where the middle of the map is, live.
+    LaunchedEffect(mapView, centredPin) {
+        if (!centredPin) {
+            mapView.setCentreListener(null)
+            return@LaunchedEffect
+        }
+        mapView.setCentreListener { lat, lng -> centreCallback?.invoke(lat, lng) }
     }
 
     // The page owns the map's resume and pause. Keyed on the lifecycle owner
@@ -831,6 +920,144 @@ private class UndalMapView(
     private var onPinDragEnd: ((String, Double, Double) -> Unit)? = null
     private var activeDrag: ActiveDrag? = null
     private val touchSlop = ViewConfiguration.get(context).scaledTouchSlop
+
+    // ------------------------------------------------------------------ camera
+    /**
+     * The camera this view has been *asked* for, and whether it has ever been
+     * applied to a viewport that actually existed.
+     *
+     * This is the fix for the one bug every map surface in Undal showed: a pin
+     * stuck in the top-left corner of the card, no matter where the address was.
+     * osmdroid computes its scroll offset as `centrePixels - viewportSize / 2`, so
+     * a `setCenter()` that lands before Android has measured the view writes
+     * `centrePixels - 0` — the centre of the map ends up at the screen origin, and
+     * every pin is drawn there. Nothing corrects it afterwards: `mapCenter` keeps
+     * reporting the requested centre, so every "is it already there?" shortcut
+     * answers yes and the broken scroll stays for the life of the screen.
+     *
+     * Two rules close it, in this class rather than in each caller: remember what
+     * was asked for, and re-apply it in `onLayout` — the one place that is
+     * guaranteed to know the real size — whenever it has not yet been applied to a
+     * real viewport, or the viewport changed size (rotation, split screen, a card
+     * that grew).
+     */
+    private data class CameraRequest(val lat: Double, val lng: Double, val zoom: Double)
+
+    private var cameraRequest: CameraRequest? = null
+    private var hasPlacedCameraInternal = false
+    private var lastLaidOutWidth = 0
+    private var lastLaidOutHeight = 0
+
+    /** True once a requested camera has been applied to a measured viewport. */
+    val hasPlacedCamera: Boolean get() = hasPlacedCameraInternal
+
+    /** Stores the camera for `onLayout` to apply, without touching the projection. */
+    fun rememberCamera(lat: Double, lng: Double, zoom: Double) {
+        cameraRequest = CameraRequest(lat, lng, zoom)
+    }
+
+    /**
+     * Applies a camera now, or as soon as the view is measured.
+     *
+     * `controller.setZoom` before `setCenter` on purpose: a zoom change rescales
+     * the projection underneath the scroll offset, so setting the centre last is
+     * what makes the two agree.
+     */
+    fun placeCamera(lat: Double, lng: Double, zoom: Double) {
+        if (!lat.isFinite() || !lng.isFinite() || !zoom.isFinite()) return
+        rememberCamera(lat, lng, zoom)
+        if (width <= 0 || height <= 0) return
+        hasPlacedCameraInternal = true
+        runCatching {
+            controller.setZoom(zoom)
+            controller.setCenter(GeoPoint(lat, lng))
+        }
+        invalidate()
+    }
+
+    /** A fit-to-pins camera is not a centre/zoom pair; it has been placed all the same. */
+    fun markCameraPlaced() {
+        hasPlacedCameraInternal = true
+    }
+
+    override fun onLayout(changed: Boolean, left: Int, top: Int, right: Int, bottom: Int) {
+        super.onLayout(changed, left, top, right, bottom)
+        if (width <= 0 || height <= 0) return
+        val resized = width != lastLaidOutWidth || height != lastLaidOutHeight
+        lastLaidOutWidth = width
+        lastLaidOutHeight = height
+        // A camera applied against a zero-sized viewport, or one that was applied
+        // to a viewport of a different size, is the wrong offset by definition.
+        if (!hasPlacedCameraInternal || resized) {
+            val request = cameraRequest
+            if (request != null) {
+                hasPlacedCameraInternal = true
+                runCatching {
+                    controller.setZoom(request.zoom)
+                    controller.setCenter(GeoPoint(request.lat, request.lng))
+                }
+            } else {
+                val centre = mapCenter ?: return
+                hasPlacedCameraInternal = true
+                runCatching {
+                    controller.setZoom(zoomLevelDouble)
+                    controller.setCenter(centre)
+                }
+            }
+            invalidate()
+        }
+    }
+
+    // ------------------------------------------------------- centred pin report
+    /** Told the geographic point under the middle of the map, live, while it moves. */
+    private var centreListener: ((Double, Double) -> Unit)? = null
+    private var lastReportedLat = Double.NaN
+    private var lastReportedLng = Double.NaN
+
+    /**
+     * A pan produces dozens of `scrollTo` calls a second, and the listener behind
+     * this writes state and (in the picker) asks a geocoder a question. One answer
+     * 160 ms after the finger stops is the same address for a fraction of the work.
+     */
+    private val centreReport = Runnable { reportCentreNow() }
+
+    fun setCentreListener(listener: ((Double, Double) -> Unit)?) {
+        centreListener = listener
+        removeCallbacks(centreReport)
+        if (listener != null) postDelayed(centreReport, CENTRE_REPORT_DELAY_MILLIS)
+    }
+
+    override fun scrollTo(x: Int, y: Int) {
+        super.scrollTo(x, y)
+        if (centreListener == null) return
+        removeCallbacks(centreReport)
+        postDelayed(centreReport, CENTRE_REPORT_DELAY_MILLIS)
+    }
+
+    private fun reportCentreNow() {
+        val listener = centreListener ?: return
+        if (width <= 0 || height <= 0) return
+        val centre = mapCenter ?: return
+        if (!centre.latitude.isFinite() || !centre.longitude.isFinite()) return
+        if (kotlin.math.abs(centre.latitude - lastReportedLat) < 1e-7 &&
+            kotlin.math.abs(centre.longitude - lastReportedLng) < 1e-7
+        ) {
+            return
+        }
+        lastReportedLat = centre.latitude
+        lastReportedLng = centre.longitude
+        listener(centre.latitude, centre.longitude)
+    }
+
+    private companion object {
+        const val CENTRE_REPORT_DELAY_MILLIS = 160L
+    }
+
+    override fun onDetachedFromWindow() {
+        removeCallbacks(centreReport)
+        centreListener = null
+        super.onDetachedFromWindow()
+    }
 
     fun setDraggablePins(
         pins: List<UndalDraggablePin>,
@@ -967,6 +1194,47 @@ private class UndalMapView(
         drag.target.marker.position = drag.origin
         activeDrag = null
         invalidate()
+    }
+}
+
+/**
+ * The pin that cannot be in the wrong place.
+ *
+ * Drawn by Compose at the exact middle of the map card, with its tip on the point
+ * the map is reporting. The web picker has always worked this way: the map moves,
+ * the pin does not. It is also the only presentation that survives every way
+ * osmdroid can mis-place a marker — a tile layer that is still loading, a viewport
+ * measured after the camera was set, a font scale that changes the card's height
+ * mid-drag — because the middle of a Box is not a coordinate that can be wrong.
+ *
+ * It takes no pointer input on purpose: a finger that lands on the pin pans the
+ * map underneath it, which moves the pin. One gesture, one meaning.
+ */
+@Composable
+private fun UndalCentredPin(modifier: Modifier = Modifier) {
+    // The pin's tip is the coordinate, so the tip has to be *on* the middle of the
+    // card, not near it. Everything here is positioned from a one-pixel box whose
+    // own position is the map's centre: the marker is drawn 40 dp up and 20 dp
+    // left of it, which puts the bottom-centre of a 40 dp glyph exactly on the
+    // point, and the shadow sits under the tip rather than through the marker.
+    // The root is one invisible pixel at the map's centre, so the pin's own layout
+    // size never moves the point it describes.
+    Box(modifier = modifier.size(1.dp)) {
+        Box(
+            modifier = Modifier
+                .offset(x = (-7).dp, y = (-3).dp)
+                .size(width = 14.dp, height = 6.dp)
+                .clip(CircleShape)
+                .background(MaterialTheme.colorScheme.onSurface.copy(alpha = 0.18f))
+        )
+        Icon(
+            Icons.Filled.LocationOn,
+            contentDescription = null,
+            tint = MaterialTheme.colorScheme.primary,
+            modifier = Modifier
+                .offset(x = (-20).dp, y = (-40).dp)
+                .size(40.dp)
+        )
     }
 }
 

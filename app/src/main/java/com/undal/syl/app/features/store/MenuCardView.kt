@@ -116,11 +116,7 @@ fun UndalMenuCard(
                         color = Color(0xCC1B1B1B)
                     ) {
                         Text(
-                            text = if ((card as? MenuCard.Dish)?.item?.priceFrom == true) {
-                                "Price needs confirming"
-                            } else {
-                                "Finished for today"
-                            },
+                            text = "Finished for today",
                             style = MaterialTheme.typography.labelLarge,
                             color = Color.White,
                             modifier = Modifier.padding(vertical = 6.dp, horizontal = 8.dp)
@@ -208,8 +204,7 @@ fun UndalMenuCard(
                 Column(verticalArrangement = Arrangement.spacedBy(UndalDimens.sm)) {
                     Column {
                         Text(
-                            text = (if ((card as? MenuCard.Dish)?.item?.priceFrom == true) "From " else "") +
-                                Money.format(card.amountPaisa),
+                            text = Money.format(card.amountPaisa),
                             style = MaterialTheme.typography.titleMedium
                         )
                         when (card) {

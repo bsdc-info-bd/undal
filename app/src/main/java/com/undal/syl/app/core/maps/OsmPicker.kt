@@ -27,7 +27,8 @@ import kotlin.math.cos
  * cancellation. So the pin can be placed four ways, because four different people
  * use this screen:
  *
- *  · **drag** the pin immediately — no long-press delay,
+ *  · **drag** the map under a pin that never leaves the middle of the card — the
+ *    gesture the web picker uses, and the one that cannot go wrong,
  *  · **tap** or **long-press** anywhere on the map — quick or precise placement,
  *  · **nudge arrows** — for somebody holding the phone in one hand, or using
  *    TalkBack, for whom a drag is not a gesture at all,
@@ -55,14 +56,6 @@ fun UndalOsmPicker(
     mapLabel: String = "Pin your delivery address",
     showNudgeControls: Boolean = true
 ) {
-    val pin = UndalMapPin(
-        id = PICKER_PIN_ID,
-        lat = latitude,
-        lng = longitude,
-        title = pinTitle,
-        role = UndalPinRole.Destination,
-        draggable = true
-    )
     val accuracy = accuracyMeters
         ?.takeIf { it > 0f }
         ?.let { UndalMapAccuracy(latitude, longitude, it) }
@@ -73,23 +66,29 @@ fun UndalOsmPicker(
             longitude = longitude,
             height = height,
             zoom = zoom,
-            pins = listOf(pin),
+            // No marker: the pin itself is drawn by Compose at the exact middle of
+            // the card (see `centredPin`), and the map is what moves under it. This
+            // is how the web picker has always worked, and it is immune to the one
+            // failure a marker has — being drawn at a coordinate the map's scroll
+            // offset got wrong, which is a pin sitting in the corner of the card.
+            pins = emptyList(),
+            centredPin = true,
+            onCentreMoved = { lat, lng -> onPicked(lat, lng) },
             accuracy = accuracy,
             interactive = true,
             showZoomButtons = true,
             showScaleBar = true,
             recentreLabel = recentreLabel,
             onRecentre = onRecentre,
-            onPinDragged = { _, lat, lng -> onPicked(lat, lng) },
             onMapTap = { lat, lng -> onPicked(lat, lng) },
             onLongPress = { lat, lng -> onPicked(lat, lng) },
-            onPinTapped = { tapped -> if (!tapped.draggable) onPicked(tapped.lat, tapped.lng) },
             mapLabel = mapLabel
         )
 
         Spacer(Modifier.height(UndalDimens.xs))
         Text(
-            text = "Tap a spot, drag the pin, or hold on the map for a precise pick. " + UndalMaps.ATTRIBUTION,
+            text = "Drag the map to put the pin on your door, tap a spot, or hold for a precise pick. " +
+                UndalMaps.ATTRIBUTION,
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
@@ -159,9 +158,6 @@ fun UndalPickedPointLabel(label: String, modifier: Modifier = Modifier) {
         modifier = modifier.padding(top = UndalDimens.xs)
     )
 }
-
-/** One marker id for the single draggable pin, so a re-render is a diff. */
-private const val PICKER_PIN_ID = "undal-picker-pin"
 
 /** About five metres of latitude — one careful tap, never half a street. */
 private const val NUDGE_DEGREES = 0.00005

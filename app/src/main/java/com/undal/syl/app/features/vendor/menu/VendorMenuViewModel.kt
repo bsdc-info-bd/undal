@@ -10,7 +10,9 @@ import com.undal.syl.app.core.model.Combo
 import com.undal.syl.app.core.model.ComboDraft
 import com.undal.syl.app.core.model.ComboRefDraft
 import com.undal.syl.app.core.model.CouponDraft
+import com.undal.syl.app.core.model.MenuAudit
 import com.undal.syl.app.core.model.MenuDraft
+import com.undal.syl.app.core.model.MenuHealth
 import com.undal.syl.app.core.model.MenuItem
 import com.undal.syl.app.core.model.MenuSnapshot
 import com.undal.syl.app.core.model.MenuSort
@@ -101,6 +103,15 @@ class VendorMenuViewModel @Inject constructor(
         val categoryId: String = "",
         val subcategoryId: String = "",
         val sort: MenuSort = MenuSort.RECOMMENDED,
+        /**
+         * The three questions a kitchen actually asks of its own menu: what is off
+         * sale right now, what has no photo, and what is not on the front page.
+         * They are filters, not reports — tapping one narrows the list you are
+         * already editing.
+         */
+        val onlySoldOut: Boolean = false,
+        val onlyMissingPhoto: Boolean = false,
+        val onlyUnfeatured: Boolean = false,
         val bulkMode: Boolean = false,
         val selectedIds: Set<String> = emptySet(),
         val dragIndex: Int = -1,
@@ -223,13 +234,43 @@ class VendorMenuViewModel @Inject constructor(
         _state.value = _state.value.copy(sort = sort)
     }
 
-    /** Dishes the manager should show right now, before the sort is applied. */
+    fun toggleOnlySoldOut() {
+        _state.value = _state.value.copy(onlySoldOut = !_state.value.onlySoldOut)
+    }
+
+    fun toggleOnlyMissingPhoto() {
+        _state.value = _state.value.copy(onlyMissingPhoto = !_state.value.onlyMissingPhoto)
+    }
+
+    fun toggleOnlyUnfeatured() {
+        _state.value = _state.value.copy(onlyUnfeatured = !_state.value.onlyUnfeatured)
+    }
+
+    fun clearQuickFilters() {
+        _state.value = _state.value.copy(
+            onlySoldOut = false,
+            onlyMissingPhoto = false,
+            onlyUnfeatured = false
+        )
+    }
+
+    /** What the kitchen should look at before service; counted in [MenuAudit]. */
+    fun health(): MenuHealth = MenuAudit.of(_state.value.menu.items)
+
+    /**
+     * The dishes on screen: the menu, narrowed by the search field, the section
+     * chips, and the three quick filters that exist because they are the three
+     * states an owner otherwise hunts for by scrolling.
+     */
     fun visibleDishes(): List<MenuItem> {
         val state = _state.value
         return state.menu.items
             .filter { state.categoryId.isBlank() || it.categoryId == state.categoryId }
             .filter { state.subcategoryId.isBlank() || it.subcategoryId == state.subcategoryId }
             .filter { it.matches(state.query) }
+            .filter { !state.onlySoldOut || !it.available }
+            .filter { !state.onlyMissingPhoto || it.imageUrl.isBlank() }
+            .filter { !state.onlyUnfeatured || !it.featured }
             .sortedWith(
                 when (state.sort) {
                     MenuSort.PRICE_LOW -> compareBy { it.payablePaisa }
@@ -266,25 +307,93 @@ class VendorMenuViewModel @Inject constructor(
         _state.value = _state.value.copy(selectedIds = emptySet())
     }
 
+    /** Everything selected, on sale or sold out, in one atomic write. */
     fun applyBulk(available: Boolean) {
+        val count = _state.value.selectedIds.size
+        runBulk(
+            extra = mapOf("available" to available),
+            note = "$count dish(es) are now " + if (available) "available." else "sold out."
+        )
+    }
+
+    /** Featured or not, for everything selected, in one write. */
+    fun applyBulkFeatured(featured: Boolean) {
+        runBulk(
+            extra = mapOf("featured" to featured),
+            note = if (featured) {
+                "Selected dishes are now in the home highlight."
+            } else {
+                "Selected dishes left the home highlight."
+            }
+        )
+    }
+
+    /** Move everything selected into one section — the cure for a mis-filed menu. */
+    fun applyBulkCategory(categoryId: String) {
+        if (categoryId.isBlank()) {
+            _state.value = _state.value.copy(message = "Pick the section to move them into.")
+            return
+        }
+        val name = _state.value.menu.categories.firstOrNull { it.id == categoryId }?.name.orEmpty()
+        runBulk(
+            extra = mapOf("categoryId" to categoryId, "subcategoryId" to ""),
+            note = "Selected dishes moved to ${name.ifBlank { "the chosen section" }}."
+        )
+    }
+
+    /**
+     * One batch, one sentence.
+     *
+     * The selection is only cleared when the write actually happened: a failed
+     * batch keeps the ticks so the same tap can be retried without re-picking
+     * twenty dishes on a phone.
+     */
+    private fun runBulk(extra: Map<String, Any?>, note: String) {
         val ids = _state.value.selectedIds.toList()
-        if (ids.isEmpty()) return
+        if (ids.isEmpty()) {
+            _state.value = _state.value.copy(message = "Pick at least one dish first.")
+            return
+        }
+        if (_state.value.busy) return
         _state.value = _state.value.copy(busy = true)
         viewModelScope.launch(guard) {
-            val result = vendorMenuRepo.setAvailabilityBulk(ids, available)
+            val result = vendorMenuRepo.patchItemsBulk(ids, extra, note)
+            val done = result is UndalResult.Success
             _state.value = _state.value.copy(
                 busy = false,
-                selectedIds = emptySet(),
-                bulkMode = false,
+                selectedIds = if (done) emptySet() else _state.value.selectedIds,
+                bulkMode = if (done) false else _state.value.bulkMode,
                 message = when (result) {
-                    is UndalResult.Success ->
-                        "${ids.size} dish(es) are now ${if (available) "available" else "sold out"}."
-
+                    is UndalResult.Success -> result.value
                     is UndalResult.Failure -> result.message
                 }
             )
         }
     }
+
+    /**
+     * Copy a dish, without copying the thing that makes it unsellable.
+     *
+     * The copy opens in the editor as a *new* dish — no id, the name marked as a
+     * copy, and switched off — so nothing reaches the storefront until the owner
+     * has looked at it. That is the honest shape of "duplicate": the work is
+     * copied, the decision is not.
+     */
+    fun duplicateDish(item: MenuItem) {
+        val copy = MenuDraft.of(item).copy(
+            id = null,
+            name = copyNameFor(item.name),
+            available = false
+        )
+        _state.value = _state.value.copy(
+            itemDraft = copy,
+            dirtyWarning = false,
+            tab = Tab.DISHES,
+            message = "${item.name} copied. Check the price and the photo, then save it."
+        )
+    }
+
+    private fun copyNameFor(name: String): String = "${name.trim().take(60)} copy".take(80)
 
     // -------------------------------------------------------------------- dishes
 

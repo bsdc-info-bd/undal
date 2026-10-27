@@ -84,6 +84,45 @@ test("the status route hands the page a bill and nothing private", async () => {
   }
 });
 
+test("a cancellation that reached the live mirror first is shown at once", async () => {
+  // The kitchen's phone writes the mirror the instant it taps cancel; the order
+  // document is committed a moment later. A tracking page polled in that gap used
+  // to keep saying "Cooking", which is the one wrong answer a customer will act on.
+  const backend = new FakeFirebase();
+  const restore = backend.install();
+  try {
+    backend.setDocument(`orders/${ORDER_ID}`, webOrder({ status: "accepted" }));
+    backend.setRtdb(`orderLive/${ORDER_ID}`, {
+      status: "cancelled",
+      vendorNote: "We ran out of fish for this order.",
+      updatedAt: Date.now(),
+    });
+    const payload = (await (await handleStoreOrderStatus(backend.env, ORDER_ID)).json()) as {
+      order: { status: string; cancelNote: string };
+    };
+    assert.equal(payload.order.status, "cancelled");
+    assert.equal(payload.order.cancelNote, "We ran out of fish for this order.");
+  } finally {
+    restore();
+  }
+});
+
+test("a stale mirror never drags a cancelled order back to life", async () => {
+  const backend = new FakeFirebase();
+  const restore = backend.install();
+  try {
+    backend.setDocument(`orders/${ORDER_ID}`, webOrder({ status: "cancelled", cancelNote: "Kitchen closed." }));
+    backend.setRtdb(`orderLive/${ORDER_ID}`, { status: "accepted", updatedAt: Date.now() });
+    const payload = (await (await handleStoreOrderStatus(backend.env, ORDER_ID)).json()) as {
+      order: { status: string; cancelNote: string };
+    };
+    assert.equal(payload.order.status, "cancelled");
+    assert.equal(payload.order.cancelNote, "Kitchen closed.");
+  } finally {
+    restore();
+  }
+});
+
 test("a hostile order document produces a small bill, not a broken page", async () => {
   const backend = new FakeFirebase();
   const restore = backend.install();
@@ -236,7 +275,9 @@ test("the tracking page prints the bill it is handed, escaping what comes from t
   // and the bill stays.
   assert.ok(page.ids("undal-receipt-hero").hasAttribute("hidden"));
   assert.equal(page.window.intervals.length, 1);
-  assert.equal(page.window.intervals[0]?.ms, 20000);
+  // Eight seconds: the gap between the kitchen's tap and the customer's screen
+  // is the one thing a tracking page cannot be slow about.
+  assert.equal(page.window.intervals[0]?.ms, 8000);
 });
 
 test("a placed order leads with the tick, and delivery stops the poll", async () => {

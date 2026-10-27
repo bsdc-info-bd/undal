@@ -200,6 +200,16 @@ class UndalFcmService : FirebaseMessagingService() {
                 prepEndsAtIso = data["prepEndsAt"]
             )
         }
+        // The other half of that rule: a status that has moved past cooking — or a
+        // cancellation — ends the countdown on every kitchen phone at once. The
+        // phone that tapped is already handled by `OrderStatusRepo`; this is the
+        // second phone, which never made the write and would otherwise have ticked
+        // through the whole prep window for an order that no longer exists.
+        if (isVendor && (status == "ready" || status == "in_delivery" ||
+                status == "delivered" || status == "cancelled")
+        ) {
+            PrepTimerService.stop(applicationContext)
+        }
 
         postNotification(
             channelId = AlarmChannels.CUSTOMER_ORDERS,
