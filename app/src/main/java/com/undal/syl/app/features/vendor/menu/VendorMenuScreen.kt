@@ -336,14 +336,14 @@ private fun DishRow(
                     Text(text = item.name, style = MaterialTheme.typography.titleSmall)
                     Text(
                         text = buildString {
+                            if (item.priceFrom) append("Price needs exact options · from ")
                             append(Money.format(item.payablePaisa))
                             if (item.hasDiscount) {
                                 append(" · was ")
                                 append(Money.format(item.amountPaisa))
                             }
                             append(" · ")
-                            append(item.prepMinutes)
-                            append(" min")
+                            append(if (item.prepMinutes > 0) "${item.prepMinutes} min" else "prep estimate not set")
                             if (item.tags.isNotEmpty()) {
                                 append(" · ")
                                 append(item.tags.joinToString(" "))
@@ -355,12 +355,17 @@ private fun DishRow(
                         overflow = TextOverflow.Ellipsis
                     )
                 }
-                Switch(checked = item.available, onCheckedChange = { onToggleAvailability() })
+                Switch(
+                    checked = item.available,
+                    onCheckedChange = { onToggleAvailability() },
+                    enabled = !item.priceFrom
+                )
             }
             Spacer(Modifier.height(UndalDimens.xs))
             Row(verticalAlignment = Alignment.CenterVertically) {
                 UndalStatusPill(
                     text = when {
+                        item.priceFrom -> "Set exact price"
                         !item.available -> "Sold out"
                         item.featured -> "Chef's pick"
                         item.isPopular -> "Popular"

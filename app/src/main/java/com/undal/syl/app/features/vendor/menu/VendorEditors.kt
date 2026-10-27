@@ -414,6 +414,12 @@ fun DishEditorSheet(
             onChange = { viewModel.onItemDraftChange(draft.copy(veg = it)) }
         )
         SwitchRow(
+            label = "Price starts from this amount",
+            detail = "Use for a source-listed starting price. Configure the exact variant price before taking orders.",
+            checked = draft.priceFrom,
+            onChange = { viewModel.onItemDraftChange(draft.copy(priceFrom = it)) }
+        )
+        SwitchRow(
             label = "Available today",
             detail = "Switch off instead of deleting when the kitchen runs out.",
             checked = draft.available,

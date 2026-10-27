@@ -123,9 +123,16 @@ it somewhere safe.
 ### 3c · `seed-config` (once, re-runnable)
 
 Publishes `config/store` (hours, per-km fee, radius, minimum order, kitchen
-pin), `config/promos` (the offer rotation the 18:00 cron walks through) and
-`counters/orders` (shortId counter starting at `UND-1001`), then deploys the
-Firestore rules, the composite indexes and the Realtime Database rules.
+pin), `config/promos` (the offer rotation the 18:00 cron walks through),
+`counters/orders` (shortId counter starting at `UND-1001`), and the 67-item
+catalogue transcribed from [the Undal menu page](https://sylhetbites.pages.dev/undal/).
+Categories and dishes are created only when missing, so rerunning the workflow
+never overwrites vendor edits. Photos link to that page's published dish images.
+The menu starts unavailable: the kitchen must review stock, images, current
+prices/options and preparation details in the vendor app before enabling an item.
+The source marks some prices “from”; those items are visibly labeled with a
+starting price and must be configured by the kitchen before orders are enabled.
+The workflow then deploys the Firestore rules, composite indexes and RTDB rules.
 
 > The seeded kitchen pin is Zindabazar, Sylhet. **Move it** with the pin picker
 > in the app (V-081) — the radius and the delivery fee depend on the real spot.

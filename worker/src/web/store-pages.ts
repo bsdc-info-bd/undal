@@ -168,7 +168,7 @@ function addForm(item: WebItem, options: { next?: "basket" | "store"; label?: st
   <input type="hidden" name="id" value="${escapeHtml(item.id)}">
   <input type="hidden" name="qty" value="1">
   <input type="hidden" name="next" value="${next}">
-  <button class="button" type="submit"${item.available ? "" : " disabled"}>${escapeHtml(item.available ? label : "Sold out")}</button>
+  <button class="button" type="submit"${item.available ? "" : " disabled"}>${escapeHtml(item.available ? label : item.kind === "dish" && item.priceFrom ? "Price to be confirmed" : "Sold out")}</button>
 </form>`;
 }
 
@@ -231,7 +231,7 @@ function itemCard(item: WebItem, sectionName: string): string {
   if (item.kind === "dish" && item.veg) tags.push(`<span class="tag">Veg</span>`);
   if (item.discountAmountPaisa > 0) tags.push(`<span class="tag off">Save ${formatPaisa(item.discountAmountPaisa)}</span>`);
   if (item.kind === "combo") tags.push(`<span class="tag">Combo</span>`);
-  if (!item.available) tags.push(`<span class="tag warn">Sold out</span>`);
+  if (!item.available) tags.push(`<span class="tag warn">${item.kind === "dish" && item.priceFrom ? "Price to be confirmed" : "Sold out"}</span>`);
   const was = item.kind === "dish" && item.discountAmountPaisa > 0
     ? `<span class="was">${formatPaisa(item.amountPaisa)}</span>`
     : "";
@@ -249,7 +249,7 @@ ${image}
 </div>
 </a>
 <div class="body card-tail">
-  <span class="price">${formatPaisa(item.payablePaisa)}${was}</span>
+  <span class="price">${item.kind === "dish" && item.priceFrom ? "From " : ""}${formatPaisa(item.payablePaisa)}${was}</span>
   <span class="smallprint">${escapeHtml(sectionName)}</span>
 </div>
 ${addForm(item, { label: "Add", next: "store" })}
@@ -444,21 +444,26 @@ export async function handleStoreItem(env: Env, request: Request, id: string): P
   <span class="eyebrow">${escapeHtml(section?.name ?? (item.kind === "combo" ? "Combo" : "Menu"))}</span>
   <h2 id="dish-title">${escapeHtml(item.name)}</h2>
   <p class="muted">${escapeHtml(section?.name ?? (item.kind === "combo" ? "Combo" : "Menu"))}${
-    item.kind === "dish" ? ` · prep guide: ${item.prepMinutes} minutes, confirmed when accepted` : ""
+    item.kind === "dish"
+      ? item.prepMinutes > 0
+        ? ` · prep guide: ${item.prepMinutes} minutes, confirmed when accepted`
+        : " · the kitchen confirms prep time when accepting the order"
+      : ""
   }</p>
   <p>${escapeHtml(item.description)}</p>
   ${comboContents ? `<p class="muted">${escapeHtml(comboContents)}</p>` : ""}
   ${item.kind === "dish" && item.tags.length ? `<p class="muted">${escapeHtml(item.tags.join(" · "))}</p>` : ""}
-  <p class="price" style="font-size:1.3rem">${formatPaisa(item.payablePaisa)}${
+  <p class="price" style="font-size:1.3rem">${item.kind === "dish" && item.priceFrom ? "From " : ""}${formatPaisa(item.payablePaisa)}${
     item.kind === "dish" && item.discountAmountPaisa > 0
       ? `<span class="was">${formatPaisa(item.amountPaisa)}</span>`
       : ""
   }</p>
+  ${item.kind === "dish" && item.priceFrom ? `<p class="muted">Starting price only. The kitchen must confirm the selected option before orders are enabled.</p>` : ""}
   ${
     item.available
       ? addForm(item, { next: "basket", label: "Add to basket", wide: true }) +
         `<a class="button secondary" href="/basket">View your basket</a>`
-      : `<div class="notice">This dish is finished for today. The kitchen keeps it on the menu so you know what they cook — it is not orderable right now.</div>`
+      : `<div class="notice">${item.kind === "dish" && item.priceFrom ? "The published amount is a starting price. The kitchen must confirm the exact option before this dish can be ordered." : "This dish is finished for today. The kitchen keeps it on the menu so you know what they cook — it is not orderable right now."}</div>`
   }
   </section>
 </article>
