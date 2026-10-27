@@ -10,6 +10,8 @@ import {
   handleStoreItem,
 } from "../src/web/store-pages";
 import { handleAccountPage, handleLoginPage } from "../src/web/account-page";
+import { securityHeaders } from "../src/util/http";
+import catalog from "../../tools/undal-menu-catalog.json" with { type: "json" };
 import type { Env } from "../src/env";
 import type { WebMenu, WebStoreConfig } from "../src/web/store-data";
 
@@ -427,4 +429,28 @@ test("account shell offers an explicit no-script path and roving keyboard tabs",
   assert.match(html, /class="account-workspace" hidden/);
   assert.match(html, /event.key === "ArrowRight"/);
   assert.match(html, /setAttribute\("tabindex", active/);
+});
+
+test("the image policy names every host a seeded dish photo can come from", async () => {
+  // This is the defect that made the seeded menu look empty: the photos existed,
+  // and the Content-Security-Policy refused to load them, so every dish drew an
+  // empty box. The catalogue is the source of those URLs, so its host has to be
+  // in the policy — and Cloudinary is where the kitchen's own uploads land.
+  const csp = securityHeaders()["content-security-policy"];
+  const imgSrc = csp.split(";").map(part => part.trim()).find(part => part.startsWith("img-src"));
+  assert.ok(imgSrc, "the pages must carry an img-src directive");
+  const hosts = [...imgSrc.matchAll(/https:\/\/[^\s;]+/g)].map(match => match[0]);
+  const allowed = (url: string) => {
+    const host = new URL(url).host;
+    return hosts.some(pattern => {
+      const bare = pattern.replace(/^https:\/\//, "");
+      return bare === host || (bare.startsWith("*.") && host.endsWith(bare.slice(1)));
+    });
+  };
+  const base = (catalog as { imageBase?: string }).imageBase;
+  assert.ok(base, "the catalogue should say where its photos live");
+  assert.ok(allowed(`${base}sample.webp`), `img-src must allow the catalogue host ${base}`);
+  assert.ok(allowed("https://res.cloudinary.com/undal/image/upload/v1/dishes/kabab.webp"),
+    "img-src must allow the kitchen's own Cloudinary uploads");
+  assert.match(imgSrc, /'self'/);
 });
