@@ -329,3 +329,43 @@ rules are asserted as configuration. Lighthouse, real Chromium screenshots,
 `tools/check-design-browser.cjs` and the dark palette on a calibrated screen are
 outstanding. Native Android compilation and device QA remain outstanding, and
 this batch changed no Kotlin.
+
+## Android motion that answers to the system — 31 October 2026
+
+The web storefront gained a motion layer and a dark theme; the app gained the
+one thing its motion was missing, which is a listener.
+
+- `core/design/UndalMotionEffects.kt`. Android's equivalent of
+  `prefers-reduced-motion` is **Developer options → Animator duration scale →
+  off**, which is also what the "Remove animations" accessibility setting
+  writes, and nothing in the app read it: the shimmer swept forever and badges
+  bounced on a phone whose owner had asked the system to stop moving things.
+  `undalAnimationsAllowed` reads `Settings.Global.ANIMATOR_DURATION_SCALE` and
+  treats a resolver that refuses as "animate", because guessing the other way
+  would take motion away from everybody who never asked. It catches `Exception`,
+  not `RuntimeException`: `SettingNotFoundException` is an `AndroidException`,
+  and a missing setting is not allowed to take a screen down in this repository.
+- Two primitives behind it. `UndalReveal` fades and lifts a block into place on
+  the frames a screen opens with — draw-only through `graphicsLayer`, with the
+  same capped stagger as the web, and with the target value already held on the
+  first composition when the system will not animate, so there is no frame in
+  which the content is invisible. `rememberUndalCountUp` returns paisa in and
+  paisa out and never formats anything, so the caller's own `Money` stays the
+  only place a price is turned into words, and it clamps so a count can never
+  show a number the server did not charge.
+- `ShimmerBlock` holds still instead of sweeping. It is the one infinite
+  animation that runs on every loading screen in both portals.
+- `UndalPageIntro` arrives rather than appearing, which reaches the portal
+  stages, the vendor store settings and the policy screens in one edit.
+- A cart line total counts to its new value when a quantity changes.
+- The order alert is deliberately **not** behind the switch. The pulse around a
+  status badge is decoration and follows it; the sound, the full-screen intent,
+  the notification and the watchdog do not, per `docs/ALERT-RELIABILITY.md`.
+
+Checked: `check_kotlin_shape.py`, `check_import_contracts.py`,
+`check_foreground_contract.py` and `check-design-contrast.py`, all clean across
+166 Kotlin files. Note for the next reader: the import gate did **not** flag a
+missing import for one of these new symbols when it was removed as a test, so it
+is not proof that the new call sites are wired — the imports were checked by
+hand. No JDK or Android SDK is installed here: no compilation, no preview
+render, no device or TalkBack claim is made for this batch.
