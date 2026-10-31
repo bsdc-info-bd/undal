@@ -4,7 +4,11 @@ on:
     branches: [main]
     paths:
       - "worker/**"
+      # The customer website on Pages is the same router as the Worker, so a
+      # change to either one is verified against both.
+      - "web/**"
       - "tools/check-*.mjs"
+      - "tools/check_no_placeholders.sh"
       - ".github/workflows/verify-worker.yml"
 permissions:
   contents: read
@@ -28,3 +32,4 @@ jobs:
           node tools/check-web-rules.mjs
           node tools/check-coupon-parity.mjs
           node tools/check-alert-ladder.mjs
+          bash tools/check_no_placeholders.sh

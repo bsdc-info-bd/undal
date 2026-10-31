@@ -55,3 +55,7 @@ __pycache__/
 
 # Wrangler build output
 worker/dist/
+
+# Cloudflare Pages output — written by `cd worker && npm run build:web`, which
+# renders every public page with the real router. Generated, never committed.
+web/public/

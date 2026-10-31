@@ -135,6 +135,7 @@ ${ogUrl}
 <meta name="twitter:description" content="${description}">
 ${options.ogImage ? `<meta name="twitter:image" content="${escapeHtml(options.ogImage)}">` : ""}
 <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="/apple-touch-icon.png">
 <link rel="manifest" href="/manifest.webmanifest">
 <link rel="preconnect" href="https://tile.openstreetmap.org" crossorigin>
 <link rel="preconnect" href="https://res.cloudinary.com" crossorigin>

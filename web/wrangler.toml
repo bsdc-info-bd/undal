@@ -1,0 +1,63 @@
+# ---------------------------------------------------------------------------
+# Undal HomeKitchen — customer website on Cloudflare Pages
+#
+# This project serves the public website: the storefront, the dish pages, the
+# basket and checkout forms, the account pages, the deep links and every
+# `/api/...` route the site's own JavaScript calls. It runs the *same* code as
+# the Worker — `web/functions/[[path]].ts` calls `worker/src/index.ts` — so
+# moving the site here moved traffic, not behaviour.
+#
+# What deliberately stays on the Worker (`worker/wrangler.toml`, project `undal`):
+#
+#   · the three cron triggers. Pages has no crons, and the kitchen alert ladder,
+#     the presence watchdog and the daily offer broadcast are not negotiable;
+#   · the Android app's base URL. `gradle.properties` points the app at
+#     `https://undal.bsdc.workers.dev/`, and an installed build cannot be
+#     repointed, so every `/api/...`, `/latest.json`, `/download/apk` and
+#     `/.well-known/assetlinks.json` route stays served there;
+#   · the release webhook and the FCM relay, which are called by machines.
+#
+# The Worker also keeps its own copy of the web routes. That is not dead code and
+# it is not a duplicate to clean up: it is the fallback that keeps the site up if
+# this project is ever rolled back, and it is what `tools/preview-web.mts` runs
+# locally. Two deployments of one router, and the router is tested once.
+#
+# Why this reduces load rather than moving it: files in `public/` are served by
+# the Pages CDN and cost no invocation at all, and every request that does reach
+# a Function is charged to Pages' own allowance instead of the Worker's.
+# ---------------------------------------------------------------------------
+
+name = "undal-web"
+compatibility_date = "2026-10-01"
+pages_build_output_dir = "public"
+
+[vars]
+# The same non-secret configuration the Worker runs with, because it is the same
+# code. Values marked REPLACE_* are substituted by
+# .github/workflows/deploy-pages.yml from repository secrets; secrets themselves
+# (FIREBASE_SA_JSON, FIREBASE_RTDB_URL, APP_SIGNING_SHA256,
+# RELEASE_WEBHOOK_SECRET) are pushed with `wrangler pages secret put`.
+CLOUDINARY_CLOUD_NAME = "REPLACE_CLOUDINARY_CLOUD_NAME"
+FIREBASE_WEB_API_KEY = "REPLACE_FIREBASE_WEB_API_KEY"
+APP_PACKAGE_NAME = "com.undal.syl.app"
+GITHUB_REPO_SLUG = "REPLACE_GITHUB_REPO_SLUG"
+PROMO_TOPIC = "promos_all"
+# Must match the constant in the Android app; tools/check-web-rules.mjs fails the
+# build if the two ever differ.
+KITCHEN_TOPIC = "undal_kitchen"
+# How long a snapshot written by `web/scripts/build.mts` may answer a request
+# before the Function renders the page live instead. 300 seconds: a burst of
+# first-time visitors and crawlers costs no rendering at all, and a dish the
+# kitchen has just sold out of is not on the anonymous page for an hour. Set it
+# to 0 to render every request (the site behaves exactly as it did on the Worker)
+# or to a day to serve snapshots until the next deploy.
+PRERENDER_MAX_AGE_SECONDS = "300"
+
+# The same KV namespace the Worker uses. Sharing it is the point: the menu
+# snapshot, the rate-limit counters and the release record are one store, and a
+# customer who moves between the site and the app is talking to one backend.
+# Every read here goes through the gateway in `worker/src/util/kv.ts`, so the
+# website's traffic costs memoised reads rather than one per request.
+[[kv_namespaces]]
+binding = "UNDAL_KV"
+id = "REPLACE_KV_NAMESPACE_ID"

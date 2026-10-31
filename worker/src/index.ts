@@ -75,6 +75,7 @@ import { handleDownloadPage } from "./web/download-page";
 import { handleIcon, handleManifest, handleServiceWorker } from "./web/pwa";
 import { handleItemSharePage, handleOrderOpenPage, handleSmartOpen } from "./web/deeplink";
 import { favicon } from "./web/layout";
+import { failurePage, notFoundPage, wantsHtml } from "./web/error-pages";
 import { runOpeningReminder } from "./crons/opening";
 import { runPresenceSweep } from "./crons/presence";
 import { runRealertSweep } from "./crons/realert";
@@ -247,6 +248,11 @@ async function route(request: Request, env: Env, ctx?: ExecutionContext): Promis
   if (path === "/manifest.webmanifest") return handleManifest();
   if (path === "/sw.js") return handleServiceWorker();
   if (path.startsWith("/icons/")) return handleIcon(path);
+  // iOS asks for this by name when a customer puts the store on a home screen,
+  // and `staticAsset()` already exempted it from the rate limiter — an exemption
+  // for a path that answered 404, so every home-screen icon was the default
+  // screenshot. It is the 180px drawing, which is the size Apple wants.
+  if (path === "/apple-touch-icon.png") return handleIcon("/icons/icon-180.png");
   if (path === "/.well-known/assetlinks.json") return handleAssetLinks(env);
   if (path === "/download") return edgeCached(request, ctx, () => handleDownloadPage(env, request), 60);
   if (path === "/download/apk") return handleDownload(env);
@@ -322,7 +328,19 @@ async function route(request: Request, env: Env, ctx?: ExecutionContext): Promis
     return handleStoreOrderStatus(env, orderId);
   }
 
+  // A browser that followed a dead link gets a page with a way back to the menu;
+  // the app, a webhook and every `/api/` caller keep the JSON they already parse.
+  if (request.method === "GET" && wantsHtml(request, path)) return notFoundPage(path);
   return errorJson(404, "not-found", `No route for ${request.method} ${path}`);
+}
+
+/**
+ * The path the router would have matched, recomputed for the error handlers: a
+ * failure page that offers "try this page again" has to know which page it is on,
+ * and the router's own `path` is not in scope inside the `fetch` wrapper.
+ */
+function requestPath(request: Request): string {
+  return new URL(request.url).pathname.replace(/\/{2,}/g, "/").replace(/\/+$/, "") || "/";
 }
 
 export default {
@@ -330,7 +348,12 @@ export default {
     try {
       return await route(request, env, ctx);
     } catch (error) {
+      const path = requestPath(request);
       if (error instanceof HttpError) {
+        // An upstream failure on a page a person is reading is not a JSON
+        // problem: "the menu could not be read" belongs on a page that still
+        // offers the basket, the app and a way to try again.
+        if (error.status >= 500 && request.method === "GET" && wantsHtml(request, path)) return failurePage(path, error.status);
         // The hint is the part a merchant can act on. Dropping it here is what
         // turned "Firestore needs a composite index, create it at <link>" into
         // "Cleanup paused (HTTP 502). You can safely try again."
@@ -340,6 +363,7 @@ export default {
         });
       }
       console.error("undal-worker failure", error);
+      if (request.method === "GET" && wantsHtml(request, path)) return failurePage(path);
       return errorJson(500, "internal-error", "The Undal worker hit an unexpected error.");
     }
   },

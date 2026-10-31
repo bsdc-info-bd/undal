@@ -166,6 +166,27 @@ async function refresh(cache: Cache, key: Request, rendering: Promise<Response>)
 }
 
 /**
+ * Cookies Cloudflare's own edge sets on a visitor before Undal ever sees the
+ * request: Bot Management's `__cf_bm`, a challenge's `cf_clearance` and
+ * `cf_chl_*`, the visitor id `_cfuvid`, the rate-limit id `__cfruid`.
+ *
+ * `pageVary` reads an unrecognised cookie as "this request is personal, do not
+ * share its rendering", which is the right rule and which had a consequence
+ * nobody could see from the dashboard: a browser with JavaScript enabled is
+ * given `__cf_bm` on its very first request, so the storefront was rendered from
+ * scratch for every human visitor and cached only for `curl`. These cookies carry
+ * no identity, no basket and no preference, so they are dropped from the
+ * comparison — and from the key, because a key that included them would be a key
+ * per visitor, which is no cache at all.
+ */
+const INFRASTRUCTURE_COOKIES = ["__cf_bm", "cf_clearance", "_cfuvid", "__cfruid", "cf_chl_opt"];
+
+/** True for a cookie Cloudflare's infrastructure set rather than Undal. */
+export function isInfrastructureCookie(name: string): boolean {
+  return INFRASTRUCTURE_COOKIES.indexOf(name) >= 0 || name.indexOf("cf_chl_") === 0;
+}
+
+/**
  * The material a public page's rendering depends on beyond its URL.
  *
  * Returns `null` when the request carries something that makes it unshareable —
@@ -188,7 +209,10 @@ export function pageVary(request: Request, cookieNames: string[]): string | null
   const others = parts.filter((part) => {
     const trimmed = part.trim();
     if (!trimmed) return false;
-    return !cookieNames.some((name) => trimmed.indexOf(`${name}=`) === 0);
+    const equals = trimmed.indexOf("=");
+    const name = equals < 0 ? trimmed : trimmed.slice(0, equals);
+    if (isInfrastructureCookie(name)) return false;
+    return !cookieNames.some((listed) => trimmed.indexOf(`${listed}=`) === 0);
   });
   if (others.length > 0) return null;
   return used.join("|");
