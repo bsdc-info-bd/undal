@@ -449,7 +449,7 @@ ${couponStrip(menu.coupons ?? [])}
 ${statusBanner(menu.store)}
 ${campaignCard}
 ${factsStrip(menu.store)}
-<div class="menu-heading" id="menu"><h2>What sounds good today?</h2><p class="muted">${items.length} menu choices · Find your favourite</p></div>
+<div class="menu-heading" id="menu"><h2>What sounds good today?</h2><p class="muted">${items.length} menu ${items.length === 1 ? "choice" : "choices"} · Find your favourite</p></div>
 <form class="search" action="/store#menu" method="get" role="search">
   <input type="search" name="q" value="${escapeHtml(search)}" placeholder="Search the menu — bhorta, chicken, tea…" aria-label="Search the menu">
   ${sectionId ? `<input type="hidden" name="section" value="${escapeHtml(sectionId)}">` : ""}
