@@ -344,6 +344,17 @@ jobs:
           fi
           say "a basket is rendered, not served from a file."
 
+          # A query is part of the URL, so a filtered menu has to be rendered: the
+          # snapshot is of the whole menu, and serving it for a search is a search
+          # that silently does nothing.
+          filtered=$(curl -sS -D - -o "$RUNNER_TEMP/filtered.html" "$base/store?q=undal-smoke" || true)
+          fstate=$(printf '%s' "$filtered" | grep -i '^x-undal-prerender:' | tr -d '\r' | awk '{print $2}')
+          if [ "$fstate" = "hit" ]; then
+            say "/store?q=undal-smoke answered: $(printf '%s' "$filtered" | grep -iE '^(HTTP/|x-undal-)' | tr -d '\r' | tr '\n' ' ')"
+            fail "a filtered menu was served from the unfiltered snapshot — the query was ignored."
+          fi
+          say "a filtered menu is rendered, not served from the whole-menu file (x-undal-prerender: ${fstate:-none})."
+
           canonical=$(curl -sS -o /dev/null -w '%{http_code} %{redirect_url}' "$base/store/" || true)
           case "$canonical" in
             301*"/store") say "/store/ points at /store." ;;

@@ -161,7 +161,15 @@ export async function servePagesRequest(context: PagesContext): Promise<Response
     }
   }
 
-  const snapshotEligible = isSnapshotPath(path);
+  const snapshotPath = isSnapshotPath(path);
+  // A snapshot is one rendering of one URL, and the query string is part of the
+  // URL. `/store?q=bhaji` is a different page from `/store`: answering it from the
+  // unfiltered file is a search that silently does nothing, which is worse than a
+  // slow search, because the customer asks for one dish, is handed the whole menu,
+  // and has no way to know they were ignored. The same is true of a category chip
+  // and of a sort order. So a file answers only a request with no query at all, and
+  // a queried page is rendered by the router that knows what the query means.
+  const snapshotEligible = snapshotPath && url.search === "";
   // No cookies at all: `pageVary` returns null for a session, an Authorization
   // header or any cookie it does not recognise, and the basket cookie's value for
   // a basket — every one of which means the markup is this visitor's own.
@@ -208,9 +216,13 @@ export async function servePagesRequest(context: PagesContext): Promise<Response
     if (asset) return withPrerenderHeaders(asset, "stale", manifest, manifestAgeSeconds(manifest, Date.now()));
   }
 
-  if (snapshotEligible) {
+  if (snapshotPath) {
     const headers = new Headers(response.headers);
-    headers.set(PRERENDER_HEADER, anonymous ? (snapshot ? "miss" : "unavailable") : "bypass");
+    // "bypass" covers both reasons a file was not used: this visitor is not
+    // anonymous, and this URL was never a file to begin with. Either way the page
+    // in front of them was rendered for them alone.
+    const state = snapshotEligible && anonymous ? (snapshot ? "miss" : "unavailable") : "bypass";
+    headers.set(PRERENDER_HEADER, state);
     return new Response(response.body, { status: response.status, statusText: response.statusText, headers });
   }
   return response;
