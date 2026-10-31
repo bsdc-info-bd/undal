@@ -370,6 +370,18 @@ is not proof that the new call sites are wired — the imports were checked by
 hand. No JDK or Android SDK is installed here: no compilation, no preview
 render, no device or TalkBack claim is made for this batch.
 
+**Closed the same day, by CI.** The first Android build of this branch stopped on
+the one line this batch added to the cart:
+`rememberUndalCountUp` took an `Int` and returned one, while every amount in
+Undal is a `Long` of paisa and `Money.format` takes a `Long`, so the cart line
+total did not compile (`5b24f35`). The count-up now speaks paisa in and paisa
+out, animating on an `Int` clamped to its own range because Compose has no
+`animateLongAsState` and a `Float` would give away the last digits of a large
+total. The lesson is worth more than the fix: **the four static gates check
+shape, imports and contracts — not types.** They passed this line twice. Only
+a compiler can catch it, which is why `android-build.yml` runs on the pull
+request and not only on `main`.
+
 ## The map that was a showpiece, and a menu that kept its place — 31 October 2026
 
 Reported by the owner: on the web and on every app screen with an OpenStreetMap
@@ -473,8 +485,17 @@ and `check_no_placeholders` clean; the four Kotlin gates clean. `build:web
 --source sample` still writes 80 snapshots with no failures, and the prerendered
 `/store` carries the new chip row and no filter note.
 
-Not checked, and no claim is made: there is no browser and no Android toolchain in
-this sandbox, so the CSS fallbacks are asserted as text and reasoned about against
-each engine's support table, not rendered; and the Kotlin changes are verified by
-the static gates and by hand, not by a compiler, an emulator or a device. The
-`0,0` and zoom fixes are the two that a device would confirm first.
+**The Android half is now compiled.** `android-build.yml` on this pull request
+passed in 5 m 15 s: `compileReleaseKotlin`, the unit tests, `assembleRelease` and
+the signing step — so `effectiveZoom`, `drawnPins`, the `isPlausible` camera
+rule and the new caption are real Kotlin, not just gates that agreed with
+themselves. What a build still does not prove: no emulator, no device, no
+screenshot, no TalkBack run. The `0,0` and zoom fixes are the two a device would
+confirm first, on the profile's map and on the address pinning step.
+
+The web half has no browser here, so the CSS fallbacks are asserted as text and
+reasoned against each engine's support table rather than rendered. The five new
+map tests run the real `MAP_SCRIPT` in a VM against a DOM stub, which is what
+proves the drag, the touch fallback and the self-sizing frame — but a stub has
+no layout engine, so "the frame measures zero and the script repairs it" is
+tested as a contract, not as a painted pixel.
