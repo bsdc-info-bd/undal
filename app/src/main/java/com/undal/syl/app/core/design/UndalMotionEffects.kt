@@ -4,6 +4,7 @@ import android.content.Context
 import android.provider.Settings
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.animateIntAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.layout.Box
 import androidx.compose.runtime.Composable
@@ -17,7 +18,6 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import com.undal.syl.app.core.theme.UndalMotion
-import kotlin.math.roundToInt
 
 /**
  * Motion that answers to the person holding the phone.
@@ -153,14 +153,31 @@ fun UndalReveal(
  *
  * With the system's animations off, or on the first composition, this is simply
  * the value.
+ *
+ * Paisa in, paisa out, as a [Long] — because that is what every amount in Undal
+ * is and what [com.undal.syl.app.core.util.Money.format] takes, and a count-up
+ * must never be the reason a total is a different type, or a different number,
+ * from the one the server charged.
  */
 @Composable
 fun rememberUndalCountUp(
-    target: Int,
+    target: Long,
     motionEnabled: Boolean = rememberUndalMotionEnabled()
-): Int {
-    val animated by animateFloatAsState(
-        targetValue = target.toFloat(),
+): Long {
+    // Compose animates whole numbers as an Int, and a Float would give away the
+    // last digits of a large total, so the animation runs on an Int clamped to its
+    // own range and the answer goes back out as the Long the caller handed over.
+    // No line total in a food order is near two billion paisa; the clamp is here so
+    // that "near" could never become "wrong".
+    val bounded = if (target > Int.MAX_VALUE.toLong()) {
+        Int.MAX_VALUE
+    } else if (target < Int.MIN_VALUE.toLong()) {
+        Int.MIN_VALUE
+    } else {
+        target.toInt()
+    }
+    val animated by animateIntAsState(
+        targetValue = bounded,
         animationSpec = tween(
             durationMillis = UndalMotion.Quick,
             easing = FastOutSlowInEasing
@@ -168,8 +185,8 @@ fun rememberUndalCountUp(
         label = "undal-count-up"
     )
     if (!motionEnabled) return target
-    val counted = animated.roundToInt()
     // A count that overshoots its own total, however briefly, is a price that was
     // never charged. It cannot with this easing, and it must not be allowed to.
-    return if (target >= 0) minOf(counted, target) else maxOf(counted, target)
+    val settled = if (bounded >= 0) minOf(animated, bounded) else maxOf(animated, bounded)
+    return settled.toLong()
 }
