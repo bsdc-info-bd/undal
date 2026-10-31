@@ -259,9 +259,24 @@ function couponStrip(coupons: CouponBoardEntry[], now = Date.now()): string {
  * shop. So the artwork is always in the markup, hidden behind the photo, and the
  * photo reveals it if it fails to load. No empty boxes, whatever the network says.
  */
-function foodArt(imageUrl: string): string {
+function foodArt(imageUrl: string, position = 0): string {
+  // The first dishes on the menu are above the fold on a phone, and the largest
+  // of them is the page's LCP element. A lazy attribute on those makes the
+  // browser wait for layout before it even asks for the picture, which is how a
+  // fast page scores slowly: the same attribute that saves fifty requests on the
+  // fortieth card costs three hundred milliseconds on the first. Eager below the
+  // fold line, lazy above it, and the very first picture asked for at high
+  // priority. A browser that has not heard of fetchpriority ignores it.
+  //
+  // (No backticks in this comment: the compatibility gate reads the text between
+  // backticks in this file as the browser's own script, and a quotation in a
+  // comment would move that boundary and make it read the Worker's TypeScript as
+  // JavaScript. It did, and it failed on every const in the file.)
+  const eager = position < 3;
+  const priority = position === 0 ? ` fetchpriority="high"` : "";
   const photo = imageUrl
-    ? `<img src="${escapeHtml(imageUrl)}" alt="" loading="lazy" decoding="async" width="480" height="360" ` +
+    ? `<img src="${escapeHtml(imageUrl)}" alt="" loading="${eager ? "eager" : "lazy"}" decoding="async" ` +
+      `width="480" height="360"${priority} ` +
       `onerror="this.style.display='none';var host=this.parentNode;if(host){host.className='food-art no-photo';}">`
     : "";
   return `<div class="food-art${imageUrl ? "" : " no-photo"}">${photo}` +
@@ -272,7 +287,7 @@ function itemCard(item: WebItem, sectionName: string, position = 0): string {
   // A stagger the eye reads as "these arrived together", not a queue. Capped, so
   // the fortieth card on a long menu is not still fading in two seconds later.
   const step = Math.min(position, 9);
-  const image = foodArt(item.imageUrl);
+  const image = foodArt(item.imageUrl, position);
   const tags: string[] = [];
   if (item.kind === "dish" && item.veg) tags.push(`<span class="tag">Veg</span>`);
   if (item.discountAmountPaisa > 0) tags.push(`<span class="tag off">Save ${formatPaisa(item.discountAmountPaisa)}</span>`);
@@ -488,6 +503,11 @@ export async function handleStoreItem(env: Env, request: Request, id: string): P
 <article class="item-detail reveal" aria-labelledby="dish-title">
   <div class="item-photo">${item.imageUrl
     ? `<img class="hero" src="${escapeHtml(item.imageUrl)}" alt="${escapeHtml(item.name)}" ` +
+      // The photograph of the dish is the reason this page was opened, and it is
+      // the largest thing on it: asked for first, at high priority, with the
+      // dimensions the stylesheet already uses, so the text below it does not
+      // move when it arrives.
+      `width="960" height="960" fetchpriority="high" decoding="async" ` +
       `onerror="this.style.display='none';var host=this.parentNode;if(host){host.className='item-photo no-photo';}">` +
       `<div class="food-placeholder" aria-hidden="true"><span>♨</span><small>From our kitchen</small></div>`
     : `<div class="food-placeholder" aria-hidden="true"><span>♨</span><small>From our kitchen</small></div>`}</div>

@@ -227,3 +227,105 @@ Next: PR CI/source integration, followed by native instrumentation, screenshots,
 - Replaced the map picker's long-press-only feel with direct touch-and-drag from the marker, plus map tap and long-press placement. A larger 320dp picker frame and single current-location affordance improve visibility. Pin drags are handled in the map view and release at the selected coordinates; address persistence and confirmation rules are unchanged.
 - Updated both customer and kitchen pin-picker surfaces to the larger frame. No pricing, order, notification or backend contract changed.
 - Static checks run for this follow-up: 26 theme contrast pairs, Kotlin shape/import contracts and `git diff --check` pass. The local Gradle attempt could not start because no Java/JDK is installed; no Android compile, screenshot, emulator or live-map QA is claimed. Device verification remains a release gate.
+
+## Web motion, dark theme, Pages and prerendering — 31 October 2026
+
+This batch is the website and the edge around it. No Android source changed, and
+no FCM payload, alert-lifecycle, pricing or Firebase-rule behaviour changed.
+
+### Foundations the site now has
+
+- `worker/src/util/kv.ts`: one gateway in front of every KV read and write — a
+  per-isolate memo, single-flight on cold reads (including the seven-read Firestore
+  menu rebuild), a brake on optional writes, and `kv.usage` / `kv.savings`
+  counters published at `/healthz`. Nine call sites were routed through it: the
+  menu, the vendor uid, the re-alert cursor, the opening reminder, presence,
+  cleanup, the release record, chat throttling and the store API.
+- Rate limiting is memory-first and escalates to KV only past 60% of a limit.
+  It used to cost one read **and one write per request**, which was the single
+  largest consumer of the free tier's 1,000 daily writes at zero traffic.
+- The re-alert cron now writes and deletes its cursor only when it has something
+  to say: ~1,440 writes and ~1,440 deletes a day, at any traffic level, became
+  none when nothing is waiting.
+- `worker/src/util/page-cache.ts`: the Cache API in front of every public page,
+  keyed by URL plus the basket cookie's fingerprint, 30 s for the storefront with
+  900 s stale-while-revalidate, never storing a `set-cookie` or a `no-store`,
+  reporting itself in `x-undal-edge`.
+- `pageVary` no longer reads Cloudflare's own `__cf_bm`, `cf_clearance`,
+  `_cfuvid`, `__cfruid` and `cf_chl_*` as a customer's identity. Bot Management
+  sets `__cf_bm` on the first request from any browser with JavaScript, so the
+  cache had been answering `curl` and rendering for every human being.
+
+### The storefront's motion and theme layer
+
+- `worker/src/web/motion.ts`: one token set, two palettes. Dark mode is additive —
+  no light-mode declaration in the repository changed value — and is applied both
+  to an explicit `data-undal-theme="dark"` and to `prefers-color-scheme: dark`
+  until the customer chooses. Contrast measured at 7.7–8.3:1 on the dark pairs.
+  Reading-position bar, sticky glass nav, capped scroll-reveal stagger, a shimmer
+  under a photograph that is still travelling, ripples, toasts, a basket bar
+  within reach of the thumb, the flight of a dish into it, cross-document view
+  transitions. Every decoration is off under `prefers-reduced-motion`, and a
+  reveal hides a card only when the script has said it can show it again, so a
+  browser without `IntersectionObserver` sees the whole menu.
+- `worker/src/web/motion-client.ts`: the browser half, in the ES5 dialect
+  `tools/check-web-compat.mjs` enforces, feature-tested end to end (passive
+  listeners behind a `passive` probe, `requestAnimationFrame` with a timer
+  fallback) and silent under reduced motion.
+- The theme is decided by an inline head script before the first paint and the
+  toggle is a server-rendered button with `aria-pressed`.
+- The four facts a customer asks before reading a dish name — fee per kilometre,
+  radius, minimum order, cash on delivery — are a `dl` above the menu, from the
+  live store document.
+- Largest-contentful-paint discipline: the first three photographs eager and the
+  first at high priority, the rest lazy, the dish page's own photograph square
+  with its space reserved, and both photo hosts preconnected.
+
+### The website moved to Cloudflare Pages
+
+`web/` is a Pages project whose one catch-all Function calls the router the
+Worker has always run. The build renders every public page in the sitemap with
+that router and writes it to `web/public/`, per origin, stamped with when and
+from what. An anonymous GET is answered from the file; a basket, a session, an
+`Authorization` header, a POST or an `/api/` call is rendered; a failed render
+falls back to a stale snapshot rather than an error page. `/store/`, `//store`
+and `/store/index.html` are now one address. `docs/PAGES-AND-PRERENDER.md` is
+the operator's document: what moved, what a page costs, which header to read,
+and what a customer sees in each of ten failure modes.
+
+The Worker kept every route it had — the crons, the FCM relay, the app's base
+URL and its own copy of the web routes, which is the fallback and the preview.
+
+### New pages, and a fixed one
+
+- HTML 404 and 500 pages, negotiated: a browser gets a page with four ways back
+  to the menu, the app and every webhook keep the JSON they parse. Both are
+  `noindex`. The storefront's own "we couldn't reach the kitchen" 503 stays the
+  storefront's.
+- `/apple-touch-icon.png` was exempted from the rate limiter and then answered
+  404, so every home-screen bookmark was a screenshot. It is the 180px drawing
+  now, and the head links to it.
+
+### Checks actually run for this batch
+
+- 260 Worker tests: pass. 34 of them are new — 13 on the motion layer (run
+  against the real markup and the real script, on a virtual clock), 21 on Pages
+  (including the build script run end to end into a temporary directory), plus
+  the Core Web Vitals and error-page assertions.
+- Worker TypeScript no-emit check: pass, now including `web/functions` and
+  `web/src`.
+- Storefront gates: browser dialect, shared money/distance/validation rules,
+  coupon parity, alert ladder, no-unfinished-work (243 files, `web/` added): pass.
+- The Pages build itself: 80 snapshots from the published catalogue, no failures,
+  every manifest entry on disk, every sitemap URL that may be a file a file.
+
+### Not run / not certified for this batch
+
+No deployment was performed. `wrangler pages deploy`, the custom-domain path,
+Cloudflare's real `ASSETS` binding, the real `_headers`/`_redirects`/`_routes.json`
+processing and the real `__cf_bm` cookie have not been exercised against a live
+Pages project — the Function is tested against a stand-in for `ASSETS` and the
+rules are asserted as configuration. Lighthouse, real Chromium screenshots,
+`tools/check-design-browser.cjs` and the dark palette on a calibrated screen are
+outstanding. Native Android compilation and device QA remain outstanding, and
+this batch changed no Kotlin.

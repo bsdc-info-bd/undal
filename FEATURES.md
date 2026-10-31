@@ -218,7 +218,7 @@ Legend: `[x]` shipped and wired · `[ ]` still to ship.
 - [x] V-109 · Vendor inbox mirroring the kitchen alert history
 - [x] V-110 · One-tap share of the store link
 
-## P · Platform, web, deep links and delivery (72)
+## P · Platform, web, deep links and delivery (87)
 
 - [x] P-001 · Single-deploy Cloudflare Worker architecture (router, routes, crons in one bundle)
 - [x] P-002 · FCM HTTP v1 with service-account OAuth2 (RS256 JWT minted in Web Crypto, token cached in KV)
@@ -302,9 +302,27 @@ Legend: `[x]` shipped and wired · `[ ]` still to ship.
 - [x] P-071 · One synchronous answer to "is this phone the kitchen", read by the alert watchdog, the boot receiver, the push handler and the fifteen-minute heartbeat — no `Task` read as though `getResult()` waited for it
 - [x] P-072 · The role read off the ID token by the router corrects the role the session guessed at, so a kitchen phone never spends the first second of a cold start as a customer's
 
+### The website on Pages, prerendered (P-073 … P-087)
+
+- [x] P-073 · The customer website runs on Cloudflare Pages: one catch-all Function calls the same router the Worker calls, and the artwork, manifest and service worker are excluded from Functions entirely, so a page load costs no invocation for its own files
+- [x] P-074 · Every public page in the sitemap is prerendered at deploy time by the production router — the route list *is* the sitemap, so a dish cannot be advertised to Google and absent from the build — per origin, so a custom domain never inherits a pages.dev canonical URL
+- [x] P-075 · A snapshot answers only a request with no cookies at all: a basket, a session or an `Authorization` header is rendered, because both cookies are `HttpOnly` and no script can put a customer's basket back into a file
+- [x] P-076 · When a live render fails and a snapshot exists, the customer gets a menu from five minutes ago (`x-undal-prerender: stale`, cached thirty seconds) instead of an error page
+- [x] P-077 · Cloudflare's own cookies — `__cf_bm`, `cf_clearance`, `_cfuvid`, `__cfruid`, `cf_chl_*` — are not identity, so the fast path serves browsers and not only `curl`
+- [x] P-078 · Cache API edge page cache keyed by the basket cookie, 30 s for the storefront with 900 s stale-while-revalidate, never storing a `set-cookie` or a `no-store`, and reporting itself in `x-undal-edge`
+- [x] P-079 · A KV gateway in front of every namespace read and write: a per-isolate memo, single-flight on cold reads, a write brake on optional writes, and `kv.usage` / `kv.savings` published at `/healthz` so the budget is a number rather than a surprise
+- [x] P-080 · Rate limiting is memory-first and escalates to KV only past 60% of a limit, which removed a KV read *and* a KV write from every request the site serves
+- [x] P-081 · The re-alert cursor writes and deletes only when it has something to say: a cron that ran 1,440 times a day against an empty KV now costs nothing at all when nothing is waiting
+- [x] P-082 · A dark theme that is an additive palette — no light-mode declaration changed value — decided by an inline head script before the first paint, following the system until the customer chooses, remembered after that, and toggled by a real button with `aria-pressed`
+- [x] P-083 · A motion layer: scroll reveals with a capped stagger, a shimmer under a photograph that is still travelling, ripples, toasts that Escape dismisses, a reading-position bar, a sticky nav that knows it is stuck, a basket bar within reach of the thumb, the flight of a dish into it, and cross-document view transitions — every decoration off under `prefers-reduced-motion`, and every one of them tested against the real markup on a virtual clock
+- [x] P-084 · The four facts a customer asks before reading a dish name — fee per kilometre, radius, minimum order, cash on delivery — as a definition list above the menu, from the live store document
+- [x] P-085 · HTML 404 and 500 pages, negotiated: a browser gets a page with four ways back to the menu, the app and every webhook keep the JSON they already parse, and both are `noindex`
+- [x] P-086 · One canonical address per page: `/store/`, `//store` and `/store/index.html` are a 301 to `/store` with the query string intact — never on a POST, because a 301 may drop the body of the no-JavaScript basket form
+- [x] P-087 · Largest-contentful-paint discipline: the first three photographs eager and the first at high priority, the rest lazy, the dish page's own photograph square with its space reserved, and both photo hosts preconnected before a picture is asked for
+
 ---
 
 ## How to read this file between responses
 
 The task owner can say **`Status`** at any time and the count above is the
-answer: how many of the 256 features are actually shipped and wired.
+answer: how many of the 278 features are actually shipped and wired.

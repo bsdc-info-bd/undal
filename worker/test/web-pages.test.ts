@@ -454,3 +454,46 @@ test("the image policy names every host a seeded dish photo can come from", asyn
     "img-src must allow the kitchen's own Cloudinary uploads");
   assert.match(imgSrc, /'self'/);
 });
+
+test("the first dishes are asked for first, and the photo host is already connected", async () => {
+  // A menu with photographs, because a menu without them has no LCP element to
+  // measure and nothing to get wrong.
+  const photoMenu: WebMenu = {
+    ...menu,
+    dishes: [0, 1, 2, 3, 4].map((index) => ({
+      ...menu.dishes[0]!,
+      id: `dish-${index}`,
+      name: `Dish ${index}`,
+      imageUrl: `https://res.cloudinary.com/fake/image/upload/dish-${index}.webp`,
+    })),
+  };
+  const photoEnv = { UNDAL_KV: { get: async () => photoMenu } } as unknown as Env;
+  const html = await (await handleStoreFront(photoEnv, new Request("https://undal.test/store"))).text();
+
+  const images = [...html.matchAll(/<img src="[^"]+"[^>]*>/g)].map((match) => match[0]);
+  assert.ok(images.length >= 5, `the grid has ${images.length} photographs`);
+  assert.match(images[0]!, /loading="eager"/);
+  assert.match(images[0]!, /fetchpriority="high"/, "the largest thing above the fold is asked for first");
+  assert.match(images[2]!, /loading="eager"/);
+  assert.doesNotMatch(images[3]!, /loading="eager"/, "below the fold a lazy picture is a faster page");
+  assert.match(images[3]!, /loading="lazy"/);
+  assert.doesNotMatch(images[4]!, /fetchpriority/);
+  for (const image of images) {
+    assert.match(image, /width="480" height="360"/, "the space is reserved before the bytes arrive");
+    assert.match(image, /decoding="async"/);
+  }
+
+  // The dish page's own photograph is the reason the page was opened, and it is
+  // square because the stylesheet says so — a width and height that disagree
+  // with the CSS would move the price when the picture landed.
+  const detail = await (await handleStoreItem(photoEnv, new Request("https://undal.test/item/dish-0"), "dish-0")).text();
+  assert.match(detail, /<img class="hero"[^>]*fetchpriority="high"/);
+  assert.match(detail, /<img class="hero"[^>]*width="960" height="960"/);
+  assert.match(detail, /<img class="hero"[^>]*decoding="async"/);
+
+  // Both hosts a dish photo can live on are connected before the first picture is
+  // asked for: a TLS handshake is a wait a customer would otherwise pay twice.
+  assert.match(html, /<link rel="preconnect" href="https:\/\/res\.cloudinary\.com" crossorigin>/);
+  assert.match(html, /<link rel="preconnect" href="https:\/\/sylhetbites\.pages\.dev" crossorigin>/);
+  assert.match(html, /<link rel="dns-prefetch" href="https:\/\/sylhetbites\.pages\.dev">/);
+});

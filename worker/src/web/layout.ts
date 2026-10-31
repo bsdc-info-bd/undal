@@ -139,6 +139,8 @@ ${options.ogImage ? `<meta name="twitter:image" content="${escapeHtml(options.og
 <link rel="manifest" href="/manifest.webmanifest">
 <link rel="preconnect" href="https://tile.openstreetmap.org" crossorigin>
 <link rel="preconnect" href="https://res.cloudinary.com" crossorigin>
+<link rel="preconnect" href="https://sylhetbites.pages.dev" crossorigin>
+<link rel="dns-prefetch" href="https://sylhetbites.pages.dev">
 ${options.jsonLd ?? ""}
 <script>${THEME_BOOT_SCRIPT}</script>
 <style>${STYLE}
