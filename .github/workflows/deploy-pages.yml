@@ -147,7 +147,11 @@ jobs:
           sed -i "s|REPLACE_CLOUDINARY_CLOUD_NAME|${CLOUDINARY_CLOUD_NAME:-}|g" web/wrangler.toml
           sed -i "s|REPLACE_GITHUB_REPO_SLUG|${GITHUB_REPO_SLUG}|g" web/wrangler.toml
           sed -i "s|REPLACE_FIREBASE_WEB_API_KEY|${FIREBASE_WEB_API_KEY:-}|g" web/wrangler.toml
-          if grep -n "REPLACE_" web/wrangler.toml; then
+          # Only a *value* line may still carry a placeholder. This guard used to
+          # match any line, and the file's own header comment explains what gets
+          # substituted here — so the deploy failed on its own documentation, on
+          # every run, before it ever reached Cloudflare.
+          if grep -n "REPLACE_" web/wrangler.toml | grep -v "^[0-9]*:[[:space:]]*#"; then
             echo "web/wrangler.toml still has an unsubstituted value." >&2
             exit 1
           fi
