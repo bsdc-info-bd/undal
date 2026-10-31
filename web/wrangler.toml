@@ -33,7 +33,7 @@ pages_build_output_dir = "public"
 
 [vars]
 # The same non-secret configuration the Worker runs with, because it is the same
-# code. Values marked REPLACE_* are substituted by
+# code. The four placeholder values below are substituted by
 # .github/workflows/deploy-pages.yml from repository secrets; secrets themselves
 # (FIREBASE_SA_JSON, FIREBASE_RTDB_URL, APP_SIGNING_SHA256,
 # RELEASE_WEBHOOK_SECRET) are pushed with `wrangler pages secret put`.
