@@ -192,6 +192,22 @@ test("a basket belongs to the customer, so the page is rendered", async () => {
   assert.doesNotMatch(body, /a snapshot of the menu/);
 });
 
+test("a filtered menu is rendered, because the file is of the whole menu", async () => {
+  // `/store?q=bhaji` and `/store?section=rice` are different pages from `/store`.
+  // The snapshot is of the unfiltered menu, so serving it for a query is a search
+  // that silently does nothing: the customer asks for one dish and is handed every
+  // dish, with no way to know they were ignored.
+  const searched = await serve("/store?q=kacchi");
+  assert.equal(searched.response.status, 200);
+  assert.equal(searched.response.headers.get(PRERENDER_HEADER), "bypass");
+  assert.match(searched.body, /Kacchi biryani/, "the live menu, through the router that reads the query");
+  assert.doesNotMatch(searched.body, /a snapshot of the menu/);
+
+  const filtered = await serve("/store?section=rice");
+  assert.equal(filtered.response.headers.get(PRERENDER_HEADER), "bypass");
+  assert.doesNotMatch(filtered.body, /a snapshot of the menu/);
+});
+
 test("a session is never answered from a file", async () => {
   const { response } = await serve("/store", { cookie: "undal_session=abc123" });
   assert.equal(response.headers.get(PRERENDER_HEADER), "bypass");
