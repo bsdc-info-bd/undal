@@ -42,6 +42,8 @@ const BROWSER_FILES = [
   "worker/src/web/download-page.ts",
   "worker/src/web/layout.ts",
   "worker/src/web/design.ts",
+  "worker/src/web/motion.ts",
+  "worker/src/web/motion-client.ts",
   "worker/src/web/pwa.ts",
 ];
 

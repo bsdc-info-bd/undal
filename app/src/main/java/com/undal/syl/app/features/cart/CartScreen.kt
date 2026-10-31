@@ -65,6 +65,7 @@ import com.undal.syl.app.core.design.UndalAlertBanner
 import com.undal.syl.app.core.design.UndalAdaptivePair
 import com.undal.syl.app.core.design.UndalReadingColumn
 import com.undal.syl.app.core.design.UndalSectionHeader
+import com.undal.syl.app.core.design.rememberUndalCountUp
 import com.undal.syl.app.core.design.UndalCard
 import com.undal.syl.app.core.design.UndalConfirmDialog
 import com.undal.syl.app.core.design.UndalEmptyState
@@ -674,7 +675,12 @@ private fun CartLineRow(
                             enabled = !unavailable
                         )
                         Text(
-                            text = Money.format(line.lineTotalPaisa),
+                            // A line total that changes while a customer reads it
+                            // counts to its new value instead of jumping: the eye
+                            // follows the count and lands on the answer. The paisa
+                            // are formatted by the app's own Money, and with the
+                            // system's animations off this is simply the number.
+                            text = Money.format(rememberUndalCountUp(line.lineTotalPaisa)),
                             style = MaterialTheme.typography.titleSmall
                         )
                         TextButton(onClick = onRemove) { Text("Remove", color = MaterialTheme.colorScheme.error) }

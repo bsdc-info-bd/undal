@@ -1,0 +1,16 @@
+# ---------------------------------------------------------------------------
+# Undal customer website — Cloudflare Pages redirects
+#
+# One address per page. The build appends a rule for every snapshot it writes
+# (`/store/index.html` → `/store`), and `web/src/serve.ts` redirects the same
+# shapes for any path the Function serves, so this file is the belt to that
+# brace: a `public/` directory hosted anywhere else still has one canonical URL
+# per page, and a crawler that guesses `index.html` is told where the real one is
+# instead of being shown the same menu twice.
+#
+# Nothing here redirects a POST. Undal's no-JavaScript ordering path posts to
+# /basket/add and /checkout/place, and a 301 is allowed to drop the body of a
+# POST — a customer's basket is not something to gamble on a status code.
+# ---------------------------------------------------------------------------
+
+/index.html  /  301

@@ -129,6 +129,31 @@ function catalogueFor(menu: WebMenu): Record<string, unknown> {
   return catalogue;
 }
 
+/**
+ * The four numbers a customer asks about before they read a single dish name.
+ *
+ * Everything here comes from the kitchen's own store document — the fee per
+ * kilometre, the radius it delivers inside, the smallest order it accepts and the
+ * only way it takes payment. It is a `<dl>` because that is what it is: four
+ * labelled facts, readable with the stylesheet switched off and announced as
+ * pairs by a screen reader.
+ */
+function factsStrip(store: WebStoreConfig | null): string {
+  if (!store) return "";
+  const facts: Array<[string, string]> = [
+    ["Delivery", `${formatPaisa(store.deliveryPerKmAmountPaisa)} per km`],
+    ["Radius", `${store.radiusKm} km from the kitchen`],
+    ["Minimum order", formatPaisa(store.minOrderAmountPaisa)],
+    ["Payment", "Cash on delivery"],
+  ];
+  return `<dl class="undal-facts reveal">${facts
+    .map(
+      ([label, value], position) =>
+        `<div style="--i:${Math.min(position, 4)}"><dt>${escapeHtml(label)}</dt><dd>${escapeHtml(value)}</dd></div>`,
+    )
+    .join("")}</dl>`;
+}
+
 function statusBanner(store: WebStoreConfig | null): string {
   if (!store) {
     return `<div class="notice">The kitchen has not published its store document yet. Browsing works; ordering will be refused until it does.</div>`;
@@ -144,7 +169,7 @@ function statusBanner(store: WebStoreConfig | null): string {
     : status.reason === "paused"
       ? `${status.detail} You can still browse the menu.`
       : `${status.detail} You can still browse the menu and fill your basket.`;
-  return `<section class="card store-status" aria-label="Kitchen and delivery information">
+  return `<section class="card store-status reveal" aria-label="Kitchen and delivery information">
   <span class="pill ${open ? "open" : "closed"}">${escapeHtml(status.headline)}</span>
   <h2 style="margin-top:10px">${escapeHtml(store.storeName)}</h2>
   <p class="muted" style="margin-top:0">${escapeHtml(store.storeAddressText)}</p>
@@ -206,7 +231,7 @@ function couponStrip(coupons: CouponBoardEntry[], now = Date.now()): string {
   const cards = visible
     .slice(0, 3)
     .map(
-      (coupon) => `<div class="coupon-banner">
+      (coupon, position) => `<div class="coupon-banner reveal" style="--i:${Math.min(position, 3)}">
   <div>
     <span class="eyebrow">Undal offer</span>
     <h3>${escapeHtml(couponHeadline(coupon.type, coupon.value, coupon.maxDiscountPaisa))}</h3>
@@ -220,7 +245,7 @@ function couponStrip(coupons: CouponBoardEntry[], now = Date.now()): string {
 </div>`,
     )
     .join("");
-  return `<section class="coupon-strip" aria-label="Offers running today">${cards}</section>`;
+  return `<section class="coupon-strip reveal" aria-label="Offers running today">${cards}</section>`;
 }
 
 /**
@@ -234,17 +259,35 @@ function couponStrip(coupons: CouponBoardEntry[], now = Date.now()): string {
  * shop. So the artwork is always in the markup, hidden behind the photo, and the
  * photo reveals it if it fails to load. No empty boxes, whatever the network says.
  */
-function foodArt(imageUrl: string): string {
+function foodArt(imageUrl: string, position = 0): string {
+  // The first dishes on the menu are above the fold on a phone, and the largest
+  // of them is the page's LCP element. A lazy attribute on those makes the
+  // browser wait for layout before it even asks for the picture, which is how a
+  // fast page scores slowly: the same attribute that saves fifty requests on the
+  // fortieth card costs three hundred milliseconds on the first. Eager below the
+  // fold line, lazy above it, and the very first picture asked for at high
+  // priority. A browser that has not heard of fetchpriority ignores it.
+  //
+  // (No backticks in this comment: the compatibility gate reads the text between
+  // backticks in this file as the browser's own script, and a quotation in a
+  // comment would move that boundary and make it read the Worker's TypeScript as
+  // JavaScript. It did, and it failed on every const in the file.)
+  const eager = position < 3;
+  const priority = position === 0 ? ` fetchpriority="high"` : "";
   const photo = imageUrl
-    ? `<img src="${escapeHtml(imageUrl)}" alt="" loading="lazy" decoding="async" width="480" height="360" ` +
+    ? `<img src="${escapeHtml(imageUrl)}" alt="" loading="${eager ? "eager" : "lazy"}" decoding="async" ` +
+      `width="480" height="360"${priority} ` +
       `onerror="this.style.display='none';var host=this.parentNode;if(host){host.className='food-art no-photo';}">`
     : "";
   return `<div class="food-art${imageUrl ? "" : " no-photo"}">${photo}` +
     `<div class="food-placeholder" aria-hidden="true"><span>♨</span><small>From our kitchen</small></div></div>`;
 }
 
-function itemCard(item: WebItem, sectionName: string): string {
-  const image = foodArt(item.imageUrl);
+function itemCard(item: WebItem, sectionName: string, position = 0): string {
+  // A stagger the eye reads as "these arrived together", not a queue. Capped, so
+  // the fortieth card on a long menu is not still fading in two seconds later.
+  const step = Math.min(position, 9);
+  const image = foodArt(item.imageUrl, position);
   const tags: string[] = [];
   if (item.kind === "dish" && item.veg) tags.push(`<span class="tag">Veg</span>`);
   if (item.discountAmountPaisa > 0) tags.push(`<span class="tag off">Save ${formatPaisa(item.discountAmountPaisa)}</span>`);
@@ -257,7 +300,7 @@ function itemCard(item: WebItem, sectionName: string): string {
   // A card is a link *and* a form: tapping the picture opens the dish, tapping
   // "Add" puts it in the basket. With the script alive the form never navigates;
   // without it, the same tap posts to /basket/add and the basket still exists.
-  return `<div class="item">
+  return `<div class="item reveal" style="--i:${step}">
 <a class="cover" href="/item/${item.id}">
 ${image}
 <div class="body">
@@ -307,15 +350,24 @@ export async function handleStoreFront(env: Env, request: Request): Promise<Resp
   const sections = populatedSections(menu);
   const sectionNames = new Map(menu.sections.map((section) => [section.id, section.name]));
 
+  // A chip row with no "everything" entry is a one-way door: filter to Rice on a
+  // phone and the only way back to the whole menu is the nav bar or the address
+  // bar. So the row starts with the way back, and every chip ends at the menu
+  // heading — a filter that drops the reader back on the hero is a filter that
+  // makes them scroll past the same picture twice to see what they asked for.
+  const totalChoices = menu.dishes.length + menu.combos.length;
+  const everythingChip =
+    `<a class="${sectionId || search ? "" : "active"}" href="/store#menu">Everything · ${totalChoices}</a>`;
+
   const chips = sections
     .map(
       (section) =>
-        `<a class="${sectionId === section.id ? "active" : ""}" href="/store?section=${encodeURIComponent(section.id)}">` +
+        `<a class="${sectionId === section.id ? "active" : ""}" href="/store?section=${encodeURIComponent(section.id)}#menu">` +
         `${escapeHtml(section.name)} · ${section.count}</a>`,
     )
     .join("");
   const comboChip = menu.combos.length
-    ? `<a class="${sectionId === "combos" ? "active" : ""}" href="/store?section=combos">Combos · ${menu.combos.length}</a>`
+    ? `<a class="${sectionId === "combos" ? "active" : ""}" href="/store?section=combos#menu">Combos · ${menu.combos.length}</a>`
     : "";
 
   const liveCampaign = menu.campaigns.find(
@@ -330,11 +382,29 @@ export async function handleStoreFront(env: Env, request: Request): Promise<Resp
 </section>`
     : "";
 
+  // What is on screen, in words, with the one tap that undoes it. A filtered page
+  // that quietly got shorter is the classic "did that work?" on a phone: the count
+  // and the words make the filter legible without a heading of its own.
+  const filterNote = sectionId || search
+    ? `<p class="filter-note">Showing ${items.length} ${items.length === 1 ? "choice" : "choices"}` +
+      `${search ? ` for “${escapeHtml(search)}”` : ""}` +
+      `${
+        sectionId
+          ? ` in ${escapeHtml(
+              sectionId === "combos" ? "Combos" : sectionNames.get(sectionId) ?? "the menu",
+            )}`
+          : ""
+      }` +
+      ` · <a href="/store#menu">show everything</a></p>`
+    : "";
+
   const grid = items.length
     ? `<div class="grid">${items
-        .map((item) => itemCard(item, sectionNames.get(item.kind === "dish" ? item.categoryId : "") ?? "Combos"))
+        .map((item, position) =>
+          itemCard(item, sectionNames.get(item.kind === "dish" ? item.categoryId : "") ?? "Combos", position),
+        )
         .join("")}</div>`
-    : `<div class="notice">Nothing matches that search. <a href="/store">Show the whole menu</a>.</div>`;
+    : `<div class="notice">Nothing matches that search. <a href="/store#menu">Show the whole menu</a>.</div>`;
 
   const sortLinks = (
     [
@@ -348,7 +418,7 @@ export async function handleStoreFront(env: Env, request: Request): Promise<Resp
       const query = new URLSearchParams({ sort: key });
       if (sectionId) query.set("section", sectionId);
       if (search) query.set("q", search);
-      return `<a class="${sort === key ? "active" : ""}" href="/store?${query.toString()}">${label}</a>`;
+      return `<a class="${sort === key ? "active" : ""}" href="/store?${query.toString()}#menu">${label}</a>`;
     })
     .join("");
 
@@ -378,17 +448,20 @@ ${addedNotice}
 ${couponStrip(menu.coupons ?? [])}
 ${statusBanner(menu.store)}
 ${campaignCard}
+${factsStrip(menu.store)}
 <div class="menu-heading" id="menu"><h2>What sounds good today?</h2><p class="muted">${items.length} menu choices · Find your favourite</p></div>
-<form class="search" action="/store" method="get" role="search">
+<form class="search" action="/store#menu" method="get" role="search">
   <input type="search" name="q" value="${escapeHtml(search)}" placeholder="Search the menu — bhorta, chicken, tea…" aria-label="Search the menu">
   ${sectionId ? `<input type="hidden" name="section" value="${escapeHtml(sectionId)}">` : ""}
   <button class="button" type="submit" style="margin:0;padding:12px 18px">Search</button>
 </form>
 <nav class="chips" aria-label="Menu categories">
+  ${everythingChip}
   ${chips}
   ${comboChip}
 </nav>
 <nav class="chips" aria-label="Sort menu">${sortLinks}</nav>
+${filterNote}
 ${grid}
 <p class="smallprint" style="margin-top:16px">Prices are per dish and include nothing else. The delivery fee is added at checkout from your pinned location, rounded up to whole kilometres.</p>`;
 
@@ -454,9 +527,14 @@ export async function handleStoreItem(env: Env, request: Request, id: string): P
 
   const body = `
 <a class="back-link" href="/store">← Back to the menu</a>
-<article class="item-detail" aria-labelledby="dish-title">
+<article class="item-detail reveal" aria-labelledby="dish-title">
   <div class="item-photo">${item.imageUrl
     ? `<img class="hero" src="${escapeHtml(item.imageUrl)}" alt="${escapeHtml(item.name)}" ` +
+      // The photograph of the dish is the reason this page was opened, and it is
+      // the largest thing on it: asked for first, at high priority, with the
+      // dimensions the stylesheet already uses, so the text below it does not
+      // move when it arrives.
+      `width="960" height="960" fetchpriority="high" decoding="async" ` +
       `onerror="this.style.display='none';var host=this.parentNode;if(host){host.className='item-photo no-photo';}">` +
       `<div class="food-placeholder" aria-hidden="true"><span>♨</span><small>From our kitchen</small></div>`
     : `<div class="food-placeholder" aria-hidden="true"><span>♨</span><small>From our kitchen</small></div>`}</div>

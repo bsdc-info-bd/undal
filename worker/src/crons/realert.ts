@@ -20,6 +20,7 @@ import type { Env } from "../env";
 import { fsQuery, type FsRecord } from "../firestore";
 import { raiseKitchenAlert } from "../alerting";
 import { formatPaisa } from "../util/money";
+import { memoDelete, memoGet, memoPut, type KvBinding } from "../util/kv";
 import { sweepAction, waitedMinutes } from "./alert-window";
 
 /** At most this many live orders are considered per sweep. */
@@ -54,7 +55,10 @@ export async function runRealertSweep(env: Env): Promise<RealertSweepResult> {
 
   // Rotate through the complete placed-order set, not the same first page.
   // Otherwise ten abandoned orders could permanently hide every new order.
-  const cursor = await env.UNDAL_KV.get(CURSOR_KEY).catch(() => null);
+  const binding = env.UNDAL_KV as KvBinding;
+  // No memo: this is the one value in the sweep that has to be exactly what the
+  // previous sweep left behind, in whichever isolate that was.
+  const cursor = await memoGet<string>(binding, CURSOR_KEY, { ttlMs: 0 });
   const outstanding = await fsQuery(env, {
     collectionId: "orders",
     where: [{ field: "status", op: "EQUAL", value: "placed" }],
@@ -64,7 +68,11 @@ export async function runRealertSweep(env: Env): Promise<RealertSweepResult> {
   });
   result.considered = outstanding.length;
   if (outstanding.length === 0) {
-    await env.UNDAL_KV.delete(CURSOR_KEY);
+    // `present`: this sweep runs 1,440 times a day, and a delete is billed like a
+    // write. Resetting a cursor that was never set spent the whole free daily
+    // delete allowance on nothing; now it costs an operation only after a sweep
+    // that actually paged past a full batch.
+    await memoDelete(binding, CURSOR_KEY, { required: true, present: cursor !== null });
     return result;
   }
 
@@ -141,9 +149,14 @@ export async function runRealertSweep(env: Env): Promise<RealertSweepResult> {
   }
 
   if (outstanding.length === SWEEP_LIMIT) {
-    await env.UNDAL_KV.put(CURSOR_KEY, `orders/${outstanding[outstanding.length - 1]!.id}`, { expirationTtl: 300 });
+    await memoPut(binding, CURSOR_KEY, `orders/${outstanding[outstanding.length - 1]!.id}`, {
+      expirationTtl: 300,
+      required: true,
+    });
   } else {
-    await env.UNDAL_KV.delete(CURSOR_KEY);
+    // The last page was short, so the rotation starts over — but only if there is
+    // a cursor to clear.
+    await memoDelete(binding, CURSOR_KEY, { required: true, present: cursor !== null });
   }
   return result;
 }

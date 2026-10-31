@@ -80,8 +80,14 @@ fun UndalPageIntro(
     subtitle: String,
     modifier: Modifier = Modifier
 ) {
+    // The intro is the first thing on the page, so it is the first thing to
+    // arrive — and it arrives only where the system is willing to animate. A
+    // phone with animations switched off gets this block already in place, on the
+    // very first frame, which is the difference between a reveal and content that
+    // never shows up.
+    UndalReveal(modifier = modifier.fillMaxWidth()) {
     Surface(
-        modifier = modifier.fillMaxWidth(),
+        modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(UndalDimens.radiusLg),
         color = MaterialTheme.colorScheme.primaryContainer
     ) {
@@ -103,6 +109,7 @@ fun UndalPageIntro(
             Text(subtitle, style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onPrimaryContainer)
         }
+    }
     }
 }
 

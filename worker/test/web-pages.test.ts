@@ -92,6 +92,19 @@ test("search retains the query and offers an empty-state recovery link", async (
   assert.match(html, /Show the whole menu/);
 });
 
+test("a filtered menu says what is on screen and how to undo it", async () => {
+  const html = await (await handleStoreFront(env, new Request("https://undal.test/store?q=rice"))).text();
+  assert.match(html, /class="filter-note">Showing \d+ choice/);
+  assert.match(html, /for \u201crice\u201d \u00b7 <a href="\/store#menu">show everything<\/a>/);
+});
+
+test("a section filter says which section it is showing", async () => {
+  const html = await (await handleStoreFront(env, new Request("https://undal.test/store?section=rice"))).text();
+  assert.match(html, /class="filter-note">Showing \d+ choice/);
+  assert.match(html, /in [^<\u00b7]+ \u00b7 <a href="\/store#menu">show everything<\/a>/);
+  assert.doesNotMatch(html, /<a class="active" href="\/store#menu">Everything/);
+});
+
 test("tracking uses the actual taka symbol rather than a literal unicode escape", async () => {
   const html = await (await handleOrderTracking("abc123")).text();
   assert.match(html, /replace\(\/\^\/, "৳ "\)/);
@@ -335,7 +348,7 @@ test("an expired sign-in at the order button is renewed once, not shown as a bar
 
 test("item detail pairs imagery and information without replacing its real add form", async () => {
   const html = await (await handleStoreItem(env, new Request("https://undal.test/item/rice"), "rice")).text();
-  assert.match(html, /<article class="item-detail" aria-labelledby="dish-title">/);
+  assert.match(html, /<article class="item-detail reveal" aria-labelledby="dish-title">/);
   assert.match(html, /<h2 id="dish-title">Rice &lt;script&gt;/);
   assert.match(html, /class="card item-information"/);
   assert.match(html, /class="undal-add undal-add-wide" method="post" action="\/basket\/add"/);
@@ -346,7 +359,7 @@ test("item detail pairs imagery and information without replacing its real add f
 test("sold-out detail offers recovery without exposing an add form", async () => {
   const soldOutEnv = { UNDAL_KV: { get: async () => ({ ...menu, dishes: menu.dishes.map(dish => ({ ...dish, available: false })) }) } } as unknown as Env;
   const html = await (await handleStoreItem(soldOutEnv, new Request("https://undal.test/item/rice"), "rice")).text();
-  const article = html.slice(html.indexOf('<article class="item-detail"'), html.indexOf('</article>'));
+  const article = html.slice(html.indexOf('<article class="item-detail'), html.indexOf('</article>'));
   assert.match(article, /not orderable right now/);
   assert.doesNotMatch(article, /<form/);
 });
@@ -453,4 +466,60 @@ test("the image policy names every host a seeded dish photo can come from", asyn
   assert.ok(allowed("https://res.cloudinary.com/undal/image/upload/v1/dishes/kabab.webp"),
     "img-src must allow the kitchen's own Cloudinary uploads");
   assert.match(imgSrc, /'self'/);
+});
+
+test("the first dishes are asked for first, and the photo host is already connected", async () => {
+  // A menu with photographs, because a menu without them has no LCP element to
+  // measure and nothing to get wrong.
+  const photoMenu: WebMenu = {
+    ...menu,
+    dishes: [0, 1, 2, 3, 4].map((index) => ({
+      ...menu.dishes[0]!,
+      id: `dish-${index}`,
+      name: `Dish ${index}`,
+      imageUrl: `https://res.cloudinary.com/fake/image/upload/dish-${index}.webp`,
+    })),
+  };
+  const photoEnv = { UNDAL_KV: { get: async () => photoMenu } } as unknown as Env;
+  const html = await (await handleStoreFront(photoEnv, new Request("https://undal.test/store"))).text();
+
+  const images = [...html.matchAll(/<img src="[^"]+"[^>]*>/g)].map((match) => match[0]);
+  assert.ok(images.length >= 5, `the grid has ${images.length} photographs`);
+  assert.match(images[0]!, /loading="eager"/);
+  assert.match(images[0]!, /fetchpriority="high"/, "the largest thing above the fold is asked for first");
+  assert.match(images[2]!, /loading="eager"/);
+  assert.doesNotMatch(images[3]!, /loading="eager"/, "below the fold a lazy picture is a faster page");
+  assert.match(images[3]!, /loading="lazy"/);
+  assert.doesNotMatch(images[4]!, /fetchpriority/);
+  for (const image of images) {
+    assert.match(image, /width="480" height="360"/, "the space is reserved before the bytes arrive");
+    assert.match(image, /decoding="async"/);
+  }
+
+  // The dish page's own photograph is the reason the page was opened, and it is
+  // square because the stylesheet says so — a width and height that disagree
+  // with the CSS would move the price when the picture landed.
+  const detail = await (await handleStoreItem(photoEnv, new Request("https://undal.test/item/dish-0"), "dish-0")).text();
+  assert.match(detail, /<img class="hero"[^>]*fetchpriority="high"/);
+  assert.match(detail, /<img class="hero"[^>]*width="960" height="960"/);
+  assert.match(detail, /<img class="hero"[^>]*decoding="async"/);
+
+  // Both hosts a dish photo can live on are connected before the first picture is
+  // asked for: a TLS handshake is a wait a customer would otherwise pay twice.
+  assert.match(html, /<link rel="preconnect" href="https:\/\/res\.cloudinary\.com" crossorigin>/);
+  assert.match(html, /<link rel="preconnect" href="https:\/\/sylhetbites\.pages\.dev" crossorigin>/);
+  assert.match(html, /<link rel="dns-prefetch" href="https:\/\/sylhetbites\.pages\.dev">/);
+});
+test("the menu can be filtered and un-filtered without losing the reader's place", async () => {
+  const html = await (await handleStoreFront(withKey(fullMenu), new Request("https://undal.test/store"))).text();
+  // The chip row starts with the way back. A category row with no "everything"
+  // entry is a one-way door on a phone, where the address bar is not a control.
+  assert.match(html, /<nav class="chips" aria-label="Menu categories">\s*<a class="active" href="\/store#menu">Everything \u00b7 2<\/a>/);
+  // And every filter lands on the food, not back on the hero.
+  assert.match(html, /href="\/store\?section=rice#menu">Rice plates \u00b7 1<\/a>/);
+  assert.match(html, /href="\/store\?section=combos#menu">Combos \u00b7 1<\/a>/);
+  assert.match(html, /href="\/store\?sort=price-asc#menu"/);
+  assert.match(html, /action="\/store#menu"/);
+  // An unfiltered menu has nothing to explain, so it explains nothing.
+  assert.doesNotMatch(html, /class="filter-note"/);
 });

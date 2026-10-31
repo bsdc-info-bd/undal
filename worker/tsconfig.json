@@ -16,5 +16,11 @@
     "skipLibCheck": true,
     "noEmit": true
   },
-  "include": ["src/**/*.ts"]
+  // The customer website on Pages is the same code as the Worker, so it is
+  // typechecked by the same compiler with the same settings. `web/scripts` is
+  // absent on purpose: it runs in Node, and @types/node and
+  // @cloudflare/workers-types disagree about `fetch`, `setTimeout` and `URL`.
+  // The build script is executed end to end by `worker/test/pages.test.ts`
+  // instead, which is a stronger check than a type would be.
+  "include": ["src/**/*.ts", "../web/functions/**/*.ts", "../web/src/**/*.ts"]
 }

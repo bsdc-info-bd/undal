@@ -214,6 +214,38 @@ export const MAP_SCRIPT = `
     function width() { return frame_.clientWidth || 320; }
     function height() { return frame_.clientHeight || 240; }
 
+    /**
+     * A map with no height is no map at all.
+     *
+     * The frame is overflow:hidden, so a collapsed frame clips every tile away and
+     * leaves the pin — which is centred on the frame — sitting on its top edge.
+     * That is the "pin stuck in the corner, nothing drags, it is a showpiece"
+     * failure, and it is a layout failure, not a map failure: the stylesheet gives
+     * the frame a height three ways over, but an engine that understands none of
+     * them, or a host that is still folded inside a collapsed container, hands back
+     * an empty box.
+     *
+     * So the map measures the frame it just built and writes a pixel height itself
+     * when the frame came back empty — on first paint and on every resize, where a
+     * rotation or an on-screen keyboard can hand the frame back collapsed. The
+     * numbers are the same ones the stylesheet asks for, so a browser that did
+     * understand it changes nothing.
+     */
+    function ensureFrameSize() {
+      if (destroyed) return;
+      if (frame_.clientHeight < 80) {
+        var viewport = window.innerHeight || 640;
+        var tall = Math.round(viewport * 0.44);
+        if (tall < 240) tall = 240;
+        if (tall > 420) tall = 420;
+        frame_.style.height = tall + "px";
+      }
+      if (frame_.clientWidth < 80) {
+        frame_.style.width = "100%";
+        frame_.style.minWidth = "240px";
+      }
+    }
+
     function setZoom(next) {
       zoom = clamp(Math.round(next), MIN_ZOOM, MAX_ZOOM);
       draw();
@@ -240,6 +272,7 @@ export const MAP_SCRIPT = `
     }
 
     function draw() {
+      ensureFrameSize();
       var w = width(), h = height();
       var origin = project(center.lat, center.lng, zoom);
       var left = origin.x - w / 2, top = origin.y - h / 2;
@@ -404,6 +437,30 @@ export const MAP_SCRIPT = `
     });
 
     // ---- dragging: one finger moves the map under the pin --------------------
+    /**
+     * The map moves under a pin that stays in the middle of the card.
+     *
+     * One function owns that movement so a pointer, a finger on an engine with no
+     * Pointer Events, and an arrow key all move the map by exactly the same
+     * amount: the projection is inverted from a pixel offset, and the tick is
+     * dropped because a pin that has moved is a pin that has not been chosen yet.
+     */
+    function panBy(dx, dy) {
+      invalidatePin();
+      var origin = project(center.lat, center.lng, zoom);
+      var next = unproject(origin.x - dx, origin.y - dy, zoom);
+      center = { lat: clamp(next.lat, -85.05, 85.05), lng: clamp(next.lng, -180, 180) };
+      if (confirmed) { confirmed = false; tick.classList.remove("ticked"); }
+    }
+
+    /** A drag repaints once per frame, however many moves arrive in it. */
+    function dragBy(dx, dy) {
+      panBy(dx, dy);
+      if (dragging) dragging.moved = true;
+      if (frame) cancelAnimationFrame(frame);
+      frame = requestAnimationFrame(draw);
+    }
+
     frame_.addEventListener("pointerdown", function (event) {
       if (dragging || event.isPrimary === false || (event.button != null && event.button !== 0)) return;
       if (event.target.closest && event.target.closest(".undal-map-controls")) return;
@@ -416,16 +473,9 @@ export const MAP_SCRIPT = `
       if (!dragging || event.pointerId !== dragging.pointerId) return;
       var dx = event.clientX - dragging.x, dy = event.clientY - dragging.y;
       if (Math.abs(dx) + Math.abs(dy) < 1) return;
-      invalidatePin();
-      dragging.moved = true;
       dragging.x = event.clientX;
       dragging.y = event.clientY;
-      var origin = project(center.lat, center.lng, zoom);
-      var next = unproject(origin.x - dx, origin.y - dy, zoom);
-      center = { lat: clamp(next.lat, -85.05, 85.05), lng: clamp(next.lng, -180, 180) };
-      if (confirmed) { confirmed = false; tick.classList.remove("ticked"); }
-      if (frame) cancelAnimationFrame(frame);
-      frame = requestAnimationFrame(draw);
+      dragBy(dx, dy);
     });
     function endDrag(event) {
       if (!dragging || (event && event.pointerId !== dragging.pointerId)) return;
@@ -442,6 +492,35 @@ export const MAP_SCRIPT = `
       setZoom(zoom + (event.deltaY < 0 ? 1 : -1));
     }, { passive: false });
 
+    // ---- touch: the same drag for an engine that has no Pointer Events -------
+    // Pointer Events cover every browser Undal is tested on, but the storefront is
+    // also opened in in-app browsers and in WebViews that were never updated, and
+    // on those a map with no touch handler is a map that cannot be moved at all —
+    // which reads to a customer as "the pin is a picture". The gesture is the same
+    // one, through the same panBy, so the two dialects cannot drift apart.
+    if (!window.PointerEvent) {
+      frame_.addEventListener("touchstart", function (event) {
+        if (dragging || !event.touches || event.touches.length !== 1) return;
+        if (event.target && event.target.closest && event.target.closest(".undal-map-controls")) return;
+        var point = event.touches[0];
+        dragging = { x: point.clientX, y: point.clientY, moved: false, pointerId: -1 };
+        frame_.classList.add("dragging");
+        event.preventDefault();
+      }, { passive: false });
+      frame_.addEventListener("touchmove", function (event) {
+        if (!dragging || !event.touches || event.touches.length !== 1) return;
+        var point = event.touches[0];
+        var dx = point.clientX - dragging.x, dy = point.clientY - dragging.y;
+        if (Math.abs(dx) + Math.abs(dy) < 1) return;
+        dragging.x = point.clientX;
+        dragging.y = point.clientY;
+        dragBy(dx, dy);
+        event.preventDefault();
+      }, { passive: false });
+      frame_.addEventListener("touchend", function () { endDrag(null); });
+      frame_.addEventListener("touchcancel", function () { endDrag(null); });
+    }
+
     // ---- keyboard: the map has to work without a finger ----------------------
     frame_.tabIndex = 0;
     frame_.addEventListener("keydown", function (event) {
@@ -449,10 +528,7 @@ export const MAP_SCRIPT = `
       var step = { ArrowLeft: [-40, 0], ArrowRight: [40, 0], ArrowUp: [0, -40], ArrowDown: [0, 40] }[event.key];
       if (step) {
         event.preventDefault();
-        var origin = project(center.lat, center.lng, zoom);
-        var next = unproject(origin.x - step[0], origin.y - step[1], zoom);
-        invalidatePin();
-        center = next;
+        panBy(step[0], step[1]);
         draw();
         settle();
       } else if (event.key === "+" || event.key === "=") { setZoom(zoom + 1); }
@@ -489,29 +565,32 @@ export const MAP_SCRIPT = `
 
 /** The CSS the map needs; kept with the rest of the shared design tokens. */
 export const MAP_STYLE = `
-.undal-map-host{margin:6px 0 14px}
-.undal-map{position:relative;width:100%;height:clamp(240px,44vh,420px);border-radius:20px;overflow:hidden;border:1px solid var(--line);
+.undal-map-host{margin:6px 0 14px;position:relative}
+.undal-map{position:relative;width:100%;height:280px;height:clamp(240px,44vh,420px);min-height:220px;
+border-radius:20px;overflow:hidden;border:1px solid var(--line);
 background:#eef1e8 repeating-linear-gradient(0deg,#e4e9dc 0 1px,transparent 1px 32px),repeating-linear-gradient(90deg,#e4e9dc 0 1px,transparent 1px 32px);
 touch-action:none;cursor:grab;outline-offset:-3px}
+.undal-map:focus{outline:3px solid var(--brand);outline-offset:-3px}
 .undal-map.dragging{cursor:grabbing}
-.undal-map-tiles{position:absolute;inset:0}
-.undal-tile{position:absolute;width:256px;height:256px;user-select:none;-webkit-user-drag:none}
-.undal-map-overlay{position:absolute;inset:0;pointer-events:none}
+.undal-map-tiles{position:absolute;top:0;right:0;bottom:0;left:0}
+.undal-tile{position:absolute;width:256px;height:256px;background:#e4e9dc;-webkit-user-select:none;user-select:none;-webkit-user-drag:none}
+.undal-map-overlay{position:absolute;top:0;right:0;bottom:0;left:0;z-index:2;pointer-events:none}
 .undal-map-radius{fill:#165b3b1f;stroke:#165b3b;stroke-width:2;stroke-dasharray:7 6}
 .undal-map-leg{stroke:#d97930;stroke-width:2.5;stroke-dasharray:2 6;stroke-linecap:round}
 .undal-map-kitchen{fill:#d97930;stroke:#fff;stroke-width:2}
-.undal-map-pin{position:absolute;left:50%;top:50%;transform:translate(-50%,-100%);pointer-events:none;filter:drop-shadow(0 4px 8px #20392c40)}
+.undal-map-pin{position:absolute;left:50%;top:50%;z-index:3;transform:translate(-50%,-100%);pointer-events:none;
+-webkit-filter:drop-shadow(0 4px 8px #20392c40);filter:drop-shadow(0 4px 8px #20392c40)}
 .undal-map-pin svg{display:block}
-.undal-map-controls{position:absolute;right:12px;top:12px;display:flex;flex-direction:column;gap:8px}
+.undal-map-controls{position:absolute;right:12px;top:12px;z-index:4;display:flex;flex-direction:column;gap:8px}
 .undal-map-button{width:44px;height:44px;border-radius:14px;border:1px solid var(--line);background:#fffdf9;color:var(--ink);
 font-size:1.25rem;font-weight:700;line-height:1;cursor:pointer;box-shadow:0 4px 14px #20392c14}
 .undal-map-button:active{transform:scale(.96)}
-.undal-map-nudges{display:flex;justify-content:center;gap:10px;margin-top:12px}
+.undal-map-nudges{display:flex;flex-wrap:wrap;justify-content:center;gap:10px;margin-top:12px}
 .undal-map-readout{font-size:.85rem;color:var(--muted);margin:10px 2px;line-height:1.5}
 .undal-map-locate{margin:0 0 8px;width:100%;min-height:44px}
 .undal-map-locate:disabled{opacity:.6}
-.undal-map-tick{margin:0;width:100%}
+.undal-map-tick{margin:0;width:100%;min-height:44px}
 .undal-map-tick.ticked{background:#10432c}
 .undal-map-attribution{font-size:.72rem;color:var(--muted);margin:6px 2px 0}
-@media(max-width:640px){.undal-map{height:clamp(220px,40vh,320px);border-radius:16px}.undal-map-controls{right:8px;top:8px;gap:6px}.undal-map-button{width:40px;height:40px}}
+@media(max-width:640px){.undal-map{height:260px;height:clamp(220px,40vh,320px);min-height:200px;border-radius:16px}.undal-map-controls{right:8px;top:8px;gap:6px}.undal-map-nudges{gap:8px}}
 `;

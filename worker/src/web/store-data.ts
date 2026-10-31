@@ -9,6 +9,7 @@
  */
 import type { Env } from "../env";
 import { fsGet, fsQuery, type FsRecord } from "../firestore";
+import { memoGet, memoPut, singleFlight, type KvBinding } from "../util/kv";
 import { buildCouponBoard, type CouponBoardEntry, type CouponDocument } from "./coupons";
 
 export interface WebStoreSlot {
@@ -126,6 +127,16 @@ export interface WebMenu {
 
 const MENU_KEY = "web:menu:v1";
 const MENU_TTL_SECONDS = 60;
+/**
+ * How long an isolate keeps the snapshot it already has.
+ *
+ * The freshness rule a *customer* is promised is unchanged — a minute — but it is
+ * now judged against the snapshot's own `fetchedAt`, whichever tier served it, so
+ * an isolate that read the menu eleven seconds ago does not read KV again for the
+ * remaining forty-nine. On a busy evening this is the difference between one KV
+ * read per page view and one per minute per isolate.
+ */
+export const MENU_MEMO_TTL_MS = 20_000;
 
 const num = (value: unknown, fallback = 0): number => {
   const parsed = typeof value === "number" ? value : Number(value);
@@ -204,19 +215,55 @@ export function toStoreConfig(record: FsRecord | null): WebStoreConfig | null {
   };
 }
 
+/**
+ * One Firestore read that remembers whether it failed.
+ *
+ * An empty menu and an unreachable menu are different facts and they used to look
+ * identical: every read had a `.catch(() => [])`, so a Firestore outage rendered
+ * as "this kitchen has nothing to sell today" — a page that is technically true,
+ * commercially false and impossible for the owner to diagnose. The kitchen really
+ * can publish zero dishes, so the distinction has to be made here, where the error
+ * is still in hand.
+ */
+async function readOr<T>(job: Promise<T>, fallback: T): Promise<{ value: T; failed: boolean }> {
+  try {
+    return { value: await job, failed: false };
+  } catch {
+    return { value: fallback, failed: true };
+  }
+}
+
 async function readMenu(env: Env): Promise<WebMenu> {
-  const [sections, subsections, dishes, combos, campaigns, coupons, store] = await Promise.all([
-    fsQuery(env, { collectionId: "categories", limit: 60 }).catch(() => []),
-    fsQuery(env, { collectionId: "subcategories", limit: 120 }).catch(() => []),
-    fsQuery(env, { collectionId: "menuItems", limit: 300 }).catch(() => []),
-    fsQuery(env, { collectionId: "combos", limit: 100 }).catch(() => []),
-    fsQuery(env, { collectionId: "campaigns", limit: 40 }).catch(() => []),
-    // The discount table, read with the service account — the same read the
-    // Android app does through `config/couponBoard` when it is published. A
-    // Firestore failure here must never take the menu down with it.
-    fsQuery(env, { collectionId: "coupons", limit: 60 }).catch(() => []),
-    fsGet(env, "config/store").catch(() => null),
-  ]);
+  const [sectionsRead, subsectionsRead, dishesRead, combosRead, campaignsRead, couponsRead, storeRead] =
+    await Promise.all([
+      readOr(fsQuery(env, { collectionId: "categories", limit: 60 }), [] as FsRecord[]),
+      readOr(fsQuery(env, { collectionId: "subcategories", limit: 120 }), [] as FsRecord[]),
+      readOr(fsQuery(env, { collectionId: "menuItems", limit: 300 }), [] as FsRecord[]),
+      readOr(fsQuery(env, { collectionId: "combos", limit: 100 }), [] as FsRecord[]),
+      readOr(fsQuery(env, { collectionId: "campaigns", limit: 40 }), [] as FsRecord[]),
+      // The discount table, read with the service account — the same read the
+      // Android app does through `config/couponBoard` when it is published. A
+      // Firestore failure here must never take the menu down with it.
+      readOr(fsQuery(env, { collectionId: "coupons", limit: 60 }), [] as FsRecord[]),
+      readOr(fsGet(env, "config/store"), null as FsRecord | null),
+    ]);
+  const [sections, subsections, dishes, combos, campaigns, coupons, store] = [
+    sectionsRead.value,
+    subsectionsRead.value,
+    dishesRead.value,
+    combosRead.value,
+    campaignsRead.value,
+    couponsRead.value,
+    storeRead.value,
+  ];
+
+  // The catalogue itself — the dishes, the combos and the store document — is what
+  // a page is built from. When all three reads fail there is nothing to build
+  // with, and the honest answer is the one the caller turns into "we could not
+  // reach the kitchen, try again in a minute".
+  if (dishesRead.failed && combosRead.failed && storeRead.failed) {
+    throw new Error("catalogue-unavailable: every Firestore read for the menu failed");
+  }
 
   return {
     fetchedAt: Date.now(),
@@ -262,18 +309,37 @@ async function readMenu(env: Env): Promise<WebMenu> {
   };
 }
 
-/** The merged menu, from KV when it is fresh enough. */
+/** The merged menu: this isolate's copy, then KV, then Firestore. */
 export async function webMenu(env: Env, options: { force?: boolean } = {}): Promise<WebMenu> {
-  if (!options.force) {
-    const cached = (await env.UNDAL_KV.get(MENU_KEY, "json").catch(() => null)) as WebMenu | null;
+  const binding = env.UNDAL_KV as KvBinding;
+  if (options.force) {
+    // The checkout path. It must see the price the kitchen has *now*, so it skips
+    // both caches — and it is the reason a cached page can never sell a dish that
+    // has since been taken off the menu.
+    return refreshMenu(env, binding);
+  }
+  return singleFlight(binding, MENU_KEY, async () => {
+    const cached = await memoGet<WebMenu>(binding, MENU_KEY, { ttlMs: MENU_MEMO_TTL_MS, json: true });
     if (cached && Date.now() - cached.fetchedAt < MENU_TTL_SECONDS * 1000) {
       // A snapshot written before the coupon board existed is still a good menu.
       // Filling the gap here means no page has to defend against its own cache.
       return { ...cached, coupons: cached.coupons ?? [] };
     }
-  }
+    return refreshMenu(env, binding);
+  });
+}
+
+/** Reads Firestore and publishes the snapshot to KV and to this isolate. */
+async function refreshMenu(env: Env, binding: KvBinding): Promise<WebMenu> {
   const menu = await readMenu(env);
-  await env.UNDAL_KV.put(MENU_KEY, JSON.stringify(menu), { expirationTtl: 3600 }).catch(() => undefined);
+  // Optional on purpose: a snapshot that fails to persist still serves this
+  // isolate, and the next request rebuilds it. The menu is never the write that
+  // should starve an alert.
+  await memoPut(binding, MENU_KEY, JSON.stringify(menu), {
+    expirationTtl: 3600,
+    memoTtlMs: MENU_MEMO_TTL_MS,
+    memoValue: menu,
+  });
   return menu;
 }
 

@@ -227,3 +227,275 @@ Next: PR CI/source integration, followed by native instrumentation, screenshots,
 - Replaced the map picker's long-press-only feel with direct touch-and-drag from the marker, plus map tap and long-press placement. A larger 320dp picker frame and single current-location affordance improve visibility. Pin drags are handled in the map view and release at the selected coordinates; address persistence and confirmation rules are unchanged.
 - Updated both customer and kitchen pin-picker surfaces to the larger frame. No pricing, order, notification or backend contract changed.
 - Static checks run for this follow-up: 26 theme contrast pairs, Kotlin shape/import contracts and `git diff --check` pass. The local Gradle attempt could not start because no Java/JDK is installed; no Android compile, screenshot, emulator or live-map QA is claimed. Device verification remains a release gate.
+
+## Web motion, dark theme, Pages and prerendering — 31 October 2026
+
+This batch is the website and the edge around it. No Android source changed, and
+no FCM payload, alert-lifecycle, pricing or Firebase-rule behaviour changed.
+
+### Foundations the site now has
+
+- `worker/src/util/kv.ts`: one gateway in front of every KV read and write — a
+  per-isolate memo, single-flight on cold reads (including the seven-read Firestore
+  menu rebuild), a brake on optional writes, and `kv.usage` / `kv.savings`
+  counters published at `/healthz`. Nine call sites were routed through it: the
+  menu, the vendor uid, the re-alert cursor, the opening reminder, presence,
+  cleanup, the release record, chat throttling and the store API.
+- Rate limiting is memory-first and escalates to KV only past 60% of a limit.
+  It used to cost one read **and one write per request**, which was the single
+  largest consumer of the free tier's 1,000 daily writes at zero traffic.
+- The re-alert cron now writes and deletes its cursor only when it has something
+  to say: ~1,440 writes and ~1,440 deletes a day, at any traffic level, became
+  none when nothing is waiting.
+- `worker/src/util/page-cache.ts`: the Cache API in front of every public page,
+  keyed by URL plus the basket cookie's fingerprint, 30 s for the storefront with
+  900 s stale-while-revalidate, never storing a `set-cookie` or a `no-store`,
+  reporting itself in `x-undal-edge`.
+- `pageVary` no longer reads Cloudflare's own `__cf_bm`, `cf_clearance`,
+  `_cfuvid`, `__cfruid` and `cf_chl_*` as a customer's identity. Bot Management
+  sets `__cf_bm` on the first request from any browser with JavaScript, so the
+  cache had been answering `curl` and rendering for every human being.
+
+### The storefront's motion and theme layer
+
+- `worker/src/web/motion.ts`: one token set, two palettes. Dark mode is additive —
+  no light-mode declaration in the repository changed value — and is applied both
+  to an explicit `data-undal-theme="dark"` and to `prefers-color-scheme: dark`
+  until the customer chooses. Contrast measured at 7.7–8.3:1 on the dark pairs.
+  Reading-position bar, sticky glass nav, capped scroll-reveal stagger, a shimmer
+  under a photograph that is still travelling, ripples, toasts, a basket bar
+  within reach of the thumb, the flight of a dish into it, cross-document view
+  transitions. Every decoration is off under `prefers-reduced-motion`, and a
+  reveal hides a card only when the script has said it can show it again, so a
+  browser without `IntersectionObserver` sees the whole menu.
+- `worker/src/web/motion-client.ts`: the browser half, in the ES5 dialect
+  `tools/check-web-compat.mjs` enforces, feature-tested end to end (passive
+  listeners behind a `passive` probe, `requestAnimationFrame` with a timer
+  fallback) and silent under reduced motion.
+- The theme is decided by an inline head script before the first paint and the
+  toggle is a server-rendered button with `aria-pressed`.
+- The four facts a customer asks before reading a dish name — fee per kilometre,
+  radius, minimum order, cash on delivery — are a `dl` above the menu, from the
+  live store document.
+- Largest-contentful-paint discipline: the first three photographs eager and the
+  first at high priority, the rest lazy, the dish page's own photograph square
+  with its space reserved, and both photo hosts preconnected.
+
+### The website moved to Cloudflare Pages
+
+`web/` is a Pages project whose one catch-all Function calls the router the
+Worker has always run. The build renders every public page in the sitemap with
+that router and writes it to `web/public/`, per origin, stamped with when and
+from what. An anonymous GET is answered from the file; a basket, a session, an
+`Authorization` header, a POST or an `/api/` call is rendered; a failed render
+falls back to a stale snapshot rather than an error page. `/store/`, `//store`
+and `/store/index.html` are now one address. `docs/PAGES-AND-PRERENDER.md` is
+the operator's document: what moved, what a page costs, which header to read,
+and what a customer sees in each of ten failure modes.
+
+The Worker kept every route it had — the crons, the FCM relay, the app's base
+URL and its own copy of the web routes, which is the fallback and the preview.
+
+### New pages, and a fixed one
+
+- HTML 404 and 500 pages, negotiated: a browser gets a page with four ways back
+  to the menu, the app and every webhook keep the JSON they parse. Both are
+  `noindex`. The storefront's own "we couldn't reach the kitchen" 503 stays the
+  storefront's.
+- `/apple-touch-icon.png` was exempted from the rate limiter and then answered
+  404, so every home-screen bookmark was a screenshot. It is the 180px drawing
+  now, and the head links to it.
+
+### Checks actually run for this batch
+
+- 260 Worker tests: pass. 34 of them are new — 13 on the motion layer (run
+  against the real markup and the real script, on a virtual clock), 21 on Pages
+  (including the build script run end to end into a temporary directory), plus
+  the Core Web Vitals and error-page assertions.
+- Worker TypeScript no-emit check: pass, now including `web/functions` and
+  `web/src`.
+- Storefront gates: browser dialect, shared money/distance/validation rules,
+  coupon parity, alert ladder, no-unfinished-work (243 files, `web/` added): pass.
+- The Pages build itself: 80 snapshots from the published catalogue, no failures,
+  every manifest entry on disk, every sitemap URL that may be a file a file.
+
+### Not run / not certified for this batch
+
+No deployment was performed. `wrangler pages deploy`, the custom-domain path,
+Cloudflare's real `ASSETS` binding, the real `_headers`/`_redirects`/`_routes.json`
+processing and the real `__cf_bm` cookie have not been exercised against a live
+Pages project — the Function is tested against a stand-in for `ASSETS` and the
+rules are asserted as configuration. Lighthouse, real Chromium screenshots,
+`tools/check-design-browser.cjs` and the dark palette on a calibrated screen are
+outstanding. Native Android compilation and device QA remain outstanding, and
+this batch changed no Kotlin.
+
+## Android motion that answers to the system — 31 October 2026
+
+The web storefront gained a motion layer and a dark theme; the app gained the
+one thing its motion was missing, which is a listener.
+
+- `core/design/UndalMotionEffects.kt`. Android's equivalent of
+  `prefers-reduced-motion` is **Developer options → Animator duration scale →
+  off**, which is also what the "Remove animations" accessibility setting
+  writes, and nothing in the app read it: the shimmer swept forever and badges
+  bounced on a phone whose owner had asked the system to stop moving things.
+  `undalAnimationsAllowed` reads `Settings.Global.ANIMATOR_DURATION_SCALE` and
+  treats a resolver that refuses as "animate", because guessing the other way
+  would take motion away from everybody who never asked. It catches `Exception`,
+  not `RuntimeException`: `SettingNotFoundException` is an `AndroidException`,
+  and a missing setting is not allowed to take a screen down in this repository.
+- Two primitives behind it. `UndalReveal` fades and lifts a block into place on
+  the frames a screen opens with — draw-only through `graphicsLayer`, with the
+  same capped stagger as the web, and with the target value already held on the
+  first composition when the system will not animate, so there is no frame in
+  which the content is invisible. `rememberUndalCountUp` returns paisa in and
+  paisa out and never formats anything, so the caller's own `Money` stays the
+  only place a price is turned into words, and it clamps so a count can never
+  show a number the server did not charge.
+- `ShimmerBlock` holds still instead of sweeping. It is the one infinite
+  animation that runs on every loading screen in both portals.
+- `UndalPageIntro` arrives rather than appearing, which reaches the portal
+  stages, the vendor store settings and the policy screens in one edit.
+- A cart line total counts to its new value when a quantity changes.
+- The order alert is deliberately **not** behind the switch. The pulse around a
+  status badge is decoration and follows it; the sound, the full-screen intent,
+  the notification and the watchdog do not, per `docs/ALERT-RELIABILITY.md`.
+
+Checked: `check_kotlin_shape.py`, `check_import_contracts.py`,
+`check_foreground_contract.py` and `check-design-contrast.py`, all clean across
+166 Kotlin files. Note for the next reader: the import gate did **not** flag a
+missing import for one of these new symbols when it was removed as a test, so it
+is not proof that the new call sites are wired — the imports were checked by
+hand. No JDK or Android SDK is installed here: no compilation, no preview
+render, no device or TalkBack claim is made for this batch.
+
+**Closed the same day, by CI.** The first Android build of this branch stopped on
+the one line this batch added to the cart:
+`rememberUndalCountUp` took an `Int` and returned one, while every amount in
+Undal is a `Long` of paisa and `Money.format` takes a `Long`, so the cart line
+total did not compile (`5b24f35`). The count-up now speaks paisa in and paisa
+out, animating on an `Int` clamped to its own range because Compose has no
+`animateLongAsState` and a `Float` would give away the last digits of a large
+total. The lesson is worth more than the fix: **the four static gates check
+shape, imports and contracts — not types.** They passed this line twice. Only
+a compiler can catch it, which is why `android-build.yml` runs on the pull
+request and not only on `main`.
+
+## The map that was a showpiece, and a menu that kept its place — 31 October 2026
+
+Reported by the owner: on the web and on every app screen with an OpenStreetMap
+map, "the pin is stuck on the corner, not movable, not dragging — just a
+showpiece", and many pages are not handy to use. What follows is what the report
+turned out to be, surface by surface, and what was changed. Nothing here is a
+redesign: the pin stays fixed at the middle of the card and the map moves under
+it, on the web and in the app, because that is the one presentation where the pin
+cannot be drawn in the wrong place.
+
+### The web map: a box that could collapse
+
+`worker/src/web/map-client.ts` was already correct about *behaviour* — the drag,
+the keyboard path, the nudge arrows, the tick, the geocode, the persisted view —
+and wrong about one thing that decides whether any of it is visible: the frame's
+height came from a single `clamp()`, and the frame is `overflow:hidden`.
+
+An engine that cannot parse `clamp()` drops the declaration, and a declaration
+that is dropped is not a small difference: `.undal-map` becomes `height:auto`,
+every child inside it is absolutely positioned, so the box measures zero, the
+tiles are clipped away, and the pin — which is centred on the box — sits on its
+top edge. That is a pin in the corner of an empty card, and it is a picture
+rather than a control. `inset:0` (Chrome 87) had the same shape of failure on the
+tile layer and the overlay, on a storefront whose own compatibility gate states a
+Chrome 80 floor.
+
+Three layers now hold the box open:
+
+- `height:280px;` before `height:clamp(240px,44vh,420px)`, and `min-height:220px`
+  under both, so no engine can produce a zero-height map. The same pair in the
+  phone media query.
+- Offsets written out (`top:0;right:0;bottom:0;left:0`) instead of `inset:0`, in
+  the map and in the three places in `motion.ts` that used it — the reading
+  progress bar, the artwork sheen and the hero's warm blob, which also lost its
+  `aspect-ratio:1` height on the same engines and so stopped being a circle.
+- `ensureFrameSize()` in the map script: the map measures the frame it just built,
+  and when the frame comes back under 80 px it writes a pixel height from the
+  viewport itself, on first paint and on every resize. This is the layer that does
+  not depend on any stylesheet being understood, and it is why the failure cannot
+  come back quietly through a future CSS edit.
+
+Two more, for engines rather than layouts: a `touchstart`/`touchmove`/`touchend`
+drag for a browser with no Pointer Events (in-app browsers and un-updated
+WebViews), routed through the same `panBy()` as the pointer and keyboard paths so
+the three gestures cannot drift apart; and `-webkit-filter` / `-webkit-user-select`
+beside the standard properties. The map buttons also stop shrinking to 40 px on a
+phone — 44 CSS px is the floor the design plan states, and a zoom button is the
+one control on the map that has to work with a wet thumb.
+
+### The app map: a coordinate that is not a place, and a zoom that fought back
+
+`UndalOsmMap` already carried two hard-won fixes — one remembered `MapView`
+instead of one per `AndroidView` factory call, and a camera re-applied in
+`onLayout` because osmdroid computes its scroll offset from a zero-sized
+viewport. Both stand. Two bugs were left:
+
+- **`0,0` was treated as a place.** `ProfileScreen` passes
+  `state.address?.lat ?: 0.0`, and an order taken without a pin carries
+  `customerLat = 0.0`. Centred on the Atlantic, the middle of an ocean projected
+  onto a phone card *is* a pin in the corner of a grey rectangle — the report,
+  exactly, on the cart, the tracking page, the profile and the kitchen's order
+  detail. `UndalMapTools.isPlausible` already existed and was already the test the
+  copy-and-open-in-maps row uses; the map itself now uses it too, for the camera
+  centre and for every pin drawn or fitted. A coordinate that is not a place
+  starts the camera on the city the kitchen is in, and `UndalMapCaption` says "No
+  pin saved for this address yet" rather than reading out `0.00000, 0.00000`.
+- **The map animated the customer's zoom away.** `moveCamera` compared the map's
+  zoom with the *caller's* zoom, so a pin placed at house zoom reported its new
+  centre 160 ms later, the screen wrote it back, and the camera effect animated
+  the card back out to street zoom while the finger was still on the glass. After
+  the first placement the map's own zoom is now the truth; a caller that really
+  means "this point, at this zoom" says so with `force`, which the tap, long-press
+  and first-layout paths already do.
+
+`drawnPins` is also `remember(pins)`, which is a filter and a stabiliser at once:
+`UndalLocationMap` and `UndalRadiusPreview` build a fresh list on every
+recomposition, so the marker diff and both camera effects were re-running on every
+frame of every keystroke on those screens.
+
+### The menu: a filter that was a one-way door
+
+Filtering the storefront by category or by search posted the reader back to the
+top of the page, past the hero they had already read, and there was no chip that
+meant "everything" — on a phone the address bar is not a control, so the way back
+was the nav bar. The chip row now starts with `Everything · n`, every chip, sort
+link, empty-state link and the search form's own action end at `#menu` (which the
+document's `scroll-padding-top:90px` puts under the sticky header), and a filtered
+menu says what it is showing — how many choices, which words, which section — with
+one tap that undoes it. All of it is server-rendered HTML: no script, so it works
+in the no-JavaScript ordering path the design plan requires.
+
+### Checked, and not checked
+
+`npx tsc --noEmit` clean; **269 tests, 269 pass** (five new map tests: a frame
+CSS could not size is sized by the script, a frame CSS did size is left alone, a
+finger drags the map with no Pointer Events, a second finger is a map gesture and
+not a drag, and the stylesheet's own fallback chain asserted as text; three new
+storefront tests for the chip row, the filter note and the section note).
+`check-web-compat`, `check-web-rules`, `check-coupon-parity`, `check-alert-ladder`
+and `check_no_placeholders` clean; the four Kotlin gates clean. `build:web
+--source sample` still writes 80 snapshots with no failures, and the prerendered
+`/store` carries the new chip row and no filter note.
+
+**The Android half is now compiled.** `android-build.yml` on this pull request
+passed in 5 m 15 s: `compileReleaseKotlin`, the unit tests, `assembleRelease` and
+the signing step — so `effectiveZoom`, `drawnPins`, the `isPlausible` camera
+rule and the new caption are real Kotlin, not just gates that agreed with
+themselves. What a build still does not prove: no emulator, no device, no
+screenshot, no TalkBack run. The `0,0` and zoom fixes are the two a device would
+confirm first, on the profile's map and on the address pinning step.
+
+The web half has no browser here, so the CSS fallbacks are asserted as text and
+reasoned against each engine's support table rather than rendered. The five new
+map tests run the real `MAP_SCRIPT` in a VM against a DOM stub, which is what
+proves the drag, the touch fallback and the self-sizing frame — but a stub has
+no layout engine, so "the frame measures zero and the script repairs it" is
+tested as a contract, not as a painted pixel.

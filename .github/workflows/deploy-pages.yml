@@ -1,0 +1,311 @@
+# ===========================================================================
+# Undal HomeKitchen — deploy-pages
+#
+# Publishes the customer website to Cloudflare Pages: every public page rendered
+# at build time by the production router, plus the Pages Function that renders
+# everything else. The Worker keeps the crons, the FCM relay and the Android
+# app's base URL; this workflow does not touch it.
+#
+# The build needs the kitchen's real menu, so it needs the same Firebase
+# credential the Worker deploys with. Without it the build can still produce a
+# directory — the sample mode a laptop uses to look at the site — and this
+# workflow refuses to publish one: a snapshot of a menu nobody is cooking is worse
+# than no snapshot at all.
+# ===========================================================================
+name: deploy-pages
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "web/**"
+      - "worker/**"
+      - "tools/**"
+      - ".github/workflows/deploy-pages.yml"
+  workflow_dispatch:
+    inputs:
+      origin:
+        description: "Public origin to prerender for (default: the pages.dev URL, plus WEB_ORIGIN if that secret is set)"
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-pages
+  cancel-in-progress: true
+
+env:
+  PROJECT_NAME: undal-web
+
+jobs:
+  deploy:
+    name: Build and deploy the Undal website
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Preflight secrets
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          FIREBASE_SA_JSON: ${{ secrets.FIREBASE_SA_JSON }}
+          FIREBASE_RTDB_URL: ${{ secrets.FIREBASE_RTDB_URL }}
+        run: |
+          bash tools/preflight.sh \
+            CLOUDFLARE_API_TOKEN CLOUDFLARE_ACCOUNT_ID FIREBASE_SA_JSON FIREBASE_RTDB_URL
+
+      - name: Set up Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: worker/package-lock.json
+
+      - name: Install the toolchain
+        working-directory: worker
+        run: npm ci --no-audit --no-fund
+
+      # The website ships the storefront's browser code, so the dialect gate, the
+      # money-rule gate and the coupon-parity gate run here exactly as they do
+      # where the Worker is deployed. The pages test suite runs the real build
+      # script against the fake backend, so a build that cannot render is caught
+      # before it is caught in production.
+      - name: Storefront gates
+        run: |
+          node tools/check-web-compat.mjs
+          node tools/check-web-rules.mjs
+          node tools/check-coupon-parity.mjs
+          node tools/check-alert-ladder.mjs
+          bash tools/check_no_placeholders.sh
+
+      - name: Typecheck
+        working-directory: worker
+        run: npm run typecheck
+
+      - name: Test
+        working-directory: worker
+        run: npm test
+
+      - name: Resolve the KV namespace id
+        id: kv
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          set -euo pipefail
+          API="https://api.cloudflare.com/client/v4/accounts/${CLOUDFLARE_ACCOUNT_ID}/storage/kv/namespaces?per_page=100"
+          status=$(curl -sS -o "$RUNNER_TEMP/kv-list.json" -w '%{http_code}' \
+            -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" "$API")
+          if [ "$status" -ge 400 ]; then
+            echo "Cloudflare answered HTTP ${status} while listing KV namespaces." >&2
+            echo "Body: $(head -c 400 "$RUNNER_TEMP/kv-list.json")" >&2
+            echo "Repair: CLOUDFLARE_API_TOKEN needs Workers KV Storage: Read, and CLOUDFLARE_ACCOUNT_ID must own the account." >&2
+            exit 1
+          fi
+          cat > "$RUNNER_TEMP/read-kv.py" <<'PY'
+          import json, sys
+          raw = sys.stdin.read()
+          try:
+              payload = json.loads(raw)
+          except ValueError:
+              print("Cloudflare did not answer with JSON. Body starts: %s" % raw[:200], file=sys.stderr)
+              raise SystemExit(1)
+          if not payload.get("success"):
+              details = "; ".join(
+                  "%s %s" % (error.get("code"), error.get("message"))
+                  for error in (payload.get("errors") or [])
+              ) or "no detail given"
+              print("Cloudflare refused the KV request: %s" % details, file=sys.stderr)
+              raise SystemExit(1)
+          for namespace in payload.get("result") or []:
+              if namespace.get("title") == "undal-kv":
+                  print(namespace.get("id") or "")
+                  break
+          PY
+          ID=$(python3 "$RUNNER_TEMP/read-kv.py" < "$RUNNER_TEMP/kv-list.json")
+          if [ -z "$ID" ]; then
+            echo "There is no KV namespace called undal-kv on this account." >&2
+            echo "Repair: run the deploy-worker workflow once. It creates the namespace, and the website binds to the same one —" >&2
+            echo "one store for the menu snapshot, the rate limits and the release record, shared by the app and the site." >&2
+            exit 1
+          fi
+          echo "binding the website to KV namespace undal-kv ($ID)"
+          echo "id=$ID" >> "$GITHUB_OUTPUT"
+
+      - name: Render wrangler.toml for this account
+        env:
+          CLOUDINARY_CLOUD_NAME: ${{ secrets.CLOUDINARY_CLOUD_NAME }}
+          FIREBASE_WEB_API_KEY: ${{ secrets.FIREBASE_WEB_API_KEY }}
+          GITHUB_REPO_SLUG: ${{ github.repository }}
+          KV_ID: ${{ steps.kv.outputs.id }}
+        run: |
+          set -euo pipefail
+          sed -i "s|REPLACE_KV_NAMESPACE_ID|${KV_ID}|g" web/wrangler.toml
+          sed -i "s|REPLACE_CLOUDINARY_CLOUD_NAME|${CLOUDINARY_CLOUD_NAME:-}|g" web/wrangler.toml
+          sed -i "s|REPLACE_GITHUB_REPO_SLUG|${GITHUB_REPO_SLUG}|g" web/wrangler.toml
+          sed -i "s|REPLACE_FIREBASE_WEB_API_KEY|${FIREBASE_WEB_API_KEY:-}|g" web/wrangler.toml
+          if grep -n "REPLACE_" web/wrangler.toml; then
+            echo "web/wrangler.toml still has an unsubstituted value." >&2
+            exit 1
+          fi
+          grep -n "PRERENDER_MAX_AGE_SECONDS\|KITCHEN_TOPIC" web/wrangler.toml
+
+      - name: Create the Pages project if this is the first deploy
+        working-directory: web
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          set -uo pipefail
+          if npx wrangler pages project list 2>/dev/null | grep -q "${PROJECT_NAME}"; then
+            echo "Pages project ${PROJECT_NAME} already exists."
+            exit 0
+          fi
+          npx wrangler pages project create "${PROJECT_NAME}" --production-branch main
+          echo "created Pages project ${PROJECT_NAME} (https://${PROJECT_NAME}.pages.dev)"
+
+      - name: Push the website's secrets
+        working-directory: web
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          FIREBASE_SA_JSON: ${{ secrets.FIREBASE_SA_JSON }}
+          FIREBASE_RTDB_URL: ${{ secrets.FIREBASE_RTDB_URL }}
+          APP_SIGNING_SHA256: ${{ secrets.APP_SIGNING_SHA256 }}
+          RELEASE_WEBHOOK_SECRET: ${{ secrets.RELEASE_WEBHOOK_SECRET }}
+        run: |
+          set -euo pipefail
+          # The website reads the same Firebase project as the app: one menu, one
+          # set of orders, one kitchen. A second credential here would be a second
+          # source of truth about what is cooking.
+          printf '%s' "$FIREBASE_SA_JSON" | npx wrangler pages secret put FIREBASE_SA_JSON --project-name "${PROJECT_NAME}"
+          printf '%s' "$FIREBASE_RTDB_URL" | npx wrangler pages secret put FIREBASE_RTDB_URL --project-name "${PROJECT_NAME}"
+          printf '%s' "${APP_SIGNING_SHA256:-}" | npx wrangler pages secret put APP_SIGNING_SHA256 --project-name "${PROJECT_NAME}"
+          printf '%s' "${RELEASE_WEBHOOK_SECRET:-}" | npx wrangler pages secret put RELEASE_WEBHOOK_SECRET --project-name "${PROJECT_NAME}"
+
+      - name: Prerender the website
+        working-directory: worker
+        env:
+          FIREBASE_SA_JSON: ${{ secrets.FIREBASE_SA_JSON }}
+          FIREBASE_RTDB_URL: ${{ secrets.FIREBASE_RTDB_URL }}
+          CLOUDINARY_CLOUD_NAME: ${{ secrets.CLOUDINARY_CLOUD_NAME }}
+          FIREBASE_WEB_API_KEY: ${{ secrets.FIREBASE_WEB_API_KEY }}
+          GITHUB_REPO_SLUG: ${{ github.repository }}
+          APP_SIGNING_SHA256: ${{ secrets.APP_SIGNING_SHA256 }}
+          RELEASE_WEBHOOK_SECRET: ${{ secrets.RELEASE_WEBHOOK_SECRET }}
+          WEB_ORIGIN: ${{ secrets.WEB_ORIGIN }}
+          INPUT_ORIGIN: ${{ github.event.inputs.origin }}
+        run: |
+          set -euo pipefail
+          origins=(--origin "https://${PROJECT_NAME}.pages.dev")
+          if [ -n "${INPUT_ORIGIN:-}" ]; then
+            origins+=(--origin "${INPUT_ORIGIN%/}")
+          elif [ -n "${WEB_ORIGIN:-}" ]; then
+            origins+=(--origin "${WEB_ORIGIN%/}")
+          fi
+          echo "prerendering for: ${origins[*]}"
+          npm run build:web -- --source live "${origins[@]}"
+
+      - name: Refuse to publish a sample build
+        run: |
+          set -euo pipefail
+          cat > "$RUNNER_TEMP/check-manifest.py" <<'PY'
+          import json, sys
+          manifest = json.load(open("web/public/prerender-manifest.json"))
+          source = manifest.get("source")
+          pages = manifest.get("pages") or {}
+          if source != "live":
+              print("The build rendered %r rather than the kitchen's real menu." % source, file=sys.stderr)
+              print("Repair: FIREBASE_SA_JSON and FIREBASE_RTDB_URL must be set for this workflow,", file=sys.stderr)
+              print("and the Firestore project must be reachable from the runner.", file=sys.stderr)
+              raise SystemExit(1)
+          if len(pages) < 10:
+              print("The build wrote %d snapshots; a menu is more than that." % len(pages), file=sys.stderr)
+              raise SystemExit(1)
+          print("manifest: source %s, %d snapshots, %d dishes, built %s"
+                % (source, len(pages), manifest.get("items", 0), manifest.get("builtAt")))
+          PY
+          python3 "$RUNNER_TEMP/check-manifest.py"
+
+      - name: Deploy to Cloudflare Pages
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          npx wrangler pages deploy web/public \
+            --project-name "${PROJECT_NAME}" \
+            --branch main \
+            --commit-hash "${GITHUB_SHA}" \
+            --commit-message "Prerendered website from ${GITHUB_SHA::7}" \
+            --commit-dirty=true
+
+      # The smoke test proves three separate things, and all three have failed
+      # silently before: the Function answers at all, a prerendered page is served
+      # from the build output rather than rendered, and a request with a basket is
+      # rendered rather than served from it. The third is the one that matters — a
+      # snapshot answered to a customer with items in their basket is a customer
+      # looking at an empty basket.
+      - name: Smoke test the deployment
+        env:
+          WEB_ORIGIN: ${{ secrets.WEB_ORIGIN }}
+          INPUT_ORIGIN: ${{ github.event.inputs.origin }}
+        run: |
+          set -uo pipefail
+          base="${INPUT_ORIGIN:-${WEB_ORIGIN:-https://${PROJECT_NAME}.pages.dev}}"
+          base="${base%/}"
+          echo "smoke testing $base"
+          ok=""
+          for attempt in 1 2 3 4 5 6; do
+            code=$(curl -sS -o "$RUNNER_TEMP/healthz.json" -w '%{http_code}' "$base/healthz" || true)
+            if [ "$code" = "200" ]; then ok="yes"; cat "$RUNNER_TEMP/healthz.json"; echo ""; break; fi
+            echo "attempt $attempt: /healthz answered ${code:-nothing}"
+            sleep 10
+          done
+          if [ -z "$ok" ]; then
+            echo "/healthz did not answer in time — check the wrangler output above." >&2
+            echo "  (a 404 here usually means the origin has a path or a trailing slash)" >&2
+            exit 1
+          fi
+
+          headers=$(curl -sS -D - -o "$RUNNER_TEMP/store.html" "$base/store" || true)
+          state=$(printf '%s' "$headers" | grep -i '^x-undal-prerender:' | tr -d '\r' | awk '{print $2}')
+          case "$state" in
+            hit) echo "/store was served from the prerendered snapshot." ;;
+            *) echo "/store answered x-undal-prerender: ${state:-nothing} — expected hit on a fresh deploy." >&2
+               echo "The site still works (that header means it rendered live), but the snapshots are not being used." >&2
+               exit 1 ;;
+          esac
+          grep -q "<html" "$RUNNER_TEMP/store.html" || { echo "/store did not answer HTML." >&2; exit 1; }
+
+          basket=$(curl -sS -D - -o /dev/null -H 'cookie: undal_basket=' "$base/store" \
+            | grep -i '^x-undal-prerender:' | tr -d '\r' | awk '{print $2}')
+          if [ "$basket" != "bypass" ]; then
+            echo "a request with a basket was answered '${basket:-nothing}' — expected 'bypass'." >&2
+            echo "A customer with dishes in their basket must never be shown somebody else's page." >&2
+            exit 1
+          fi
+          echo "a basket is rendered, not served from a file."
+
+          canonical=$(curl -sS -o /dev/null -w '%{http_code} %{redirect_url}' "$base/store/" || true)
+          case "$canonical" in
+            301*"/store") echo "/store/ points at /store." ;;
+            *) echo "/store/ answered '${canonical}' — expected a 301 to /store." >&2; exit 1 ;;
+          esac
+
+      - name: Summarise
+        env:
+          WEB_ORIGIN: ${{ secrets.WEB_ORIGIN }}
+        run: |
+          {
+            echo "## Undal website deployed to Cloudflare Pages"
+            echo ""
+            echo "- Project: \`${PROJECT_NAME}\` — https://${PROJECT_NAME}.pages.dev"
+            if [ -n "${WEB_ORIGIN:-}" ]; then echo "- Custom origin: ${WEB_ORIGIN}"; fi
+            echo "- Snapshots: every page in the sitemap that has no customer state in it, rendered at build time."
+            echo "- Functions: one catch-all, running the same router as the Worker."
+            echo "- The Worker keeps the crons, the FCM relay and the Android app's base URL."
+            echo "- Health: https://${PROJECT_NAME}.pages.dev/healthz"
+          } >> "$GITHUB_STEP_SUMMARY"

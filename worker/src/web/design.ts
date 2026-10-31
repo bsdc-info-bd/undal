@@ -51,7 +51,7 @@ input[type=checkbox],input[type=radio]{width:auto;min-height:0}
 .food-art>img{display:block;width:100%;height:auto;aspect-ratio:4/3;object-fit:cover}
 .food-art>.food-placeholder{display:none}
 .food-art.no-photo>.food-placeholder{display:grid}
-.food-placeholder{aspect-ratio:4/3;display:grid;place-content:center;text-align:center;background:radial-gradient(ellipse at center,#fff9e7,#ecf0e4);color:var(--brand);gap:8px}
+.food-placeholder{aspect-ratio:4/3;min-height:96px;display:grid;place-content:center;text-align:center;background:radial-gradient(ellipse at center,#fff9e7,#ecf0e4);color:var(--brand);gap:8px}
 .food-placeholder span{font-size:3rem}.food-placeholder small{font-weight:600;letter-spacing:.12em;text-transform:uppercase;font-size:.65rem}
 .store-hero{display:grid;grid-template-columns:1.3fr 1fr;align-items:center;gap:40px;padding:clamp(24px,5vw,64px);background:#edf2e6;border:1px solid #e1e8d9;border-radius:32px;margin-bottom:24px;overflow:hidden;position:relative}
 .eyebrow{display:block;font-size:.72rem;font-weight:800;letter-spacing:.17em;text-transform:uppercase;color:var(--brand);margin-bottom:16px}
@@ -64,6 +64,8 @@ input[type=checkbox],input[type=radio]{width:auto;min-height:0}
 .hero-note h3{font-size:1.5rem;letter-spacing:-.04em;margin:0 0 12px}
 .hero-note p{font-size:.9rem;margin:0}.hero-note hr{border:0;border-top:1px solid var(--line);margin:22px 0}
 .menu-heading{display:flex;align-items:end;justify-content:space-between;gap:16px;margin-top:32px}
+.filter-note{margin:12px 2px 0;font-size:.86rem;color:var(--muted);line-height:1.5}
+.filter-note a{color:var(--brand-ink);text-decoration:underline;text-underline-offset:3px}
 .menu-heading h2{font-size:1.8rem;margin:0}.menu-heading p{margin:0}
 .row{flex-wrap:wrap;padding:14px 0}.row>*{min-width:0}
 .qty button{min-width:44px;min-height:44px;cursor:pointer}
@@ -231,7 +233,7 @@ main>section.store-status{max-width:none}
 .item-detail>*{min-width:0}
 .item-photo{border-radius:24px;overflow:hidden;background:#eaf0e3}
 .item-photo img.hero{width:100%;height:auto;aspect-ratio:1/1;object-fit:cover;margin:0;border-radius:0;max-height:none}
-.item-photo .food-placeholder{aspect-ratio:1/1}
+.item-photo .food-placeholder{aspect-ratio:1/1;min-height:200px}
 .item-information h2{font-family:Georgia,"Times New Roman",serif;font-size:clamp(1.8rem,3vw,2.7rem);line-height:1.15}
 .item-information .undal-add .button{width:100%}
 .item-information .price{margin-block:1.5rem}

@@ -18,11 +18,12 @@ set -euo pipefail
 PATTERN='TODO|FIXME|XXX:|lorem ipsum|Lorem ipsum|PLACEHOLDER|\bdemo\b|\bmock\b|\bstub\b|\bdummy\b|your code here|not implemented|coming soon|fill this in'
 
 mapfile -t TARGETS < <(
-  find app/src worker/src firebase gradle \
-    \( -path '*/node_modules' -o -path '*/build' -o -path '*/dist' \) -prune -o -type f -print 2>/dev/null
+  find app/src worker/src web firebase gradle \
+    \( -path '*/node_modules' -o -path '*/build' -o -path '*/dist' -o -path '*/web/public' \) -prune -o -type f -print 2>/dev/null
   find . -maxdepth 1 -name '*.gradle.kts' -type f -print
   find . -maxdepth 1 -name 'gradle.properties' -type f -print
   find worker -maxdepth 1 -name 'wrangler.toml' -type f -print
+  find web -maxdepth 1 -name 'wrangler.toml' -type f -print
 )
 
 if [ "${#TARGETS[@]}" -eq 0 ]; then

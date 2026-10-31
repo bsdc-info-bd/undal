@@ -43,8 +43,9 @@ import {
   pickBestCoupon,
   type CouponDocument,
 } from "../web/coupons";
-import { menuItem, toStoreConfig, webMenu } from "../web/store-data";
+import { MENU_MEMO_TTL_MS, menuItem, toStoreConfig, webMenu } from "../web/store-data";
 import { closedSentence } from "../util/store-hours";
+import { memoGet, type KvBinding } from "../util/kv";
 
 const ORDER_ALERT_TTL = "300s";
 const COUNTER_START = 1000;
@@ -989,7 +990,11 @@ export function looksLikeOrderId(value: string): boolean {
 
 /** The menu a worker isolate saw last, exposed for the diagnostics page. */
 export async function menuAgeSeconds(env: Env): Promise<number> {
-  const cached = (await env.UNDAL_KV.get("web:menu:v1", "json").catch(() => null)) as { fetchedAt?: number } | null;
+  // The same memo the storefront reads, so a diagnostics page costs no operation.
+  const cached = (await memoGet<{ fetchedAt?: number }>(env.UNDAL_KV as KvBinding, "web:menu:v1", {
+    ttlMs: MENU_MEMO_TTL_MS,
+    json: true,
+  })) as { fetchedAt?: number } | null;
   if (!cached?.fetchedAt) return -1;
   return Math.round((Date.now() - cached.fetchedAt) / 1000);
 }

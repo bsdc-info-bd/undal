@@ -503,26 +503,38 @@ private class UndalMapRenderer(private val mapView: UndalMapView) {
         }
         val firstCameraPosition = !cameraHasBeenPositioned
         cameraHasBeenPositioned = true
+        // After the first placement the map's own zoom belongs to the customer: a
+        // pinch, a double tap and the zoom buttons all change it, and nothing about
+        // a pin that moved asks for a different zoom. Re-applying the caller's zoom
+        // here is what made the map fight the finger — place a pin at house zoom,
+        // and the next centre report animated the whole card back out to street
+        // zoom while the finger was still on the glass. A caller that really means
+        // "this point, at this zoom" says so with [force].
+        val effectiveZoom = if (force || firstCameraPosition) {
+            zoom
+        } else {
+            mapView.zoomLevelDouble.takeIf { it.isFinite() && it >= UndalMaps.MIN_ZOOM } ?: zoom
+        }
         val target = GeoPoint(lat, lng)
         val current = mapView.mapCenter
         val alreadyThere = current != null &&
             kotlin.math.abs(current.latitude - lat) < 0.0000001 &&
             kotlin.math.abs(current.longitude - lng) < 0.0000001 &&
-            kotlin.math.abs(mapView.zoomLevelDouble - zoom) < 0.001
+            kotlin.math.abs(mapView.zoomLevelDouble - effectiveZoom) < 0.001
         if (alreadyThere && !force && !firstCameraPosition) {
             // The centre osmdroid reports is the centre it was *told*, not the one
             // it drew: before the first layout it writes the scroll offset from a
             // zero-sized viewport, and the pin then sits in the top-left corner
             // forever. A laid-out map that has never been positioned is therefore
             // always re-applied, however equal its reported centre looks.
-            if (!mapView.hasPlacedCamera) mapView.placeCamera(lat, lng, zoom)
+            if (!mapView.hasPlacedCamera) mapView.placeCamera(lat, lng, effectiveZoom)
             return
         }
         if (animate && !firstCameraPosition) {
-            mapView.controller.animateTo(target, zoom, CAMERA_ANIMATION_MILLIS)
-            mapView.rememberCamera(lat, lng, zoom)
+            mapView.controller.animateTo(target, effectiveZoom, CAMERA_ANIMATION_MILLIS)
+            mapView.rememberCamera(lat, lng, effectiveZoom)
         } else {
-            mapView.placeCamera(lat, lng, zoom)
+            mapView.placeCamera(lat, lng, effectiveZoom)
         }
     }
 
@@ -630,6 +642,27 @@ fun UndalOsmMap(
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
 
+    // ------------------------------------------------------ a place, not a hole
+    /**
+     * 0,0 is not a place. It is an address that was saved without a pin, an order
+     * taken over the phone, a profile before a first delivery, a kitchen nobody has
+     * positioned yet.
+     *
+     * Centred on it, a map shows the Atlantic, and the middle of an ocean projected
+     * onto a phone card is a pin in the corner of a grey rectangle: the exact
+     * "the map is a showpiece" a customer reports. So a coordinate that is not a
+     * place is treated as no coordinate at all — the camera starts on the city the
+     * kitchen is in, and only the pins that are real are drawn or fitted.
+     *
+     * [UndalMapTools.isPlausible] is the same test the copy-and-open-in-maps row
+     * already uses, so the map and its tools can never disagree about whether the
+     * point they are looking at exists.
+     */
+    val centreIsAPlace = UndalMapTools.isPlausible(latitude, longitude)
+    val cameraLatitude = if (centreIsAPlace) latitude else UndalMaps.DEFAULT_LAT
+    val cameraLongitude = if (centreIsAPlace) longitude else UndalMaps.DEFAULT_LNG
+    val drawnPins = remember(pins) { pins.filter { UndalMapTools.isPlausible(it.lat, it.lng) } }
+
     // The newest callbacks without re-creating the map: a caller that passes a new
     // lambda on every recomposition must not rebuild the marker diff.
     val dragCallback by rememberUpdatedState(onPinDragged)
@@ -668,7 +701,7 @@ fun UndalOsmMap(
             // Remembered, not applied: before the first layout osmdroid would
             // compute the scroll offset from a zero-sized viewport (see
             // [UndalMapView.onLayout]) and draw every pin in the top-left corner.
-            placeCamera(latitude, longitude, zoom)
+            placeCamera(cameraLatitude, cameraLongitude, zoom)
             // Attribution is mandatory under the OpenStreetMap tile policy and is
             // drawn on the tiles themselves, so it survives every screenshot and
             // every zoom change.
@@ -720,11 +753,15 @@ fun UndalOsmMap(
 
     // How the map describes itself to a screen reader: the coordinates are the
     // truth a picture cannot carry, and they are spoken as digits.
-    val spokenLabel = remember(latitude, longitude, pins, mapLabel) {
+    val spokenLabel = remember(cameraLatitude, cameraLongitude, drawnPins, mapLabel, centreIsAPlace) {
         buildString {
             append(mapLabel)
-            if (pins.size > 1) append(", ${pins.size} points")
-            append(", centred on ${UndalLocation.latLngLabel(latitude, longitude)}")
+            if (drawnPins.size > 1) append(", ${drawnPins.size} points")
+            if (centreIsAPlace) {
+                append(", centred on ${UndalLocation.latLngLabel(cameraLatitude, cameraLongitude)}")
+            } else {
+                append(", no point saved yet")
+            }
         }
     }
 
@@ -786,7 +823,7 @@ fun UndalOsmMap(
             // without a gesture the customer has to guess at. This is that way
             // back: it re-centres on the pin, and it is the same control on every
             // read-only map in the app.
-            if (interactive && !centredPin && pins.isNotEmpty() && recentreLabel == null) {
+            if (interactive && !centredPin && drawnPins.isNotEmpty() && recentreLabel == null) {
                 Surface(
                     shape = CircleShape,
                     color = MaterialTheme.colorScheme.surface,
@@ -798,7 +835,7 @@ fun UndalOsmMap(
                 ) {
                     IconButton(
                         onClick = {
-                            val first = pins.first()
+                            val first = drawnPins.first()
                             renderer.moveCamera(first.lat, first.lng, zoom, animate = true, force = true)
                         },
                         modifier = Modifier.size(UndalDimens.touchTarget)
@@ -821,13 +858,13 @@ fun UndalOsmMap(
 
     // Pins, circles and accuracy: rebuilt when the data changes, never because a
     // lambda changed identity.
-    LaunchedEffect(renderer, pins, circle, accuracy) {
+    LaunchedEffect(renderer, drawnPins, circle, accuracy) {
         renderer.renderCircle(circle, brandColour)
         renderer.renderAccuracy(accuracy, brandColour)
         renderer.renderPins(
             // A centred pin is drawn by Compose, not by the map: drawing the same
             // destination twice would show a second, drifting copy of it.
-            pins = if (centredPin) pins.filter { it.role != UndalPinRole.Destination } else pins,
+            pins = if (centredPin) drawnPins.filter { it.role != UndalPinRole.Destination } else drawnPins,
             accentColour = accentColour,
             brandColour = brandColour,
             onDragged = { id, lat, lng -> dragCallback?.invoke(id, lat, lng) },
@@ -837,11 +874,13 @@ fun UndalOsmMap(
 
     // The camera follows the caller's coordinates — but a position the finger just
     // produced is already on screen, so the renderer skips the animation for it.
-    LaunchedEffect(renderer, latitude, longitude, zoom, fitPins, pins) {
+    LaunchedEffect(renderer, cameraLatitude, cameraLongitude, zoom, fitPins, drawnPins) {
         if (fitPins) {
-            renderer.fitPins(if (centredPin) pins.filter { it.role != UndalPinRole.Destination } else pins)
+            renderer.fitPins(
+                if (centredPin) drawnPins.filter { it.role != UndalPinRole.Destination } else drawnPins
+            )
         } else {
-            renderer.moveCamera(latitude, longitude, zoom)
+            renderer.moveCamera(cameraLatitude, cameraLongitude, zoom)
         }
     }
 
@@ -1319,7 +1358,15 @@ fun UndalMapCaption(
         Text(
             text = buildString {
                 if (prefix != null) append(prefix).append(" · ")
-                append(UndalLocation.latLngLabel(latitude, longitude))
+                // A point that is not a place must not be read out as one. "0.00000,
+                // 0.00000" under a map of the Atlantic is the caption of a screen
+                // that has nothing to show, and the person reading it is the one
+                // left to work out why their address has no pin.
+                if (UndalMapTools.isPlausible(latitude, longitude)) {
+                    append(UndalLocation.latLngLabel(latitude, longitude))
+                } else {
+                    append("No pin saved for this address yet")
+                }
                 if (suffix != null) append(" · ").append(suffix)
             },
             style = MaterialTheme.typography.bodySmall,

@@ -8,6 +8,7 @@
  */
 import type { Env } from "../env";
 import { HttpError, json, readJson, redirect } from "../util/http";
+import { memoGet, memoPut, type KvBinding } from "../util/kv";
 
 const LATEST_KV_KEY = "latest:json";
 
@@ -34,7 +35,13 @@ export function handleDownload(env: Env): Response {
 
 export async function handleLatestJson(env: Env): Promise<Response> {
   const urls = releaseUrls(env);
-  const stored = (await env.UNDAL_KV.get(LATEST_KV_KEY, "json")) as LatestRelease | null;
+  // Every app launch asks for this file, so the read is memoised for a minute:
+  // a release is published a few times a month, and `max-age=300` already tells
+  // the phone not to ask again for five minutes.
+  const stored = (await memoGet<LatestRelease>(env.UNDAL_KV as KvBinding, LATEST_KV_KEY, {
+    ttlMs: 60_000,
+    json: true,
+  })) as LatestRelease | null;
   const payload: LatestRelease = stored ?? {
     versionName: "1.0.0",
     versionCode: 1,
@@ -66,6 +73,12 @@ export async function handleReleaseWebhook(env: Env, request: Request): Promise<
     updatedAt: new Date().toISOString(),
   };
 
-  await env.UNDAL_KV.put(LATEST_KV_KEY, JSON.stringify(payload));
+  // Required, and the isolate memo is dropped with it: the next `/latest.json`
+  // from this isolate must show the release that was just published.
+  await memoPut(env.UNDAL_KV as KvBinding, LATEST_KV_KEY, JSON.stringify(payload), {
+    memoTtlMs: 60_000,
+    memoValue: payload,
+    required: true,
+  });
   return json({ ok: true, latest: payload });
 }

@@ -95,7 +95,7 @@ Keep the Spark (free) plan: everything here fits inside it.
 
 ---
 
-## 3 · Run the workflows — five buttons, in this order
+## 3 · Run the workflows — six buttons, in this order
 
 GitHub → **Actions** → pick the workflow → **Run workflow**.
 
@@ -163,6 +163,26 @@ release APK, publishes it to the rolling release and tells the Worker about the
 new version.
 
 **Push to `main` runs this automatically.**
+
+### 3f · `deploy-pages`
+
+Publishes the **customer website** to Cloudflare Pages (project `undal-web`):
+runs the same gates and tests as the Worker, creates the Pages project on the
+first run, pushes the four secrets to it, **prerenders every public page in the
+sitemap with the production router**, refuses to publish a build that could not
+read the kitchen's real menu, deploys `web/public` and smoke-tests that an
+anonymous `/store` is served from a file (`x-undal-prerender: hit`) while a
+`/store` with a basket is rendered (`bypass`).
+
+It needs the secrets `deploy-worker` already needs, plus an optional `WEB_ORIGIN`
+for a custom domain. **Run `deploy-worker` first, once**: it creates the `undal-kv`
+namespace the website binds to.
+
+> The Worker keeps the crons, the FCM relay and the Android app's base URL —
+> Pages has no crons, and an installed APK cannot be repointed. The Worker also
+> keeps its own copy of every web route, so the site is still up if this project
+> is ever rolled back. Everything the design decides, and every header to read
+> when debugging it, is in **`docs/PAGES-AND-PRERENDER.md`**.
 
 ---
 
@@ -294,13 +314,17 @@ undal/
 ├── docs/ALERT-RELIABILITY.md       the alert ladder: payload, channels, manifest, acceptance
 ├── docs/CRASH-DISCIPLINE.md        why no ViewModel coroutine may end the process
 ├── docs/AUDIT-100.md               the audit ledger: every defect, its fix and its proof
+├── docs/PAGES-AND-PRERENDER.md     the website on Pages: what moved, what it costs, what to read when it fails
+├── docs/DESIGN-UPGRADE-PLAN.md     the design language and the phases it was built in
+├── docs/DESIGN-UPGRADE-PROGRESS.md what is shipped of that plan, and what is left
 ├── assets/sound/                   the official Undal order sound
 ├── app/                            the Android app (customer + kitchen)
 ├── firebase/                       rules, indexes, firebase.json
 ├── worker/                         Cloudflare Worker (FCM v1, crons, web, deep links)
+├── web/                            Cloudflare Pages: the customer website, prerendered at build time
 ├── tools/                          preflight, web/app parity gate, shape gate, provisioning and seeding scripts
 ├── gradle/libs.versions.toml       single source of truth for every version
-└── .github/workflows/              keystore · bootstrap · seed-config · deploy-worker · android-build
+└── .github/workflows/              keystore · bootstrap · seed-config · deploy-worker · deploy-pages · android-build
 ```
 
 ---
@@ -371,9 +395,21 @@ four checks above are the first things to do on the phone, in that order.
 
 ## 12 · The website a customer uses
 
-The Worker serves a complete storefront, not a landing page. It is
+**Cloudflare Pages** serves a complete storefront, not a landing page. It is
 server-rendered, so the first paint arrives with the food already on screen and
-every page reads with JavaScript switched off.
+every page reads with JavaScript switched off — and every public page is also
+**prerendered at build time** by the same router, so a crawler and a first-time
+visitor are answered from a file in the CDN before any code runs
+(`docs/PAGES-AND-PRERENDER.md`). The Worker serves the same pages, unchanged, as
+the fallback and as the app's own base URL.
+
+The storefront has a **dark theme** — decided before the first paint, following
+the phone's own setting until the customer chooses, remembered after that — and a
+**motion layer**: dishes arrive in a stagger as they are scrolled to, a shimmer
+sits under a photograph that is still travelling, adding a dish flies it into the
+basket and lifts a bar within reach of the thumb, and a toast says what happened.
+All of it is off under `prefers-reduced-motion`, and none of it is load-bearing:
+with JavaScript switched off the store still sells food.
 
 | Route | What it is |
 | --- | --- |
@@ -387,6 +423,7 @@ every page reads with JavaScript switched off.
 | `/track`, `/order/{id}` | order status, updating itself |
 | `/download`, `/app`, `/open` | the APK with QR codes, and deep-link smart open |
 | `/robots.txt`, `/sitemap.xml` | built from the live catalogue on every request |
+| a 404, a 500 | pages with a way back to the menu — negotiated, so the app and the webhooks still get the JSON they parse |
 
 Three decisions are worth knowing about:
 

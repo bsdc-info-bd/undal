@@ -20,6 +20,7 @@ import { HttpError, json, readJson } from "../util/http";
 import { formatPaisa } from "../util/money";
 import { purgeTokens, tokensForUser, vendorTokens, vendorUid } from "../recipients";
 import { requireCaller, requireVendor } from "../authverify";
+import { memoGet, memoPut, type KvBinding } from "../util/kv";
 
 const ORDER_ALERT_TTL = "300s";
 const ORDER_STATUS_TTL = "60s";
@@ -178,10 +179,18 @@ export async function handleChat(env: Env, request: Request): Promise<Response> 
 
   const sender = callerIsVendor ? "vendor" : "customer";
   const throttleKey = `chat:throttle:${orderId}:${sender}`;
-  const lastChat = Number(await env.UNDAL_KV.get(throttleKey));
+  const binding = env.UNDAL_KV as KvBinding;
+  // Read through the isolate memo: two taps on Send inside three seconds land on
+  // the same isolate almost every time, and the memo answers the second one
+  // without an operation. A tap that lands elsewhere is caught by KV.
+  const lastChat = Number((await memoGet<string>(binding, throttleKey, { ttlMs: CHAT_THROTTLE_SECONDS * 1000 })) ?? "0");
   if (lastChat > Date.now() - 3000) return json({ ok: true, throttled: true });
   // KV requires a TTL of at least 60s; store the timestamp for the 3s window.
-  await env.UNDAL_KV.put(throttleKey, String(Date.now()), { expirationTtl: CHAT_THROTTLE_SECONDS });
+  await memoPut(binding, throttleKey, String(Date.now()), {
+    expirationTtl: CHAT_THROTTLE_SECONDS,
+    memoTtlMs: CHAT_THROTTLE_SECONDS * 1000,
+    required: true,
+  });
 
   const recipientUid = callerIsVendor ? stringField(order, "customerId") : await vendorUid(env);
   const tokens = await tokensForUser(env, recipientUid);

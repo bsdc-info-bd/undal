@@ -37,6 +37,7 @@ import { requireVendor } from "../authverify";
 import { FirestoreError, fsDeleteBatch, fsQuery, type FsRecord } from "../firestore";
 import { rtdbGetShallow, rtdbUpdate } from "../rtdb";
 import { HttpError, json, readJson } from "../util/http";
+import { memoDelete, memoGet, memoPut, type KvBinding } from "../util/kv";
 
 export const CLEANUP_CONFIRMATION = "DELETE_FINISHED_HISTORY";
 /** Orders deleted per call. Small on purpose: a merchant can always run it again. */
@@ -192,18 +193,24 @@ export function indexMissingWarning(indexUrl: string | null): string {
 // ------------------------------------------------------- the pending queue
 
 export async function readPendingMirrors(env: Env): Promise<string[]> {
-  const stored = (await env.UNDAL_KV.get(PENDING_MIRRORS_KEY, "json").catch(() => null)) as string[] | null;
+  // No memo: the backlog is the record of deletions that still have to happen, and
+  // a run that reads a stale copy would drop work another run had just queued.
+  const stored = (await memoGet<string[]>(env.UNDAL_KV as KvBinding, PENDING_MIRRORS_KEY, {
+    ttlMs: 0,
+    json: true,
+  })) as string[] | null;
   if (!Array.isArray(stored)) return [];
   return stored.filter((path) => typeof path === "string" && path.length > 0).slice(0, PENDING_MIRRORS_MAX);
 }
 
 async function writePendingMirrors(env: Env, paths: string[]): Promise<void> {
+  const binding = env.UNDAL_KV as KvBinding;
   const unique = [...new Set(paths)].slice(0, PENDING_MIRRORS_MAX);
   if (unique.length === 0) {
-    await env.UNDAL_KV.delete(PENDING_MIRRORS_KEY).catch(() => undefined);
+    await memoDelete(binding, PENDING_MIRRORS_KEY, { required: true });
     return;
   }
-  await env.UNDAL_KV.put(PENDING_MIRRORS_KEY, JSON.stringify(unique)).catch(() => undefined);
+  await memoPut(binding, PENDING_MIRRORS_KEY, JSON.stringify(unique), { memoValue: unique, required: true });
 }
 
 /**
