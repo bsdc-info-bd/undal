@@ -45,7 +45,7 @@ Every response from a snapshot-eligible path carries **`x-undal-prerender`**:
 | `hit` | The build wrote this page and it is fresh enough; the file was served | one CDN read |
 | `stale` | The live render failed (5xx) and an old snapshot stood in for it | one CDN read |
 | `miss` | A snapshot exists but it is older than `PRERENDER_MAX_AGE_SECONDS`; the page was rendered | a render, then the Cache API |
-| `bypass` | The visitor has state — a basket, a session, an `Authorization` header | a render |
+| `bypass` | The visitor has state — a basket, a session, an `Authorization` header — or the URL carries a query string | a render |
 | `unavailable` | There is no manifest, or none for this origin; everything renders | a render |
 
 `unavailable` is the answer a deployment gives before its first successful build.
@@ -71,6 +71,27 @@ Cloudflare's own cookies (`__cf_bm`, `cf_clearance`, `_cfuvid`, `__cfruid`,
 `cf_chl_*`) are **not** identity and are ignored by that test. They are set on the
 first request from any browser with JavaScript, so treating them as state meant
 the fast path answered `curl` and rendered for every human being.
+
+### Why a search can never be a file
+
+The query string is part of the URL, and the build wrote one file per **path**:
+`/store` is the whole menu. `/store?q=bhaji`, `/store?section=rice` and
+`/store?sort=price-asc` are three different pages, and answering any of them from
+the whole-menu file is a filter that silently does nothing — the customer asks
+for one dish, is handed every dish, and has no way to know they were ignored. A
+search that does nothing is worse than a slow search, because it looks like an
+answer.
+
+So a file answers only a request with **no query at all**. Everything else is
+rendered by the router that knows what the query means, and stays cheap anyway:
+the Cache API layer in the Worker caches by full URL, so the second person to
+search for the same word is answered from the cache rather than from Firestore.
+
+This was found in production, not in review: the first deploy that actually
+published the Function made it possible to ask the site a question, and the
+answer to `/store?q=bhaji` was 57 dishes. `worker/test/pages.test.ts` now asserts
+`bypass` for a queried snapshot path, and the deploy smoke test asks the live site
+the same question and fails if a file answers it.
 
 ---
 
@@ -144,9 +165,23 @@ rebuilds them, which is why every push that touches `worker/` or `web/` runs
    and the release record is the point.
 3. Run **`deploy-pages`**. It creates the Pages project if it does not exist,
    pushes the four secrets to it, prerenders against the live menu, refuses to
-   publish a sample build, deploys `web/public`, and smoke-tests three things:
-   `/healthz` answers, `/store` comes back `x-undal-prerender: hit`, and `/store`
-   with a basket cookie comes back `bypass`.
+   publish a sample build, deploys `web/public` **from inside `web/`**, and then
+   smoke-tests the deployed site: `/healthz` answers, a path nobody prerendered is
+   rendered rather than served from `404.html`, `/store` comes back
+   `x-undal-prerender: hit`, `/store` with a basket cookie comes back `bypass`,
+   `/store?q=…` is not answered from the whole-menu file, and `/store/` is a 301
+   to `/store`.
+
+   Deploying from inside `web/` is not a style choice. Wrangler resolves two
+   things against its **working directory** rather than against the directory it
+   is handed: the project's `wrangler.toml` — the vars and the `UNDAL_KV`
+   binding — and the `functions/` directory it compiles into Pages Functions.
+   `wrangler pages deploy web/public` from the repository root finds neither and
+   uploads a folder of HTML, and reports success while doing it. The site then
+   answers, `/healthz` 404s against the prerendered `404.html`, and a snapshot
+   goes to a customer with dishes in their basket. When a deploy fails, the smoke
+   test's own log is published to the commit or the pull request, so the response
+   the site gave is readable without opening a raw log.
 
 After that it runs on every push to `main` that touches `web/`, `worker/` or
 `tools/`.
@@ -170,6 +205,14 @@ curl -sD- -o /dev/null "$base/store" | grep -i 'x-undal-\|cache-control'
 
 curl -sD- -o /dev/null -H 'cookie: undal_basket=' "$base/store" | grep -i x-undal-prerender
 #   x-undal-prerender: bypass       ← a basket is rendered, never served from a file
+
+curl -sD- -o /dev/null "$base/store?q=bhaji" | grep -i x-undal-prerender
+#   x-undal-prerender: bypass       ← a search is a different URL from the menu
+
+curl -s "$base/a-path-nobody-prerendered" | grep -o 'lives at <strong>[^<]*'
+#   lives at <strong>/a-path-nobody-prerendered
+#                                   ← the Function rendered it; a static folder
+#                                     would say /a-page-that-does-not-exist
 
 curl -sD- -o /dev/null "$base/store/" | grep -i 'HTTP/\|location'
 #   301, location: /store           ← one menu, one address
