@@ -64,6 +64,7 @@ import {
   presenceDecision,
   type PresenceAction,
 } from "./presence-policy";
+import { memoGet, memoPut, type KvBinding } from "../util/kv";
 
 // The numbers live in ./presence-policy.ts, which has no imports and is covered
 // by worker/test/presence-policy.test.ts. They are re-exported here because this
@@ -366,9 +367,10 @@ async function recover(
 async function promptOnce(env: Env, dateKey: string, closedAt: number): Promise<boolean> {
   const key = `presence:reopen-prompt:${dateKey}:${closedAt}`;
   try {
-    const existing = await env.UNDAL_KV.get(key);
+    const binding = env.UNDAL_KV as KvBinding;
+    const existing = await memoGet<string>(binding, key, { ttlMs: 4 * 60_000, cacheNulls: true });
     if (existing) return false;
-    await env.UNDAL_KV.put(key, String(Date.now()), { expirationTtl: 86_400 });
+    await memoPut(binding, key, String(Date.now()), { expirationTtl: 86_400, required: true });
     return true;
   } catch {
     // KV unreachable: better one extra reminder than a kitchen never told.

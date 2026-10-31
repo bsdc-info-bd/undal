@@ -24,7 +24,10 @@
 import { handleCleanup } from "./routes/cleanup";
 import type { Env } from "./env";
 import { projectId } from "./env";
-import { HttpError, clientIp, errorJson, json, rateLimit } from "./util/http";
+import { HttpError, clientIp, errorJson, json, rateLimitDecision } from "./util/http";
+import { kvSavings, kvUsage } from "./util/kv";
+import { edgePage, pageVary } from "./util/page-cache";
+import { BASKET_COOKIE } from "./web/forms";
 import {
   handleChat,
   handleOrderCreated,
@@ -105,10 +108,75 @@ async function health(env: Env): Promise<Response> {
   checks.assetLinks = (env.APP_SIGNING_SHA256 ?? "").length > 0 ? "ok" : "pending-first-signed-build";
 
   const ok = checks.kv === "ok" && checks.serviceAccount === "ok" && checks.rtdb === "ok";
-  return json({ ok, service: "undal-worker", checks, time: new Date().toISOString() }, ok ? 200 : 503);
+  return json(
+    {
+      ok,
+      service: "undal-worker",
+      checks,
+      // This isolate's own KV spend. The free tier is 100,000 reads and 1,000
+      // writes a day for the whole account, so the question "are we going to hit
+      // the limit?" needs a number to look at, not a theory. `savings` is what the
+      // gateway's memory tier and write brake avoided spending.
+      kv: { usage: kvUsage(), savings: kvSavings() },
+      time: new Date().toISOString(),
+    },
+    ok ? 200 : 503,
+  );
 }
 
-async function route(request: Request, env: Env): Promise<Response> {
+/**
+ * Paths whose rendering is public: the same HTML for everybody, no identity, no
+ * money. Everything a customer can act on — the basket, the checkout, the account,
+ * an order's live status — is deliberately absent, and so is every `/api/` route.
+ */
+function edgeCacheable(path: string): boolean {
+  if (path === "/" || path === "/store" || path === "/about" || path === "/download") return true;
+  if (path === "/robots.txt" || path === "/sitemap.xml") return true;
+  return (
+    path.startsWith("/item/") || path.startsWith("/dish/") || path.startsWith("/combo/")
+  );
+}
+
+/** Files whose bytes never change inside a deployment: no counting, no rendering. */
+function staticAsset(path: string): boolean {
+  return (
+    path.startsWith("/icons/") ||
+    path === "/favicon.svg" ||
+    path === "/manifest.webmanifest" ||
+    path === "/sw.js" ||
+    path === "/apple-touch-icon.png"
+  );
+}
+
+/**
+ * Renders a public page through Cloudflare's Cache API.
+ *
+ * The basket cookie is part of the page (the no-script storefront prints the
+ * basket the server read), so it is part of the key; a request carrying any other
+ * cookie — a session above all — bypasses the cache instead of joining it.
+ */
+function edgeCached(
+  request: Request,
+  ctx: ExecutionContext | undefined,
+  render: () => Promise<Response>,
+  ttlSeconds = 60,
+): Promise<Response> {
+  const vary = pageVary(request, [BASKET_COOKIE]);
+  // Belt and braces: a path that is not on the public list is never cached, even
+  // if a future route wires it here by mistake.
+  const bypass = vary === null || !edgeCacheable(new URL(request.url).pathname.replace(/\/{2,}/g, "/").replace(/\/+$/, "") || "/");
+  return edgePage({
+    request,
+    vary: vary ?? "",
+    bypass,
+    ttlSeconds,
+    staleSeconds: 900,
+    ctx,
+    render,
+  });
+}
+
+async function route(request: Request, env: Env, ctx?: ExecutionContext): Promise<Response> {
   const url = new URL(request.url);
   // Collapse duplicate slashes before matching. A base URL with a trailing slash
   // — `https://host//healthz` — used to answer "No route for GET //healthz",
@@ -134,48 +202,64 @@ async function route(request: Request, env: Env): Promise<Response> {
 
   const isApi = path.startsWith("/notify/") || path.startsWith("/admin/");
   const isStoreApi = path.startsWith("/api/store/") || path.startsWith("/api/account/");
-  const allowed = await rateLimit(
-    env,
-    `${isApi ? "api" : isStoreApi ? "store" : "web"}:${ip}`,
-    isApi ? 120 : isStoreApi ? 90 : 300,
-    60,
-  );
-  if (!allowed) {
-    return errorJson(429, "rate-limited", "Too many requests. Please try again in a minute.");
+  // Icons, the manifest and the service worker are counted nowhere: they are bytes
+  // that never change, they cost nothing to serve, and counting them was how an
+  // installable-web page spent a customer's whole budget on its own artwork.
+  const decision = staticAsset(path)
+    ? null
+    : await rateLimitDecision(
+        env,
+        `${isApi ? "api" : isStoreApi ? "store" : "web"}:${ip}`,
+        isApi ? 120 : isStoreApi ? 90 : 300,
+        60,
+      );
+  if (decision && !decision.allowed) {
+    // `Retry-After` is the difference between "the site is broken" and "the site
+    // is busy, come back in 40 seconds" for a client that reads it.
+    return errorJson(
+      429,
+      "rate-limited",
+      "Too many requests. Please try again in a minute.",
+      { hint: `Wait ${decision.retryAfterSeconds} seconds and try again.` },
+      { "retry-after": String(decision.retryAfterSeconds) },
+    );
   }
 
   if (path === "/admin/cleanup" && request.method === "POST") return handleCleanup(env, request);
 
-  if (path === "/" || path === "/store") return handleStoreFront(env, request);
-  if (path === "/about") return handleAboutPage(env, request);
+  if (path === "/" || path === "/store") return edgeCached(request, ctx, () => handleStoreFront(env, request), 30);
+  if (path === "/about") return edgeCached(request, ctx, () => handleAboutPage(env, request), 60);
   if (path === "/basket") return handleBasket(env, request);
   if (path === "/checkout") return handleCheckout(env, request);
   if (path === "/login") return handleLoginPage(env, request);
   if (path === "/account") return handleAccountPage(env, request);
-  if (path === "/robots.txt") return handleRobotsTxt(request);
-  if (path === "/sitemap.xml") return handleSitemapXml(env, request);
+  if (path === "/robots.txt") return edgeCached(request, ctx, async () => handleRobotsTxt(request), 3600);
+  if (path === "/sitemap.xml") return edgeCached(request, ctx, () => handleSitemapXml(env, request), 3600);
   if (path === "/track") {
     const orderId = url.searchParams.get("id") ?? "";
     return orderId ? handleOrderTracking(orderId) : handleTrackPage("");
   }
   if (path.startsWith("/item/")) {
-    return handleStoreItem(env, request, path.slice("/item/".length));
+    const itemId = path.slice("/item/".length);
+    return edgeCached(request, ctx, () => handleStoreItem(env, request, itemId), 60);
   }
   if (path === "/favicon.svg") return favicon();
   if (path === "/manifest.webmanifest") return handleManifest();
   if (path === "/sw.js") return handleServiceWorker();
   if (path.startsWith("/icons/")) return handleIcon(path);
   if (path === "/.well-known/assetlinks.json") return handleAssetLinks(env);
-  if (path === "/download") return handleDownloadPage(env, request);
+  if (path === "/download") return edgeCached(request, ctx, () => handleDownloadPage(env, request), 60);
   if (path === "/download/apk") return handleDownload(env);
   if (path === "/latest.json") return handleLatestJson(env);
   if (path === "/app" || path === "/open") return handleSmartOpen(env, request, "");
 
   if (path.startsWith("/dish/")) {
-    return handleItemSharePage(env, request, "dish", path.slice("/dish/".length));
+    const shareId = path.slice("/dish/".length);
+    return edgeCached(request, ctx, () => handleItemSharePage(env, request, "dish", shareId), 60);
   }
   if (path.startsWith("/combo/")) {
-    return handleItemSharePage(env, request, "combo", path.slice("/combo/".length));
+    const shareId = path.slice("/combo/".length);
+    return edgeCached(request, ctx, () => handleItemSharePage(env, request, "combo", shareId), 60);
   }
   if (path.startsWith("/order/")) {
     const orderId = path.slice("/order/".length).replace(/[^A-Za-z0-9]/g, "");
@@ -242,9 +326,9 @@ async function route(request: Request, env: Env): Promise<Response> {
 }
 
 export default {
-  async fetch(request: Request, env: Env): Promise<Response> {
+  async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     try {
-      return await route(request, env);
+      return await route(request, env, ctx);
     } catch (error) {
       if (error instanceof HttpError) {
         // The hint is the part a merchant can act on. Dropping it here is what

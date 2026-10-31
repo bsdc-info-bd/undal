@@ -28,6 +28,7 @@ import type { Env } from "../env";
 import { fsGet } from "../firestore";
 import { sendToTokens } from "../fcmv1";
 import { rtdbGet } from "../rtdb";
+import { memoGet, memoPut, type KvBinding } from "../util/kv";
 import { vendorTokens } from "../recipients";
 import {
   clockMinutes,
@@ -111,9 +112,19 @@ export async function runOpeningReminder(env: Env, now: Date = new Date()): Prom
   // Rule 1: one reminder per service.
   const key = `presence:opening-reminder:${clock.dateKey}:${service}`;
   try {
-    const already = await env.UNDAL_KV.get(key);
+    // `cacheNulls`: the sweep runs every five minutes and this flag is absent
+    // until the day's first reminder, so without a cached miss the same empty key
+    // is read from KV 288 times a day. A missed reminder is never the cost — the
+    // write below is required, and a KV outage still throws into this catch.
+    const already = await memoGet<string>(env.UNDAL_KV as KvBinding, key, {
+      ttlMs: 4 * 60_000,
+      cacheNulls: true,
+    });
     if (already) return { ok: true, reminded: false, reason: "already-reminded", service, minutesUntil };
-    await env.UNDAL_KV.put(key, String(now.getTime()), { expirationTtl: 43_200 });
+    await memoPut(env.UNDAL_KV as KvBinding, key, String(now.getTime()), {
+      expirationTtl: 43_200,
+      required: true,
+    });
   } catch {
     // KV unreachable: one duplicate reminder is better than a silent kitchen.
   }

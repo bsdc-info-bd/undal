@@ -4,17 +4,24 @@
  */
 import type { Env } from "./env";
 import { fsDelete, fsQuery } from "./firestore";
+import { memoGet, memoPut, type KvBinding } from "./util/kv";
 
 const VENDOR_UID_KEY = "vendor:uid";
 const VENDOR_UID_TTL_SECONDS = 600;
+/** The kitchen's uid changes once, when the owner re-provisions. Ten minutes is plenty. */
+const VENDOR_UID_MEMO_TTL_MS = 10 * 60_000;
 
 export async function vendorUid(env: Env): Promise<string | null> {
-  const cached = await env.UNDAL_KV.get(VENDOR_UID_KEY);
+  const binding = env.UNDAL_KV as KvBinding;
+  const cached = await memoGet<string>(binding, VENDOR_UID_KEY, { ttlMs: VENDOR_UID_MEMO_TTL_MS });
   if (cached) return cached;
   const vendors = await fsQuery(env, { collectionId: "vendor", limit: 1 });
   const uid = vendors[0]?.id ?? null;
   if (uid) {
-    await env.UNDAL_KV.put(VENDOR_UID_KEY, uid, { expirationTtl: VENDOR_UID_TTL_SECONDS });
+    await memoPut(binding, VENDOR_UID_KEY, uid, {
+      expirationTtl: VENDOR_UID_TTL_SECONDS,
+      memoTtlMs: VENDOR_UID_MEMO_TTL_MS,
+    });
   }
   return uid;
 }
