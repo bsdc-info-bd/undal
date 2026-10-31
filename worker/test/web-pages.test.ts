@@ -96,6 +96,9 @@ test("a filtered menu says what is on screen and how to undo it", async () => {
   const html = await (await handleStoreFront(env, new Request("https://undal.test/store?q=rice"))).text();
   assert.match(html, /class="filter-note">Showing \d+ choice/);
   assert.match(html, /for \u201crice\u201d \u00b7 <a href="\/store#menu">show everything<\/a>/);
+  // One dish is "1 menu choice", not "1 menu choices": the heading counts the same
+  // list the note does, and a filtered menu is where a customer reads it.
+  assert.match(html, />1 menu choice \u00b7 Find your favourite</);
 });
 
 test("a section filter says which section it is showing", async () => {
