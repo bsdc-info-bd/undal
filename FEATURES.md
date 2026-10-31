@@ -6,22 +6,22 @@ backend** — never when it is merely planned or sketched.
 
 | Block | Range | Count |
 | --- | --- | --- |
-| Customer portal | C-001 … C-081 | 81 |
-| Vendor portal | V-001 … V-110 | 110 |
-| Platform · web · deep links · CI | P-001 … P-072 | 72 |
-| **Total** | | **263** |
+| Customer portal | C-001 … C-083 | 83 |
+| Vendor portal | V-001 … V-111 | 111 |
+| Platform · web · deep links · CI | P-001 … P-087 | 87 |
+| **Total** | | **281** |
 
-**Progress: 263 / 263 implemented (100 %)** — every block is ticked: the
-customer portal (C-001 … C-081), the vendor portal (V-001 … V-110) and the
-platform, web, deep-link and release block (P-001 … P-072). Nothing here is
+**Progress: 281 / 281 implemented (100 %)** — every block is ticked: the
+customer portal (C-001 … C-083), the vendor portal (V-001 … V-111) and the
+platform, web, deep-link and release block (P-001 … P-087). Nothing here is
 "planned": each line is code in this repository, verified by
-`grep -c '^- \[x\]' FEATURES.md` (263) and by the acceptance table in README §11.
+`grep -c '^- \[x\]' FEATURES.md` (281) and by the acceptance table in README §11.
 
 Legend: `[x]` shipped and wired · `[ ]` still to ship.
 
 ---
 
-## C · Customer portal (81)
+## C · Customer portal (83)
 
 - [x] C-001 · Branded splash with animated logo (core-splashscreen)
 - [x] C-002 · Role auto-router from auth state plus Firestore role document
@@ -104,8 +104,10 @@ Legend: `[x]` shipped and wired · `[ ]` still to ship.
 - [x] C-079 · Profile: edit name, phone, photo (Cloudinary), re-pin address, change password
 - [x] C-080 · Logout and full account deletion (auth, user document, tokens) behind a confirmation sheet
 - [x] C-081 · Offer strip on the store screen: the kitchen's live coupons from the same public board the web store prints, each with its headline, its conditions, whether it applies itself or needs the code typed, and a tap that copies the code
+- [x] C-082 · The system's animation preference is honoured in both portals: the loading skeleton holds still, a page intro is already in place on the first frame and a total does not count up, on a phone that has been asked to stop moving things — read from `ANIMATOR_DURATION_SCALE`, the switch Android's own "Remove animations" accessibility setting writes
+- [x] C-083 · A cart line total counts to its new value when a quantity changes, formatted by the app's own `Money`, clamped so it can never show a number the server did not charge
 
-## V · Vendor portal (110)
+## V · Vendor portal (111)
 
 - [x] V-001 · Kitchen login using the account provisioned from repository secrets at bootstrap
 - [x] V-002 · Stay logged in for a year: persisted session, token refresh, session keeper watchdog and role re-check
@@ -217,6 +219,7 @@ Legend: `[x]` shipped and wired · `[ ]` still to ship.
 - [x] V-108 · Haptic feedback on status actions
 - [x] V-109 · Vendor inbox mirroring the kitchen alert history
 - [x] V-110 · One-tap share of the store link
+- [x] V-111 · The vendor store settings and the portal stages arrive with the same capped, draw-only reveal as the customer screens, and the kitchen's queue skeleton holds still when the system's animations are off — while the order alert's sound, full-screen intent, notification and watchdog stay exactly as they were, because no alarm is ever gated on an animation
 
 ## P · Platform, web, deep links and delivery (87)
 
@@ -325,4 +328,4 @@ Legend: `[x]` shipped and wired · `[ ]` still to ship.
 ## How to read this file between responses
 
 The task owner can say **`Status`** at any time and the count above is the
-answer: how many of the 278 features are actually shipped and wired.
+answer: how many of the 281 features are actually shipped and wired.
