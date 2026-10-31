@@ -30,7 +30,11 @@ on:
         default: ""
 
 permissions:
-  contents: read
+  # Write, and only for the reporter at the bottom: a deploy that fails has to say
+  # what the site actually answered, on the commit, where it can be read without
+  # opening the raw log. Nothing in this workflow pushes.
+  contents: write
+  pull-requests: write
 
 concurrency:
   group: deploy-pages
@@ -235,11 +239,21 @@ jobs:
           python3 "$RUNNER_TEMP/check-manifest.py"
 
       - name: Deploy to Cloudflare Pages
+        working-directory: web
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
         run: |
-          npx wrangler pages deploy web/public \
+          # From inside web/, and that is not a style choice. Wrangler resolves two
+          # things against the working directory rather than against the directory
+          # it is handed: the project's wrangler.toml — the vars and the UNDAL_KV
+          # binding — and the functions/ directory it compiles into Pages Functions.
+          # Run from the repository root with web/public as an argument, it found
+          # neither and uploaded a folder of HTML. The site answered, so it looked
+          # deployed: /healthz 404'd against the prerendered 404.html, a snapshot
+          # went to a customer with dishes in their basket, and /store/ kept its
+          # trailing slash. The smoke test below caught all three on the first run.
+          npx wrangler pages deploy public \
             --project-name "${PROJECT_NAME}" \
             --branch main \
             --commit-hash "${GITHUB_SHA}" \
@@ -252,52 +266,106 @@ jobs:
       # rendered rather than served from it. The third is the one that matters — a
       # snapshot answered to a customer with items in their basket is a customer
       # looking at an empty basket.
+      # The smoke test proves four separate things, and every one of them has
+      # failed silently before: the Function answers at all, a prerendered page is
+      # served from the build output rather than rendered, a request with a basket
+      # is rendered rather than served from it, and a trailing slash is a 301. The
+      # third is the one that matters — a snapshot answered to a customer with
+      # dishes in their basket is a customer looking at an empty basket.
+      #
+      # Everything it sees goes into a log the reporter below can publish, because
+      # "the deploy failed" without the response headers is a guess, not a
+      # diagnosis.
       - name: Smoke test the deployment
         env:
           WEB_ORIGIN: ${{ secrets.WEB_ORIGIN }}
           INPUT_ORIGIN: ${{ github.event.inputs.origin }}
         run: |
           set -uo pipefail
-          base="${INPUT_ORIGIN:-${WEB_ORIGIN:-https://${PROJECT_NAME}.pages.dev}}"
+          LOG="$RUNNER_TEMP/undal-pages-smoke.log"
+          : > "$LOG"
+          say() { printf '%s\n' "$*" | tee -a "$LOG"; }
+          fail() { printf '%s\n' "$*" | tee -a "$LOG" >&2; exit 1; }
+
+          # The host this workflow deployed to. A custom domain is checked too, but
+          # softly: it may point at the Worker rather than at Pages, and a 200 from
+          # the Worker proves nothing about these snapshots.
+          base="${INPUT_ORIGIN:-https://${PROJECT_NAME}.pages.dev}"
           base="${base%/}"
-          echo "smoke testing $base"
+          say "smoke testing $base"
+
           ok=""
           for attempt in 1 2 3 4 5 6; do
             code=$(curl -sS -o "$RUNNER_TEMP/healthz.json" -w '%{http_code}' "$base/healthz" || true)
-            if [ "$code" = "200" ]; then ok="yes"; cat "$RUNNER_TEMP/healthz.json"; echo ""; break; fi
-            echo "attempt $attempt: /healthz answered ${code:-nothing}"
+            if [ "$code" = "200" ]; then
+              ok="yes"
+              say "/healthz answered 200: $(head -c 300 "$RUNNER_TEMP/healthz.json")"
+              break
+            fi
+            say "attempt $attempt: /healthz answered ${code:-nothing}"
             sleep 10
           done
           if [ -z "$ok" ]; then
-            echo "/healthz did not answer in time — check the wrangler output above." >&2
-            echo "  (a 404 here usually means the origin has a path or a trailing slash)" >&2
-            exit 1
+            say "A 404 here is the prerendered 404.html, which means Pages is serving"
+            say "the folder and the Function was never deployed: wrangler compiles"
+            say "functions/ against its working directory, not against the output"
+            say "directory it is given."
+            fail "/healthz did not answer 200 in time — see the deploy step above."
           fi
+
+          # The sharpest version of the same question: a path nobody prerendered has
+          # to be rendered, and the site's own 404 says which path was asked for.
+          # Served from the build output instead, it says
+          # /a-page-that-does-not-exist — the path 404.html was baked with.
+          missing="/smoke-not-a-page-$$"
+          body=$(curl -sS "$base$missing" || true)
+          case "$body" in
+            *"$missing"*) say "an unknown path is rendered by the Function, not served from 404.html." ;;
+            *) fail "an unknown path answered the prerendered 404.html — the Pages Function is not deployed." ;;
+          esac
 
           headers=$(curl -sS -D - -o "$RUNNER_TEMP/store.html" "$base/store" || true)
+          say "/store headers: $(printf '%s' "$headers" | grep -iE '^(HTTP/|x-undal-|cache-control|content-type)' | tr -d '\r' | tr '\n' ' ')"
           state=$(printf '%s' "$headers" | grep -i '^x-undal-prerender:' | tr -d '\r' | awk '{print $2}')
           case "$state" in
-            hit) echo "/store was served from the prerendered snapshot." ;;
-            *) echo "/store answered x-undal-prerender: ${state:-nothing} — expected hit on a fresh deploy." >&2
-               echo "The site still works (that header means it rendered live), but the snapshots are not being used." >&2
-               exit 1 ;;
+            hit) say "/store was served from the prerendered snapshot." ;;
+            *) say "That header means the page rendered live, so the site works, but the"
+               say "snapshots are not being used: check the origin the build wrote them"
+               say "for against the origin this request arrived on."
+               fail "/store answered x-undal-prerender: ${state:-nothing} — expected hit on a fresh deploy." ;;
           esac
-          grep -q "<html" "$RUNNER_TEMP/store.html" || { echo "/store did not answer HTML." >&2; exit 1; }
+          grep -q "<html" "$RUNNER_TEMP/store.html" || fail "/store did not answer HTML."
 
-          basket=$(curl -sS -D - -o /dev/null -H 'cookie: undal_basket=' "$base/store" \
-            | grep -i '^x-undal-prerender:' | tr -d '\r' | awk '{print $2}')
+          basket_headers=$(curl -sS -D - -o /dev/null -H 'cookie: undal_basket=' "$base/store" || true)
+          basket=$(printf '%s' "$basket_headers" | grep -i '^x-undal-prerender:' | tr -d '\r' | awk '{print $2}')
           if [ "$basket" != "bypass" ]; then
-            echo "a request with a basket was answered '${basket:-nothing}' — expected 'bypass'." >&2
-            echo "A customer with dishes in their basket must never be shown somebody else's page." >&2
-            exit 1
+            say "/store with a basket cookie answered: $(printf '%s' "$basket_headers" | grep -iE '^(HTTP/|x-undal-)' | tr -d '\r' | tr '\n' ' ')"
+            fail "a request with a basket was answered '${basket:-nothing}' — expected 'bypass'."
           fi
-          echo "a basket is rendered, not served from a file."
+          say "a basket is rendered, not served from a file."
 
           canonical=$(curl -sS -o /dev/null -w '%{http_code} %{redirect_url}' "$base/store/" || true)
           case "$canonical" in
-            301*"/store") echo "/store/ points at /store." ;;
-            *) echo "/store/ answered '${canonical}' — expected a 301 to /store." >&2; exit 1 ;;
+            301*"/store") say "/store/ points at /store." ;;
+            *) fail "/store/ answered '${canonical}' — expected a 301 to /store." ;;
           esac
+
+          # A domain of the kitchen's own, if there is one: does it answer, and what
+          # does it say about the snapshots? Reported, not asserted, because this
+          # workflow does not control where the domain points.
+          extra="${WEB_ORIGIN:-}"
+          extra="${extra%/}"
+          if [ -n "$extra" ] && [ "$extra" != "$base" ]; then
+            extra_code=$(curl -sS -o "$RUNNER_TEMP/extra-store.html" -w '%{http_code}' "$extra/store" || true)
+            extra_state=$(curl -sS -D - -o /dev/null "$extra/store" 2>/dev/null \
+              | grep -i '^x-undal-prerender:' | tr -d '\r' | awk '{print $2}')
+            say "$extra/store answered ${extra_code:-nothing} with x-undal-prerender: ${extra_state:-none}."
+            if [ "${extra_state:-none}" != "hit" ]; then
+              say "  (not a failure: that origin is built for, but this workflow does not"
+              say "   control where the domain points. If it points at the Worker rather"
+              say "   than at Pages, it will never carry this header.)"
+            fi
+          fi
 
       - name: Summarise
         env:
@@ -313,3 +381,35 @@ jobs:
             echo "- The Worker keeps the crons, the FCM relay and the Android app's base URL."
             echo "- Health: https://${PROJECT_NAME}.pages.dev/healthz"
           } >> "$GITHUB_STEP_SUMMARY"
+
+      # A deploy failure is only useful as the response the site actually gave.
+      # This puts the smoke test's own log on the commit (or the pull request), so
+      # the next reader does not have to open a raw log to find out whether the
+      # Function was missing, the snapshots were stale, or the origin was wrong.
+      - name: Report what the site answered
+        if: failure()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          LOG="$RUNNER_TEMP/undal-pages-smoke.log"
+          OUT="$RUNNER_TEMP/pages-smoke.md"
+          {
+            echo "## This deploy stopped here"
+            echo ""
+            if [ -s "$LOG" ]; then
+              echo '```'
+              tail -n 60 "$LOG"
+              echo '```'
+            else
+              echo "The run failed before the smoke test wrote anything — read the failing step above."
+            fi
+          } > "$OUT"
+          cat "$OUT" >> "$GITHUB_STEP_SUMMARY"
+          echo "::error::The Pages deploy failed — what the site answered is in the commit comment and the job summary."
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            gh pr comment "${{ github.event.pull_request.number }}" \
+              --body-file "$OUT" --edit-last --create-if-none
+          else
+            gh api "repos/${{ github.repository }}/commits/${{ github.sha }}/comments" \
+              -f body="$(cat "$OUT")" > /dev/null || true
+          fi
