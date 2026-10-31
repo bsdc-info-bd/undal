@@ -157,8 +157,18 @@ fun UndalSectionHeader(
 @Composable
 fun ShimmerBlock(
     modifier: Modifier = Modifier,
-    shape: Shape = RoundedCornerShape(UndalDimens.radiusSm)
+    shape: Shape = RoundedCornerShape(UndalDimens.radiusSm),
+    motionEnabled: Boolean = rememberUndalMotionEnabled()
 ) {
+    val base = MaterialTheme.colorScheme.surfaceVariant
+    if (!motionEnabled) {
+        // The skeleton still says "this space is coming"; it just does not sweep.
+        // An infinite animation on a phone whose owner asked the system to stop
+        // moving things is not a small offence: it is the reason the switch
+        // exists. A still placeholder is the same information, held still.
+        Box(modifier = modifier.clip(shape).background(base))
+        return
+    }
     val transition = rememberInfiniteTransition(label = "undal-shimmer")
     val progress by transition.animateFloat(
         initialValue = 0f,
@@ -169,7 +179,6 @@ fun ShimmerBlock(
         ),
         label = "undal-shimmer-progress"
     )
-    val base = MaterialTheme.colorScheme.surfaceVariant
     val highlight = MaterialTheme.colorScheme.surface
     Box(
         modifier = modifier
