@@ -3,6 +3,8 @@
  * Inline CSS only: no external asset can fail on a Bangladeshi mobile network.
  */
 import { DESIGN } from "./design";
+import { MOTION, THEME_BOOT_SCRIPT } from "./motion";
+import { MOTION_SCRIPT, themeToggle } from "./motion-client";
 import { escapeHtml, securityHeaders } from "../util/http";
 import { DEFAULT_LOCALE, OG_LOCALE_ALTERNATE, SITE_NAME } from "./seo";
 
@@ -117,7 +119,8 @@ export function renderPage(options: PageOptions): Response {
 ${canonical}
 ${robots}
 <meta name="theme-color" content="#165b3b">
-<meta name="color-scheme" content="light">
+<meta name="theme-color" media="(prefers-color-scheme: dark)" content="#0e1512">
+<meta name="color-scheme" content="light dark">
 <meta name="format-detection" content="telephone=no">
 <meta property="og:type" content="website">
 <meta property="og:site_name" content="${SITE_NAME}">
@@ -136,10 +139,13 @@ ${options.ogImage ? `<meta name="twitter:image" content="${escapeHtml(options.og
 <link rel="preconnect" href="https://tile.openstreetmap.org" crossorigin>
 <link rel="preconnect" href="https://res.cloudinary.com" crossorigin>
 ${options.jsonLd ?? ""}
+<script>${THEME_BOOT_SCRIPT}</script>
 <style>${STYLE}
-${DESIGN}</style>
+${DESIGN}
+${MOTION}</style>
 </head>
 <body>
+<script>${MOTION_SCRIPT}</script>
 <a class="skip-link" href="#main-content">Skip to content</a>
 <header>
 <a class="brand-link" href="/store">${MARK}
@@ -147,7 +153,10 @@ ${DESIGN}</style>
 <h1>${SITE_NAME}</h1>
 <p>Home-cooked food · Sylhet · cash on delivery</p>
 </div></a>
+<div class="header-tools">
 <a class="header-action" href="/download">Get the Android app ↗</a>
+${themeToggle()}
+</div>
 </header>
 ${options.nav ?? ""}
 <main id="main-content">

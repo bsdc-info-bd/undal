@@ -129,6 +129,31 @@ function catalogueFor(menu: WebMenu): Record<string, unknown> {
   return catalogue;
 }
 
+/**
+ * The four numbers a customer asks about before they read a single dish name.
+ *
+ * Everything here comes from the kitchen's own store document — the fee per
+ * kilometre, the radius it delivers inside, the smallest order it accepts and the
+ * only way it takes payment. It is a `<dl>` because that is what it is: four
+ * labelled facts, readable with the stylesheet switched off and announced as
+ * pairs by a screen reader.
+ */
+function factsStrip(store: WebStoreConfig | null): string {
+  if (!store) return "";
+  const facts: Array<[string, string]> = [
+    ["Delivery", `${formatPaisa(store.deliveryPerKmAmountPaisa)} per km`],
+    ["Radius", `${store.radiusKm} km from the kitchen`],
+    ["Minimum order", formatPaisa(store.minOrderAmountPaisa)],
+    ["Payment", "Cash on delivery"],
+  ];
+  return `<dl class="undal-facts reveal">${facts
+    .map(
+      ([label, value], position) =>
+        `<div style="--i:${Math.min(position, 4)}"><dt>${escapeHtml(label)}</dt><dd>${escapeHtml(value)}</dd></div>`,
+    )
+    .join("")}</dl>`;
+}
+
 function statusBanner(store: WebStoreConfig | null): string {
   if (!store) {
     return `<div class="notice">The kitchen has not published its store document yet. Browsing works; ordering will be refused until it does.</div>`;
@@ -144,7 +169,7 @@ function statusBanner(store: WebStoreConfig | null): string {
     : status.reason === "paused"
       ? `${status.detail} You can still browse the menu.`
       : `${status.detail} You can still browse the menu and fill your basket.`;
-  return `<section class="card store-status" aria-label="Kitchen and delivery information">
+  return `<section class="card store-status reveal" aria-label="Kitchen and delivery information">
   <span class="pill ${open ? "open" : "closed"}">${escapeHtml(status.headline)}</span>
   <h2 style="margin-top:10px">${escapeHtml(store.storeName)}</h2>
   <p class="muted" style="margin-top:0">${escapeHtml(store.storeAddressText)}</p>
@@ -206,7 +231,7 @@ function couponStrip(coupons: CouponBoardEntry[], now = Date.now()): string {
   const cards = visible
     .slice(0, 3)
     .map(
-      (coupon) => `<div class="coupon-banner">
+      (coupon, position) => `<div class="coupon-banner reveal" style="--i:${Math.min(position, 3)}">
   <div>
     <span class="eyebrow">Undal offer</span>
     <h3>${escapeHtml(couponHeadline(coupon.type, coupon.value, coupon.maxDiscountPaisa))}</h3>
@@ -220,7 +245,7 @@ function couponStrip(coupons: CouponBoardEntry[], now = Date.now()): string {
 </div>`,
     )
     .join("");
-  return `<section class="coupon-strip" aria-label="Offers running today">${cards}</section>`;
+  return `<section class="coupon-strip reveal" aria-label="Offers running today">${cards}</section>`;
 }
 
 /**
@@ -243,7 +268,10 @@ function foodArt(imageUrl: string): string {
     `<div class="food-placeholder" aria-hidden="true"><span>♨</span><small>From our kitchen</small></div></div>`;
 }
 
-function itemCard(item: WebItem, sectionName: string): string {
+function itemCard(item: WebItem, sectionName: string, position = 0): string {
+  // A stagger the eye reads as "these arrived together", not a queue. Capped, so
+  // the fortieth card on a long menu is not still fading in two seconds later.
+  const step = Math.min(position, 9);
   const image = foodArt(item.imageUrl);
   const tags: string[] = [];
   if (item.kind === "dish" && item.veg) tags.push(`<span class="tag">Veg</span>`);
@@ -257,7 +285,7 @@ function itemCard(item: WebItem, sectionName: string): string {
   // A card is a link *and* a form: tapping the picture opens the dish, tapping
   // "Add" puts it in the basket. With the script alive the form never navigates;
   // without it, the same tap posts to /basket/add and the basket still exists.
-  return `<div class="item">
+  return `<div class="item reveal" style="--i:${step}">
 <a class="cover" href="/item/${item.id}">
 ${image}
 <div class="body">
@@ -332,7 +360,9 @@ export async function handleStoreFront(env: Env, request: Request): Promise<Resp
 
   const grid = items.length
     ? `<div class="grid">${items
-        .map((item) => itemCard(item, sectionNames.get(item.kind === "dish" ? item.categoryId : "") ?? "Combos"))
+        .map((item, position) =>
+          itemCard(item, sectionNames.get(item.kind === "dish" ? item.categoryId : "") ?? "Combos", position),
+        )
         .join("")}</div>`
     : `<div class="notice">Nothing matches that search. <a href="/store">Show the whole menu</a>.</div>`;
 
@@ -378,6 +408,7 @@ ${addedNotice}
 ${couponStrip(menu.coupons ?? [])}
 ${statusBanner(menu.store)}
 ${campaignCard}
+${factsStrip(menu.store)}
 <div class="menu-heading" id="menu"><h2>What sounds good today?</h2><p class="muted">${items.length} menu choices · Find your favourite</p></div>
 <form class="search" action="/store" method="get" role="search">
   <input type="search" name="q" value="${escapeHtml(search)}" placeholder="Search the menu — bhorta, chicken, tea…" aria-label="Search the menu">
@@ -454,7 +485,7 @@ export async function handleStoreItem(env: Env, request: Request, id: string): P
 
   const body = `
 <a class="back-link" href="/store">← Back to the menu</a>
-<article class="item-detail" aria-labelledby="dish-title">
+<article class="item-detail reveal" aria-labelledby="dish-title">
   <div class="item-photo">${item.imageUrl
     ? `<img class="hero" src="${escapeHtml(item.imageUrl)}" alt="${escapeHtml(item.name)}" ` +
       `onerror="this.style.display='none';var host=this.parentNode;if(host){host.className='item-photo no-photo';}">` +

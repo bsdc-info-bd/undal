@@ -335,7 +335,7 @@ test("an expired sign-in at the order button is renewed once, not shown as a bar
 
 test("item detail pairs imagery and information without replacing its real add form", async () => {
   const html = await (await handleStoreItem(env, new Request("https://undal.test/item/rice"), "rice")).text();
-  assert.match(html, /<article class="item-detail" aria-labelledby="dish-title">/);
+  assert.match(html, /<article class="item-detail reveal" aria-labelledby="dish-title">/);
   assert.match(html, /<h2 id="dish-title">Rice &lt;script&gt;/);
   assert.match(html, /class="card item-information"/);
   assert.match(html, /class="undal-add undal-add-wide" method="post" action="\/basket\/add"/);
@@ -346,7 +346,7 @@ test("item detail pairs imagery and information without replacing its real add f
 test("sold-out detail offers recovery without exposing an add form", async () => {
   const soldOutEnv = { UNDAL_KV: { get: async () => ({ ...menu, dishes: menu.dishes.map(dish => ({ ...dish, available: false })) }) } } as unknown as Env;
   const html = await (await handleStoreItem(soldOutEnv, new Request("https://undal.test/item/rice"), "rice")).text();
-  const article = html.slice(html.indexOf('<article class="item-detail"'), html.indexOf('</article>'));
+  const article = html.slice(html.indexOf('<article class="item-detail'), html.indexOf('</article>'));
   assert.match(article, /not orderable right now/);
   assert.doesNotMatch(article, /<form/);
 });
