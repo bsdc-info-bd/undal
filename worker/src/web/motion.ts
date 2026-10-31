@@ -155,7 +155,7 @@ input::placeholder,textarea::placeholder{color:var(--muted)}
 :root[data-undal-theme="dark"] .qr svg{filter:none}
 
 /* === the reading position =================================================== */
-.undal-progress{position:fixed;inset:0 0 auto 0;height:3px;z-index:60;pointer-events:none;
+.undal-progress{position:fixed;top:0;right:0;left:0;height:3px;z-index:60;pointer-events:none;
  background:transparent;opacity:0;transition:opacity var(--quick) var(--ease-out)}
 .undal-progress.is-on{opacity:1}
 .undal-progress span{display:block;height:100%;width:0;
@@ -211,7 +211,7 @@ nav.store.is-stuck{box-shadow:0 10px 30px #20392c1f;border-bottom-color:var(--li
    occupy shimmers instead of sitting empty, and the artwork underneath is what
    shows if it never arrives at all. */
 .food-art{position:relative;overflow:hidden}
-.food-art::before{content:"";position:absolute;inset:0;z-index:0;
+.food-art::before{content:"";position:absolute;top:0;right:0;bottom:0;left:0;z-index:0;
  background:linear-gradient(100deg,var(--skeleton-a) 20%,var(--skeleton-b) 40%,var(--skeleton-a) 60%);
  background-size:220% 100%;animation:undal-shimmer 1.5s linear infinite}
 .food-art>img,.food-art>.food-placeholder{position:relative;z-index:1}
@@ -274,8 +274,8 @@ nav.store a.cart.is-bumped{transform:scale(1.06)}
 
 /* === the hero, alive but not busy =========================================== */
 .store-hero{isolation:isolate}
-.store-hero::after{content:"";position:absolute;inset:-20% -10% auto auto;width:min(58vw,520px);
- aspect-ratio:1;border-radius:50%;z-index:-1;filter:blur(6px);
+.store-hero::after{content:"";position:absolute;top:-20%;right:-10%;bottom:auto;left:auto;width:min(58vw,520px);
+ aspect-ratio:1;height:min(58vw,520px);border-radius:50%;z-index:-1;filter:blur(6px);
  background:radial-gradient(circle at 40% 40%,var(--hero-glow),transparent 68%);
  animation:undal-drift 16s var(--ease-in-out) infinite alternate}
 @keyframes undal-drift{from{transform:translate3d(0,0,0) scale(1)}to{transform:translate3d(-5%,6%,0) scale(1.09)}}

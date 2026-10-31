@@ -92,6 +92,19 @@ test("search retains the query and offers an empty-state recovery link", async (
   assert.match(html, /Show the whole menu/);
 });
 
+test("a filtered menu says what is on screen and how to undo it", async () => {
+  const html = await (await handleStoreFront(env, new Request("https://undal.test/store?q=rice"))).text();
+  assert.match(html, /class="filter-note">Showing \d+ choice/);
+  assert.match(html, /for \u201crice\u201d \u00b7 <a href="\/store#menu">show everything<\/a>/);
+});
+
+test("a section filter says which section it is showing", async () => {
+  const html = await (await handleStoreFront(env, new Request("https://undal.test/store?section=rice"))).text();
+  assert.match(html, /class="filter-note">Showing \d+ choice/);
+  assert.match(html, /in [^<\u00b7]+ \u00b7 <a href="\/store#menu">show everything<\/a>/);
+  assert.doesNotMatch(html, /<a class="active" href="\/store#menu">Everything/);
+});
+
 test("tracking uses the actual taka symbol rather than a literal unicode escape", async () => {
   const html = await (await handleOrderTracking("abc123")).text();
   assert.match(html, /replace\(\/\^\/, "৳ "\)/);
@@ -496,4 +509,17 @@ test("the first dishes are asked for first, and the photo host is already connec
   assert.match(html, /<link rel="preconnect" href="https:\/\/res\.cloudinary\.com" crossorigin>/);
   assert.match(html, /<link rel="preconnect" href="https:\/\/sylhetbites\.pages\.dev" crossorigin>/);
   assert.match(html, /<link rel="dns-prefetch" href="https:\/\/sylhetbites\.pages\.dev">/);
+});
+test("the menu can be filtered and un-filtered without losing the reader's place", async () => {
+  const html = await (await handleStoreFront(withKey(fullMenu), new Request("https://undal.test/store"))).text();
+  // The chip row starts with the way back. A category row with no "everything"
+  // entry is a one-way door on a phone, where the address bar is not a control.
+  assert.match(html, /<nav class="chips" aria-label="Menu categories">\s*<a class="active" href="\/store#menu">Everything \u00b7 2<\/a>/);
+  // And every filter lands on the food, not back on the hero.
+  assert.match(html, /href="\/store\?section=rice#menu">Rice plates \u00b7 1<\/a>/);
+  assert.match(html, /href="\/store\?section=combos#menu">Combos \u00b7 1<\/a>/);
+  assert.match(html, /href="\/store\?sort=price-asc#menu"/);
+  assert.match(html, /action="\/store#menu"/);
+  // An unfiltered menu has nothing to explain, so it explains nothing.
+  assert.doesNotMatch(html, /class="filter-note"/);
 });

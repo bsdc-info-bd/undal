@@ -369,3 +369,112 @@ missing import for one of these new symbols when it was removed as a test, so it
 is not proof that the new call sites are wired — the imports were checked by
 hand. No JDK or Android SDK is installed here: no compilation, no preview
 render, no device or TalkBack claim is made for this batch.
+
+## The map that was a showpiece, and a menu that kept its place — 31 October 2026
+
+Reported by the owner: on the web and on every app screen with an OpenStreetMap
+map, "the pin is stuck on the corner, not movable, not dragging — just a
+showpiece", and many pages are not handy to use. What follows is what the report
+turned out to be, surface by surface, and what was changed. Nothing here is a
+redesign: the pin stays fixed at the middle of the card and the map moves under
+it, on the web and in the app, because that is the one presentation where the pin
+cannot be drawn in the wrong place.
+
+### The web map: a box that could collapse
+
+`worker/src/web/map-client.ts` was already correct about *behaviour* — the drag,
+the keyboard path, the nudge arrows, the tick, the geocode, the persisted view —
+and wrong about one thing that decides whether any of it is visible: the frame's
+height came from a single `clamp()`, and the frame is `overflow:hidden`.
+
+An engine that cannot parse `clamp()` drops the declaration, and a declaration
+that is dropped is not a small difference: `.undal-map` becomes `height:auto`,
+every child inside it is absolutely positioned, so the box measures zero, the
+tiles are clipped away, and the pin — which is centred on the box — sits on its
+top edge. That is a pin in the corner of an empty card, and it is a picture
+rather than a control. `inset:0` (Chrome 87) had the same shape of failure on the
+tile layer and the overlay, on a storefront whose own compatibility gate states a
+Chrome 80 floor.
+
+Three layers now hold the box open:
+
+- `height:280px;` before `height:clamp(240px,44vh,420px)`, and `min-height:220px`
+  under both, so no engine can produce a zero-height map. The same pair in the
+  phone media query.
+- Offsets written out (`top:0;right:0;bottom:0;left:0`) instead of `inset:0`, in
+  the map and in the three places in `motion.ts` that used it — the reading
+  progress bar, the artwork sheen and the hero's warm blob, which also lost its
+  `aspect-ratio:1` height on the same engines and so stopped being a circle.
+- `ensureFrameSize()` in the map script: the map measures the frame it just built,
+  and when the frame comes back under 80 px it writes a pixel height from the
+  viewport itself, on first paint and on every resize. This is the layer that does
+  not depend on any stylesheet being understood, and it is why the failure cannot
+  come back quietly through a future CSS edit.
+
+Two more, for engines rather than layouts: a `touchstart`/`touchmove`/`touchend`
+drag for a browser with no Pointer Events (in-app browsers and un-updated
+WebViews), routed through the same `panBy()` as the pointer and keyboard paths so
+the three gestures cannot drift apart; and `-webkit-filter` / `-webkit-user-select`
+beside the standard properties. The map buttons also stop shrinking to 40 px on a
+phone — 44 CSS px is the floor the design plan states, and a zoom button is the
+one control on the map that has to work with a wet thumb.
+
+### The app map: a coordinate that is not a place, and a zoom that fought back
+
+`UndalOsmMap` already carried two hard-won fixes — one remembered `MapView`
+instead of one per `AndroidView` factory call, and a camera re-applied in
+`onLayout` because osmdroid computes its scroll offset from a zero-sized
+viewport. Both stand. Two bugs were left:
+
+- **`0,0` was treated as a place.** `ProfileScreen` passes
+  `state.address?.lat ?: 0.0`, and an order taken without a pin carries
+  `customerLat = 0.0`. Centred on the Atlantic, the middle of an ocean projected
+  onto a phone card *is* a pin in the corner of a grey rectangle — the report,
+  exactly, on the cart, the tracking page, the profile and the kitchen's order
+  detail. `UndalMapTools.isPlausible` already existed and was already the test the
+  copy-and-open-in-maps row uses; the map itself now uses it too, for the camera
+  centre and for every pin drawn or fitted. A coordinate that is not a place
+  starts the camera on the city the kitchen is in, and `UndalMapCaption` says "No
+  pin saved for this address yet" rather than reading out `0.00000, 0.00000`.
+- **The map animated the customer's zoom away.** `moveCamera` compared the map's
+  zoom with the *caller's* zoom, so a pin placed at house zoom reported its new
+  centre 160 ms later, the screen wrote it back, and the camera effect animated
+  the card back out to street zoom while the finger was still on the glass. After
+  the first placement the map's own zoom is now the truth; a caller that really
+  means "this point, at this zoom" says so with `force`, which the tap, long-press
+  and first-layout paths already do.
+
+`drawnPins` is also `remember(pins)`, which is a filter and a stabiliser at once:
+`UndalLocationMap` and `UndalRadiusPreview` build a fresh list on every
+recomposition, so the marker diff and both camera effects were re-running on every
+frame of every keystroke on those screens.
+
+### The menu: a filter that was a one-way door
+
+Filtering the storefront by category or by search posted the reader back to the
+top of the page, past the hero they had already read, and there was no chip that
+meant "everything" — on a phone the address bar is not a control, so the way back
+was the nav bar. The chip row now starts with `Everything · n`, every chip, sort
+link, empty-state link and the search form's own action end at `#menu` (which the
+document's `scroll-padding-top:90px` puts under the sticky header), and a filtered
+menu says what it is showing — how many choices, which words, which section — with
+one tap that undoes it. All of it is server-rendered HTML: no script, so it works
+in the no-JavaScript ordering path the design plan requires.
+
+### Checked, and not checked
+
+`npx tsc --noEmit` clean; **269 tests, 269 pass** (five new map tests: a frame
+CSS could not size is sized by the script, a frame CSS did size is left alone, a
+finger drags the map with no Pointer Events, a second finger is a map gesture and
+not a drag, and the stylesheet's own fallback chain asserted as text; three new
+storefront tests for the chip row, the filter note and the section note).
+`check-web-compat`, `check-web-rules`, `check-coupon-parity`, `check-alert-ladder`
+and `check_no_placeholders` clean; the four Kotlin gates clean. `build:web
+--source sample` still writes 80 snapshots with no failures, and the prerendered
+`/store` carries the new chip row and no filter note.
+
+Not checked, and no claim is made: there is no browser and no Android toolchain in
+this sandbox, so the CSS fallbacks are asserted as text and reasoned about against
+each engine's support table, not rendered; and the Kotlin changes are verified by
+the static gates and by hand, not by a compiler, an emulator or a device. The
+`0,0` and zoom fixes are the two that a device would confirm first.

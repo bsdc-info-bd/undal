@@ -350,15 +350,24 @@ export async function handleStoreFront(env: Env, request: Request): Promise<Resp
   const sections = populatedSections(menu);
   const sectionNames = new Map(menu.sections.map((section) => [section.id, section.name]));
 
+  // A chip row with no "everything" entry is a one-way door: filter to Rice on a
+  // phone and the only way back to the whole menu is the nav bar or the address
+  // bar. So the row starts with the way back, and every chip ends at the menu
+  // heading — a filter that drops the reader back on the hero is a filter that
+  // makes them scroll past the same picture twice to see what they asked for.
+  const totalChoices = menu.dishes.length + menu.combos.length;
+  const everythingChip =
+    `<a class="${sectionId || search ? "" : "active"}" href="/store#menu">Everything · ${totalChoices}</a>`;
+
   const chips = sections
     .map(
       (section) =>
-        `<a class="${sectionId === section.id ? "active" : ""}" href="/store?section=${encodeURIComponent(section.id)}">` +
+        `<a class="${sectionId === section.id ? "active" : ""}" href="/store?section=${encodeURIComponent(section.id)}#menu">` +
         `${escapeHtml(section.name)} · ${section.count}</a>`,
     )
     .join("");
   const comboChip = menu.combos.length
-    ? `<a class="${sectionId === "combos" ? "active" : ""}" href="/store?section=combos">Combos · ${menu.combos.length}</a>`
+    ? `<a class="${sectionId === "combos" ? "active" : ""}" href="/store?section=combos#menu">Combos · ${menu.combos.length}</a>`
     : "";
 
   const liveCampaign = menu.campaigns.find(
@@ -373,13 +382,29 @@ export async function handleStoreFront(env: Env, request: Request): Promise<Resp
 </section>`
     : "";
 
+  // What is on screen, in words, with the one tap that undoes it. A filtered page
+  // that quietly got shorter is the classic "did that work?" on a phone: the count
+  // and the words make the filter legible without a heading of its own.
+  const filterNote = sectionId || search
+    ? `<p class="filter-note">Showing ${items.length} ${items.length === 1 ? "choice" : "choices"}` +
+      `${search ? ` for “${escapeHtml(search)}”` : ""}` +
+      `${
+        sectionId
+          ? ` in ${escapeHtml(
+              sectionId === "combos" ? "Combos" : sectionNames.get(sectionId) ?? "the menu",
+            )}`
+          : ""
+      }` +
+      ` · <a href="/store#menu">show everything</a></p>`
+    : "";
+
   const grid = items.length
     ? `<div class="grid">${items
         .map((item, position) =>
           itemCard(item, sectionNames.get(item.kind === "dish" ? item.categoryId : "") ?? "Combos", position),
         )
         .join("")}</div>`
-    : `<div class="notice">Nothing matches that search. <a href="/store">Show the whole menu</a>.</div>`;
+    : `<div class="notice">Nothing matches that search. <a href="/store#menu">Show the whole menu</a>.</div>`;
 
   const sortLinks = (
     [
@@ -393,7 +418,7 @@ export async function handleStoreFront(env: Env, request: Request): Promise<Resp
       const query = new URLSearchParams({ sort: key });
       if (sectionId) query.set("section", sectionId);
       if (search) query.set("q", search);
-      return `<a class="${sort === key ? "active" : ""}" href="/store?${query.toString()}">${label}</a>`;
+      return `<a class="${sort === key ? "active" : ""}" href="/store?${query.toString()}#menu">${label}</a>`;
     })
     .join("");
 
@@ -425,16 +450,18 @@ ${statusBanner(menu.store)}
 ${campaignCard}
 ${factsStrip(menu.store)}
 <div class="menu-heading" id="menu"><h2>What sounds good today?</h2><p class="muted">${items.length} menu choices · Find your favourite</p></div>
-<form class="search" action="/store" method="get" role="search">
+<form class="search" action="/store#menu" method="get" role="search">
   <input type="search" name="q" value="${escapeHtml(search)}" placeholder="Search the menu — bhorta, chicken, tea…" aria-label="Search the menu">
   ${sectionId ? `<input type="hidden" name="section" value="${escapeHtml(sectionId)}">` : ""}
   <button class="button" type="submit" style="margin:0;padding:12px 18px">Search</button>
 </form>
 <nav class="chips" aria-label="Menu categories">
+  ${everythingChip}
   ${chips}
   ${comboChip}
 </nav>
 <nav class="chips" aria-label="Sort menu">${sortLinks}</nav>
+${filterNote}
 ${grid}
 <p class="smallprint" style="margin-top:16px">Prices are per dish and include nothing else. The delivery fee is added at checkout from your pinned location, rounded up to whole kilometres.</p>`;
 
