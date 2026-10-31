@@ -499,3 +499,62 @@ map tests run the real `MAP_SCRIPT` in a VM against a DOM stub, which is what
 proves the drag, the touch fallback and the self-sizing frame — but a stub has
 no layout engine, so "the frame measures zero and the script repairs it" is
 tested as a contract, not as a painted pixel.
+
+## Deploying it: three things only production could tell us — 31 October 2026
+
+Everything above was merged, and merging runs the deploy workflows. Three defects
+turned up that no local check could have found, and each one is now either fixed
+or asserted, which is the only difference between a lesson and a story.
+
+**1 · A deploy that published a folder of HTML and called it success.**
+`deploy-pages.yml` ran `npx wrangler pages deploy web/public` from the repository
+root. Wrangler resolves two things against its *working directory*, not against
+the directory it is handed: the project's `wrangler.toml` — the vars and the
+`UNDAL_KV` binding — and the `functions/` directory it compiles into Pages
+Functions. At the root there is neither, so both were skipped, the upload
+succeeded, and the workflow reported a deployed website.
+
+It was found from outside rather than from a log: `undal-web.pages.dev/healthz`
+answered the site's own 404 page, and the page said *"Nothing in the Undal store
+lives at **/a-page-that-does-not-exist**"* — the path `404.html` was baked with at
+build time. A Function renders the path it was asked for; a static folder serves
+the file. With no Function, `/store` was served from its file to every request
+including one carrying a basket cookie — precisely the failure the smoke test's
+third assertion exists to catch — and `/store/` answered with a directory index
+instead of the canonical 301. The deploy step now runs from `web/`, and the smoke
+test asserts the diagnosis: a path nobody prerendered must come back naming
+itself.
+
+**2 · A failure that could only be read in a raw log.** This sandbox cannot fetch
+Actions logs at all, so a failing step is an exit code and nothing else. The
+smoke test now writes every status line and response header it sees into a log,
+and a reporter step publishes that log to the commit (or the pull request) when
+the job fails — the pattern `android-build.yml` already used for Gradle's
+`e: file:///…` lines, which is how the type error below was diagnosed in one
+read instead of a guess.
+
+**3 · A search that silently did nothing.** With the Function finally deployed,
+the site could be asked a question, and `/store?q=bhaji` answered with the whole
+menu: eligibility was decided by path alone, so the file written for `/store`
+answered every query on it. Every chip, every sort link and the search box were
+dead on the website while looking alive. `snapshotEligible` now also requires an
+empty query string; a queried page is rendered and says `bypass`, and stays cheap
+because the Worker's Cache API layer keys on the full URL.
+
+Also in this batch, from CI rather than from the gates: `rememberUndalCountUp`
+took an `Int` while every amount in Undal is a `Long` of paisa, so the cart line
+total the motion batch added did not compile. The four static gates had passed
+that line twice — they check shape, imports and contracts, not types — and
+`android-build.yml` on the pull request caught it in 1 m 49 s. Fixed by making
+the count-up speak paisa in and paisa out, animating on an `Int` clamped to its
+own range because Compose has no `animateLongAsState` and a `Float` would give
+away the last digits of a large total.
+
+**State of the deployment at the end of it:** `deploy-worker` and `deploy-pages`
+green on `main`; `https://undal-web.pages.dev/healthz` answering
+`{"ok":true,…,"checks":{"kv":"ok","serviceAccount":"ok","rtdb":"ok","webSignIn":"ok","assetLinks":"ok"}}`
+with the KV usage counters from the gateway; `android-build` green, publishing
+`undal.apk` (24.2 MB) to the rolling release the Worker hands out; and the live
+Worker at `/store?q=bhaji` answering "Showing 1 choice for “bhaji” · show
+everything", which is the new filter note rendering against the kitchen's real
+57-dish menu.
