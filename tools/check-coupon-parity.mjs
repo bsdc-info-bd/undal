@@ -125,7 +125,8 @@ if (typeof globalThis.process === "object") {
     )}; return couponDiscountPaisa;`,
   )();
   const browserDiscount = new Function(
-    `${functionSource(cartClient, "discountOf").replace(/^function\s+/, "return function ")}; return discountOf;`,
+    `${functionSource(cartClient, "whole")}\n` +
+      `${functionSource(cartClient, "discountOf").replace(/^function\s+/, "return function ")}; return discountOf;`,
   )();
 
   const capped = serverDiscount(25_000, 4_500, "freedelivery", 0, 1_000);

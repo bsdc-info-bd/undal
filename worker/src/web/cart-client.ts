@@ -80,6 +80,7 @@ export const CART_SCRIPT = `
   function remove(key) { try { localStorage.removeItem(key); } catch (error) { } }
   function writeTab(key, value) { try { sessionStorage.setItem(key, value); } catch (error) { } }
   function readTab(key) { try { return sessionStorage.getItem(key); } catch (error) { return null; } }
+  function removeTab(key) { try { sessionStorage.removeItem(key); } catch (error) { } }
 
   /**
    * A letter test that cannot break the parse.
@@ -230,6 +231,13 @@ export const CART_SCRIPT = `
   // ---- 4. coupons: the best one is applied by itself ------------------------
   // One rule, three implementations (this, worker/src/web/coupons.ts and the
   // app's CouponMath.kt); tools/check-coupon-parity.mjs keeps them equal.
+  // Math.trunc is absent in WebView 37 and older. Its towards-zero behaviour is
+  // still needed for malformed negative values, so spell it with ES3 math rather
+  // than letting a published coupon stop the whole basket from initialising.
+  function whole(value) {
+    var number = Number(value) || 0;
+    return number < 0 ? Math.ceil(number) : Math.floor(number);
+  }
   function parseMinutes(text) {
     if (typeof text !== "string") return null;
     var match = /^([01]?\\d|2[0-3]):([0-5]\\d)$/.exec(text.replace(/^\\s+|\\s+$/g, ""));
@@ -246,20 +254,20 @@ export const CART_SCRIPT = `
     return minutes >= start || minutes < end;
   }
   function discountOf(coupon, subtotal, delivery) {
-    var cap = coupon.maxDiscountPaisa > 0 ? Math.trunc(coupon.maxDiscountPaisa) : 0;
+    var cap = coupon.maxDiscountPaisa > 0 ? whole(coupon.maxDiscountPaisa) : 0;
     // Free delivery means the fee, and the cap still caps: a coupon that could
     // take ৳300 off a far-away order would be a cap that does not cap.
     if (coupon.type === "freedelivery") {
-      var fee = Math.max(0, Math.trunc(delivery || 0));
+      var fee = Math.max(0, whole(delivery || 0));
       return cap > 0 ? Math.min(fee, cap) : fee;
     }
     if (subtotal <= 0) return 0;
     var discount = 0;
     if (coupon.type === "percent") {
-      var percent = Math.min(100, Math.max(0, Math.trunc(coupon.value || 0)));
+      var percent = Math.min(100, Math.max(0, whole(coupon.value || 0)));
       discount = Math.floor(subtotal * percent / 100);
     } else if (coupon.type === "fixed") {
-      discount = Math.max(0, Math.trunc(coupon.value || 0));
+      discount = Math.max(0, whole(coupon.value || 0));
     }
     if (cap > 0) discount = Math.min(discount, cap);
     return Math.max(0, Math.min(discount, subtotal));
@@ -314,7 +322,7 @@ export const CART_SCRIPT = `
       return coupon.maxDiscountPaisa > 0 ? "Free delivery, up to " + money(coupon.maxDiscountPaisa) : "Free delivery";
     }
     if (coupon.type === "percent") {
-      var text = Math.min(100, Math.max(0, Math.trunc(coupon.value || 0))) + "% off";
+      var text = Math.min(100, Math.max(0, whole(coupon.value || 0))) + "% off";
       if (coupon.maxDiscountPaisa > 0) text += ", up to " + money(coupon.maxDiscountPaisa);
       return text;
     }
@@ -583,8 +591,13 @@ export const CART_SCRIPT = `
   };
 
   window.undalDropAccount = function () {
+    // Current sessions live in this tab; the local cleanup also retires copies
+    // written by older pages. Using only localStorage here used to leave the
+    // customer signed in after the explicit "Sign out on this phone" action.
     remove(SESSION_KEY);
+    removeTab(SESSION_KEY);
     remove(PROFILE_KEY);
+    removeTab(PROFILE_KEY);
   };
 
   /** Saves the name, number and pinned address for the checkout form. */

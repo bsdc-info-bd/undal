@@ -216,6 +216,10 @@ ${signedInLine}
 (function () {
   var SESSION = ${JSON.stringify(SESSION_STORAGE_KEY)};
   var PROFILE = ${JSON.stringify(PROFILE_STORAGE_KEY)};
+  // Fetch is an enhancement, not a reason to cancel the only working form.
+  // Older WebViews can still use every POST rendered above; only intercept when
+  // this browser can actually complete the JSON request and its promise chain.
+  var CAN_FETCH = typeof window.fetch === "function" && typeof window.Promise === "function";
 
   function select(name) {
     if (!name) name = "signin";
@@ -235,6 +239,7 @@ ${signedInLine}
   // in order, and each of them posts.
   try {
     var tabs = document.querySelectorAll(".tabs [role=tab]");
+    var panels = document.querySelectorAll("[role=tabpanel]");
     for (var i = 0; i < tabs.length; i++) {
       tabs[i].addEventListener("click", function () { select(this.getAttribute("data-panel")); });
       tabs[i].addEventListener("keydown", function (event) {
@@ -302,6 +307,7 @@ ${signedInLine}
   // whole block never runs; it is intercepted only to keep the answer on page.
   var signInForm = signIn ? signIn.form : null;
   if (signInForm) signInForm.addEventListener("submit", function (event) {
+    if (!CAN_FETCH) return;
     event.preventDefault();
     var host = document.getElementById("signin-result");
     var email = field("signin-email");
@@ -361,6 +367,7 @@ ${signedInLine}
   var signUp = document.getElementById("signup-button");
   var signUpForm = signUp ? signUp.form : null;
   if (signUpForm) signUpForm.addEventListener("submit", function (event) {
+    if (!CAN_FETCH) return;
     event.preventDefault();
     var host = document.getElementById("signup-result");
     var name = field("signup-name");
@@ -405,6 +412,7 @@ ${signedInLine}
   var reset = document.getElementById("reset-button");
   var resetForm = reset ? reset.form : null;
   if (resetForm) resetForm.addEventListener("submit", function (event) {
+    if (!CAN_FETCH) return;
     event.preventDefault();
     var host = document.getElementById("reset-result");
     var email = field("reset-email");
@@ -568,6 +576,7 @@ export async function handleAccountPage(env: Env, request: Request): Promise<Res
   const script = `${MAP_SCRIPT}
 (function () {
   var CLOSE_WORD = ${JSON.stringify("CLOSE_MY_UNDAL_ACCOUNT")};
+  var CAN_FETCH = typeof window.fetch === "function" && typeof window.Promise === "function";
   var storePin = ${JSON.stringify(storePin)};
   var money = window.undalMoney;
   var map = null;
@@ -657,6 +666,13 @@ export async function handleAccountPage(env: Env, request: Request): Promise<Res
     document.getElementById("account-heading").textContent = "You are not signed in";
     document.getElementById("account-subheading").textContent = "This tab has no Undal session. Sign in, or order as a guest — both work.";
     document.getElementById("account-signed-out").removeAttribute("hidden");
+  }
+
+  if (!CAN_FETCH) {
+    signedOut();
+    document.getElementById("account-subheading").textContent =
+      "This browser cannot load private account panels. Use the plain sign-in forms, or order as a guest.";
+    return;
   }
 
   if (!account) {

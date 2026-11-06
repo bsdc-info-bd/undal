@@ -18,6 +18,9 @@ function setup(
 ) {
   const host = new Element(), timers: Function[] = [], requests: Function[] = [];
   const window: any = { addEventListener() {}, removeEventListener() {}, innerHeight: 700 };
+  const fetcher = () => new Promise(resolve => requests.push(resolve));
+  // A browser exposes the same function as both `fetch` and `window.fetch`.
+  window.fetch = fetcher;
   // Every element the map builds is the size the caller says: a real browser hands
   // back a measured box, and "the stylesheet could not give the frame a height" is
   // a box of zero.
@@ -34,7 +37,7 @@ function setup(
     localStorage: { getItem: () => null, setItem() {} }, navigator: {},
     setTimeout: (fn: Function) => { timers.push(fn); return timers.length; }, clearTimeout() {},
     requestAnimationFrame: (fn: Function) => { fn(); return 1; }, cancelAnimationFrame() {},
-    fetch: () => new Promise(resolve => requests.push(resolve)),
+    fetch: fetcher,
   });
   return {
     map: window.undalMap({ mount: 'map', pin: { lat: 24.89, lng: 91.86 }, ...options }),
@@ -58,6 +61,18 @@ test('stale geocoding cannot overwrite a moved pin address', async () => {
   requests[0]({ ok: true, json: async () => ({ display_name: 'Old road', address: { road: 'Old road' } }) });
   await new Promise(resolve => setImmediate(resolve)); assert.equal(map.getInfo().label, '');
 });
+test('reverse geocoding stays optional when fetch is unavailable', () => {
+  const { map, timers, requests, window } = setup();
+  window.fetch = undefined;
+  assert.doesNotThrow(() => timers.at(-1)!());
+  assert.equal(requests.length, 0, 'no request is attempted without the API');
+  const before = map.getPin();
+  map.setPin(24.90, 91.87);
+  assert.notEqual(JSON.stringify(map.getPin()), JSON.stringify(before), 'the pin itself still works');
+  map.confirm();
+  assert.equal(map.isConfirmed(), true);
+});
+
 test('a second pointer cannot hijack an active drag', () => {
   const { map, host } = setup(), frame = host.children[0];
   frame.fire('pointerdown', { pointerId: 1, clientX: 100, clientY: 100 });

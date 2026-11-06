@@ -109,3 +109,16 @@ test("admin SPA keeps menu/order branch filters independent and escapes live dat
   assert.equal(document.querySelector("#admin-view").hidden, true);
   await window.happyDOM.close();
 });
+
+test("admin keeps phone actions and editor controls at a 44px touch target", () => {
+  const css = readFileSync(new URL("../../admin/public/app.css", import.meta.url), "utf8");
+  const mobile = css.match(/@media \(max-width: 680px\) \{([\s\S]*?)\n\}\n@media \(prefers-reduced-motion/);
+  assert.ok(mobile, "the phone layout remains explicit");
+  assert.match(css, /\.button \{[^}]*min-height: 44px/);
+  assert.match(css, /\.icon-button \{[^}]*width: 44px; height: 44px/);
+  assert.match(css, /\.dialog-close \{[^}]*width: 44px; height: 44px/);
+  assert.match(css, /\.undal-map-controls button \{[^}]*width: 44px; height: 44px/);
+  assert.match(mobile[1], /\.icon-button,\.avatar \{ width: 44px; height: 44px/);
+  assert.match(mobile[1], /\.hours-row input \{ min-height: 44px/);
+  assert.match(mobile[1], /\.button--small \{ min-height: 44px/);
+});
