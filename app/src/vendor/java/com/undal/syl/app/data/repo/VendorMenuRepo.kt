@@ -86,7 +86,7 @@ class VendorMenuRepo @Inject constructor(
     }
 
     private fun observeCouponsFor(branch: VendorBranch): Flow<List<VendorCoupon>> = callbackFlow {
-        var query = firestore.collection(COUPONS)
+        var query: com.google.firebase.firestore.Query = firestore.collection(COUPONS)
         if (!branch.legacySingleBranch) query = query.whereEqualTo("branchId", branch.id)
         val registration = query
             .limit(80)

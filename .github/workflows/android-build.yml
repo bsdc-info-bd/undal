@@ -45,6 +45,7 @@ jobs:
       UNDAL_FIREBASE_WEB_API_KEY: ${{ secrets.FIREBASE_WEB_API_KEY }}
       UNDAL_SUPPORT_PHONE: ${{ secrets.SUPPORT_PHONE }}
       UNDAL_MINIFY: ${{ github.event_name == 'workflow_dispatch' && inputs.minify || 'false' }}
+      VENDOR_FIREBASE_REGISTERED: ${{ secrets.GOOGLE_SERVICES_VENDOR_JSON != '' && 'true' || 'false' }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -125,11 +126,27 @@ jobs:
       - name: Prepare the build inputs
         env:
           GOOGLE_SERVICES_JSON: ${{ secrets.GOOGLE_SERVICES_JSON }}
+          GOOGLE_SERVICES_VENDOR_JSON: ${{ secrets.GOOGLE_SERVICES_VENDOR_JSON }}
         run: |
+          set -euo pipefail
+          if [ "${{ github.ref }}" = refs/heads/main ] && [ "$VENDOR_FIREBASE_REGISTERED" != true ]; then
+            echo "::error::Register com.undal.syl.vendor in this Firebase project and add its file as GOOGLE_SERVICES_VENDOR_JSON before publishing."
+            exit 1
+          fi
           gradle wrapper --gradle-version 8.10.2 --distribution-type bin
           mkdir -p app/src/main/res/raw
           cp assets/sound/undal_order_alert.mp3 app/src/main/res/raw/undal_order_alert.mp3
           printf '%s' "$GOOGLE_SERVICES_JSON" > app/google-services.json
+          if [ "$VENDOR_FIREBASE_REGISTERED" = true ]; then
+            printf '%s' "$GOOGLE_SERVICES_VENDOR_JSON" > app/src/vendor/google-services.json
+          else
+            # Verification branches may compile both flavors before the owner has
+            # registered the vendor Firebase app. This file is deliberately
+            # compile-only and is never signed or published (see step conditions).
+            cat > app/src/vendor/google-services.json <<'JSON'
+          {"project_info":{"project_number":"0","project_id":"undal-ci-compile-only"},"client":[{"client_info":{"mobilesdk_app_id":"1:0:android:0000000000000001","android_client_info":{"package_name":"com.undal.syl.vendor"}},"api_key":[{"current_key":"CI_COMPILE_ONLY_NOT_A_CREDENTIAL"}]}],"configuration_version":"1"}
+          JSON
+          fi
           echo "order sound: $(stat -c%s app/src/main/res/raw/undal_order_alert.mp3) bytes"
 
       - name: Unit tests
@@ -162,6 +179,7 @@ jobs:
             -PundalMinify=${UNDAL_MINIFY} 2>&1 | tee -a "$RUNNER_TEMP/undal-build.log"
 
       - name: Keystore fingerprint
+        if: env.VENDOR_FIREBASE_REGISTERED == 'true'
         id: fingerprint
         env:
           KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
@@ -184,7 +202,8 @@ jobs:
       # The keystore's type is sniffed and passed explicitly: `keytool` reads a
       # PKCS12 store whatever it is called, but `apksigner` takes the type from
       # the file name, and `keytool -genkeypair` on JDK 9+ writes PKCS12.
-      - name: Sign the release APK
+      - name: Sign the release APKs
+        if: env.VENDOR_FIREBASE_REGISTERED == 'true'
         id: sign
         env:
           KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
@@ -253,6 +272,7 @@ jobs:
           } 2>&1 | tee -a "$RUNNER_TEMP/undal-build.log"
 
       - name: Publish the fixed asset names
+        if: env.VENDOR_FIREBASE_REGISTERED == 'true'
         run: |
           cp "${{ steps.sign.outputs.signedCustomerFile }}" undal.apk
           cp "${{ steps.sign.outputs.signedVendorFile }}" undal-vendor.apk
@@ -260,6 +280,7 @@ jobs:
           sha256sum undal.apk undal-vendor.apk
 
       - name: Prove the order sound is inside both signed APKs
+        if: env.VENDOR_FIREBASE_REGISTERED == 'true'
         run: |
           set -o pipefail
           # Its reasons are copied into the build log so the failure reporter
@@ -268,6 +289,7 @@ jobs:
           python3 tools/check-apk-alert-assets.py undal-vendor.apk 2>&1 | tee -a "$RUNNER_TEMP/undal-build.log"
 
       - name: Upload the APK artifacts
+        if: env.VENDOR_FIREBASE_REGISTERED == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: undal-apks
@@ -277,7 +299,7 @@ jobs:
           retention-days: 30
 
       - name: Attach to the rolling release (main only)
-        if: github.ref == 'refs/heads/main'
+        if: github.ref == 'refs/heads/main' && env.VENDOR_FIREBASE_REGISTERED == 'true'
         uses: softprops/action-gh-release@v2
         with:
           tag_name: v1.0.${{ github.run_number }}
@@ -298,7 +320,7 @@ jobs:
             Signing certificate SHA-256: `${{ steps.fingerprint.outputs.sha256 }}`
 
       - name: Tell the Worker about this release
-        if: github.ref == 'refs/heads/main'
+        if: github.ref == 'refs/heads/main' && env.VENDOR_FIREBASE_REGISTERED == 'true'
         env:
           RELEASE_WEBHOOK_SECRET: ${{ secrets.RELEASE_WEBHOOK_SECRET }}
           WORKER_BASE_URL: ${{ secrets.WORKER_BASE_URL }}
@@ -318,18 +340,26 @@ jobs:
 
       - name: Summarise
         run: |
-          {
-            echo "## Undal APK ready"
-            echo ""
-            echo "| Field | Value |"
-            echo "| --- | --- |"
-            echo "| Version | 1.0.${{ github.run_number }} |"
-            echo "| Customer download | https://github.com/${{ github.repository }}/releases/latest/download/undal.apk |"
-            echo "| Vendor download | https://github.com/${{ github.repository }}/releases/latest/download/undal-vendor.apk |"
-            echo "| Signing SHA-256 | \`${{ steps.fingerprint.outputs.sha256 }}\` |"
-            echo ""
-            echo "Paste the SHA-256 into the **APP_SIGNING_SHA256** repository secret so App Links verify."
-          } >> "$GITHUB_STEP_SUMMARY"
+          if [ "$VENDOR_FIREBASE_REGISTERED" = true ]; then
+            {
+              echo "## Undal APKs ready"
+              echo ""
+              echo "| Field | Value |"
+              echo "| --- | --- |"
+              echo "| Version | 1.0.${{ github.run_number }} |"
+              echo "| Customer download | https://github.com/${{ github.repository }}/releases/latest/download/undal.apk |"
+              echo "| Vendor download | https://github.com/${{ github.repository }}/releases/latest/download/undal-vendor.apk |"
+              echo "| Signing SHA-256 | \`${{ steps.fingerprint.outputs.sha256 }}\` |"
+              echo ""
+              echo "Paste the SHA-256 into the **APP_SIGNING_SHA256** repository secret so App Links verify."
+            } >> "$GITHUB_STEP_SUMMARY"
+          else
+            {
+              echo "## Both Android flavors compiled"
+              echo ""
+              echo "The vendor Firebase application is not registered in repository secrets, so this run used a compile-only vendor fixture and published no APK. Before a main-branch release, register \`com.undal.syl.vendor\` in Firebase and add its file as \`GOOGLE_SERVICES_VENDOR_JSON\`."
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
 
       # A Gradle failure is only ever useful as its `e: file:///…` lines. This
       # collects them into the job summary and onto the pull request, so the fix

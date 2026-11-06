@@ -21,8 +21,10 @@ local.properties
 .cxx/
 output.json
 
-# Firebase config JSON is injected by CI from the GOOGLE_SERVICES_JSON secret.
+# Firebase config JSON is injected by CI. Vendor uses its own registered
+# Firebase Android app; debug/source-set fixtures are generated, never committed.
 app/google-services.json
+app/src/*/google-services.json
 
 # Signing material — keystores are generated once by .github/workflows/keystore.yml
 *.jks
