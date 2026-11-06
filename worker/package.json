@@ -2,11 +2,12 @@
   "name": "undal-worker",
   "version": "1.0.0",
   "private": true,
-  "description": "Undal HomeKitchen edge layer: FCM HTTP v1 relay, crons, web store, deep links, APK delivery \u2014 and the build for the customer website on Cloudflare Pages.",
+  "description": "Undal HomeKitchen edge layer: FCM HTTP v1 relay, crons, web store, deep links, APK delivery — and the build for the customer website on Cloudflare Pages.",
   "type": "module",
   "scripts": {
     "typecheck": "tsc --noEmit",
     "test": "tsx --test test/*.test.ts",
+    "test:rules": "node --test rules-tests/*.test.mjs",
     "dev": "wrangler dev",
     "deploy": "wrangler deploy",
     "deploy:dry": "wrangler deploy --dry-run --outdir dist",
@@ -16,6 +17,8 @@
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^5.20261006.1",
+    "@firebase/rules-unit-testing": "^5.0.2",
+    "firebase": "^12.19.0",
     "tsx": "^4.23.15",
     "typescript": "^5.9.0",
     "wrangler": "^4.0.0"

@@ -14,13 +14,14 @@ import org.junit.Test
 class AppContractTest {
 
     @Test
-    fun applicationIdMatchesTheCanonicalPackage() {
+    fun applicationIdMatchesThePortalPackage() {
         val applicationId = BuildConfig.APPLICATION_ID
+        val portalPackage = if (BuildConfig.IS_VENDOR) "com.undal.syl.vendor" else UndalBuildInfo.PACKAGE_NAME
         assertTrue(
-            "unexpected applicationId: $applicationId",
-            applicationId == UndalBuildInfo.PACKAGE_NAME ||
-                applicationId == UndalBuildInfo.PACKAGE_NAME + ".debug"
+            "unexpected applicationId $applicationId for ${BuildConfig.PORTAL}",
+            applicationId == portalPackage || applicationId == portalPackage + ".debug"
         )
+        assertEquals(if (BuildConfig.IS_VENDOR) "vendor" else "customer", BuildConfig.PORTAL)
     }
 
     @Test

@@ -7,9 +7,12 @@ on:
       # The customer website on Pages is the same router as the Worker, so a
       # change to either one is verified against both.
       - "web/**"
+      - "firebase/**"
+      - "firebase.json"
       - "tools/check-*.mjs"
       - "tools/check_no_placeholders.sh"
       - ".github/workflows/verify-worker.yml"
+  workflow_dispatch:
 permissions:
   contents: read
 jobs:
@@ -33,3 +36,27 @@ jobs:
           node tools/check-coupon-parity.mjs
           node tools/check-alert-ladder.mjs
           bash tools/check_no_placeholders.sh
+
+  firebase-rules:
+    name: Firestore and RTDB branch isolation
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: worker/package-lock.json
+      - run: npm ci --no-audit --no-fund
+        working-directory: worker
+      # The emulator loads the shipping rules and indexes, then executes the
+      # same query/write shapes as the Android repositories. No production
+      # project or credential is involved: demo-undal exists only in this job.
+      - run: |
+          npx --yes firebase-tools@latest emulators:exec \
+            --project demo-undal --only firestore,database \
+            'npm --prefix worker run test:rules'
