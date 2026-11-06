@@ -1,10 +1,9 @@
 # ===========================================================================
 # Undal HomeKitchen — android-build
 #
-# push / pull request / manual. Produces the signed, installable undal.apk and
-# (on main) publishes it to the rolling GitHub release so that
-#   https://github.com/bsdc-info-bd/undal/releases/latest/download/undal.apk
-# is always the newest build — the exact URL the Worker hands out.
+# push / pull request / manual. Produces separate signed customer and vendor
+# APKs. The customer keeps the fixed undal.apk URL used by the Worker; the
+# private kitchen build is published alongside it as undal-vendor.apk.
 # ===========================================================================
 name: android-build
 
@@ -36,7 +35,7 @@ concurrency:
 
 jobs:
   build:
-    name: Build and sign undal.apk
+    name: Build and sign customer + vendor APKs
     runs-on: ubuntu-latest
     env:
       UNDAL_CLOUDINARY_CLOUD_NAME: ${{ secrets.CLOUDINARY_CLOUD_NAME }}
@@ -136,7 +135,7 @@ jobs:
       - name: Unit tests
         run: |
           set -o pipefail
-          ./gradlew :app:testReleaseUnitTest --no-daemon --stacktrace \
+          ./gradlew :app:testCustomerReleaseUnitTest :app:testVendorReleaseUnitTest --no-daemon --stacktrace \
             -PundalVersionCode=${{ github.run_number }} \
             -PundalVersionName=1.0.${{ github.run_number }} 2>&1 | tee "$RUNNER_TEMP/undal-build.log"
 
@@ -149,15 +148,15 @@ jobs:
           # generated-resource providers. Remove the fixture before release build.
           trap 'rm -f app/src/debug/google-services.json' EXIT
           cat > app/src/debug/google-services.json <<'JSON'
-          {"project_info":{"project_number":"0","project_id":"undal-ci-compile-only"},"client":[{"client_info":{"mobilesdk_app_id":"1:0:android:0000000000000000","android_client_info":{"package_name":"com.undal.syl.app.debug"}},"api_key":[{"current_key":"CI_COMPILE_ONLY_NOT_A_CREDENTIAL"}]}],"configuration_version":"1"}
+          {"project_info":{"project_number":"0","project_id":"undal-ci-compile-only"},"client":[{"client_info":{"mobilesdk_app_id":"1:0:android:0000000000000000","android_client_info":{"package_name":"com.undal.syl.app.debug"}},"api_key":[{"current_key":"CI_COMPILE_ONLY_NOT_A_CREDENTIAL"}]},{"client_info":{"mobilesdk_app_id":"1:0:android:0000000000000001","android_client_info":{"package_name":"com.undal.syl.vendor.debug"}},"api_key":[{"current_key":"CI_COMPILE_ONLY_NOT_A_CREDENTIAL"}]}],"configuration_version":"1"}
           JSON
-          ./gradlew :app:compileDebugAndroidTestKotlin \
+          ./gradlew :app:compileCustomerDebugAndroidTestKotlin :app:compileVendorDebugAndroidTestKotlin \
             --no-daemon --stacktrace 2>&1 | tee -a "$RUNNER_TEMP/undal-build.log"
 
-      - name: Assemble signed-ready release APK
+      - name: Assemble signed-ready release APKs
         run: |
           set -o pipefail
-          ./gradlew :app:assembleRelease --no-daemon --stacktrace \
+          ./gradlew :app:assembleCustomerRelease :app:assembleVendorRelease --no-daemon --stacktrace \
             -PundalVersionCode=${{ github.run_number }} \
             -PundalVersionName=1.0.${{ github.run_number }} \
             -PundalMinify=${UNDAL_MINIFY} 2>&1 | tee -a "$RUNNER_TEMP/undal-build.log"
@@ -204,16 +203,6 @@ jobs:
             echo "build-tools: $TOOLS"
             "${TOOLS}apksigner" version || true
 
-            UNSIGNED=""
-            for candidate in app/build/outputs/apk/release/*.apk; do
-              if [ -f "$candidate" ]; then UNSIGNED="$candidate"; break; fi
-            done
-            if [ -z "$UNSIGNED" ]; then
-              echo "::error::Gradle produced no release APK to sign."
-              exit 1
-            fi
-            echo "unsigned APK: $UNSIGNED"
-
             KEYSTORE="$RUNNER_TEMP/undal-release.keys"
             printf '%s' "$KEYSTORE_BASE64" | base64 -d > "$KEYSTORE"
             MAGIC=$(head -c 4 "$KEYSTORE" | od -An -tx1 | tr -d ' \n')
@@ -232,39 +221,59 @@ jobs:
               UNLOCK="$KEYSTORE_PASSWORD"
             fi
 
-            "${TOOLS}zipalign" -f 4 "$UNSIGNED" "$RUNNER_TEMP/undal-aligned.apk"
-            "${TOOLS}apksigner" sign \
-              --ks "$KEYSTORE" \
-              --ks-type "$KS_TYPE" \
-              --ks-key-alias "$KEY_ALIAS" \
-              --ks-pass "pass:$KEYSTORE_PASSWORD" \
-              --key-pass "pass:$UNLOCK" \
-              --out app/build/outputs/apk/release/undal-signed.apk \
-              "$RUNNER_TEMP/undal-aligned.apk"
-            echo "signed:"
-            "${TOOLS}apksigner" verify --print-certs \
-              app/build/outputs/apk/release/undal-signed.apk | sed -n '1,8p'
-            echo "signedReleaseFile=$PWD/app/build/outputs/apk/release/undal-signed.apk" >> "$GITHUB_OUTPUT"
+            for PORTAL in customer vendor; do
+              UNSIGNED=""
+              for candidate in "app/build/outputs/apk/${PORTAL}/release/"*.apk; do
+                if [ -f "$candidate" ]; then UNSIGNED="$candidate"; break; fi
+              done
+              if [ -z "$UNSIGNED" ]; then
+                echo "::error::Gradle produced no ${PORTAL} release APK to sign."
+                exit 1
+              fi
+              echo "unsigned ${PORTAL} APK: $UNSIGNED"
+              ALIGNED="$RUNNER_TEMP/undal-${PORTAL}-aligned.apk"
+              SIGNED="$PWD/app/build/outputs/apk/${PORTAL}/release/undal-signed.apk"
+              "${TOOLS}zipalign" -f 4 "$UNSIGNED" "$ALIGNED"
+              "${TOOLS}apksigner" sign \
+                --ks "$KEYSTORE" \
+                --ks-type "$KS_TYPE" \
+                --ks-key-alias "$KEY_ALIAS" \
+                --ks-pass "pass:$KEYSTORE_PASSWORD" \
+                --key-pass "pass:$UNLOCK" \
+                --out "$SIGNED" \
+                "$ALIGNED"
+              echo "signed ${PORTAL}:"
+              "${TOOLS}apksigner" verify --print-certs "$SIGNED" | sed -n '1,8p'
+              if [ "$PORTAL" = customer ]; then
+                echo "signedCustomerFile=$SIGNED" >> "$GITHUB_OUTPUT"
+              else
+                echo "signedVendorFile=$SIGNED" >> "$GITHUB_OUTPUT"
+              fi
+            done
           } 2>&1 | tee -a "$RUNNER_TEMP/undal-build.log"
 
-      - name: Publish the fixed asset name
+      - name: Publish the fixed asset names
         run: |
-          cp "${{ steps.sign.outputs.signedReleaseFile }}" undal.apk
-          ls -l undal.apk
-          sha256sum undal.apk
+          cp "${{ steps.sign.outputs.signedCustomerFile }}" undal.apk
+          cp "${{ steps.sign.outputs.signedVendorFile }}" undal-vendor.apk
+          ls -l undal.apk undal-vendor.apk
+          sha256sum undal.apk undal-vendor.apk
 
-      - name: Prove the order sound is inside the signed APK
+      - name: Prove the order sound is inside both signed APKs
         run: |
           set -o pipefail
           # Its reasons are copied into the build log so the failure reporter
           # can put them in the pull-request comment.
           python3 tools/check-apk-alert-assets.py undal.apk 2>&1 | tee -a "$RUNNER_TEMP/undal-build.log"
+          python3 tools/check-apk-alert-assets.py undal-vendor.apk 2>&1 | tee -a "$RUNNER_TEMP/undal-build.log"
 
-      - name: Upload the APK artifact
+      - name: Upload the APK artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: undal-apk
-          path: undal.apk
+          name: undal-apks
+          path: |
+            undal.apk
+            undal-vendor.apk
           retention-days: 30
 
       - name: Attach to the rolling release (main only)
@@ -274,12 +283,16 @@ jobs:
           tag_name: v1.0.${{ github.run_number }}
           name: Undal HomeKitchen 1.0.${{ github.run_number }}
           make_latest: true
-          files: undal.apk
+          files: |
+            undal.apk
+            undal-vendor.apk
           body: |
             Automated build from `${{ github.sha }}`.
 
-            Download **undal.apk** and install it (Android will ask you to allow
-            installs from this browser — that is expected for a direct APK).
+            Customers download **undal.apk**. Assigned kitchen staff install
+            **undal-vendor.apk**; it has a separate application id and contains
+            the merchant portal. Android will ask for permission to install from
+            this browser.
 
             Order sound: official Undal alert (loops until the order is answered).
             Signing certificate SHA-256: `${{ steps.fingerprint.outputs.sha256 }}`
@@ -311,7 +324,8 @@ jobs:
             echo "| Field | Value |"
             echo "| --- | --- |"
             echo "| Version | 1.0.${{ github.run_number }} |"
-            echo "| Download | https://github.com/${{ github.repository }}/releases/latest/download/undal.apk |"
+            echo "| Customer download | https://github.com/${{ github.repository }}/releases/latest/download/undal.apk |"
+            echo "| Vendor download | https://github.com/${{ github.repository }}/releases/latest/download/undal-vendor.apk |"
             echo "| Signing SHA-256 | \`${{ steps.fingerprint.outputs.sha256 }}\` |"
             echo ""
             echo "Paste the SHA-256 into the **APP_SIGNING_SHA256** repository secret so App Links verify."
@@ -351,7 +365,8 @@ jobs:
           } > "$OUT"
           # A failing unit test says nothing useful in the log itself, so the
           # JUnit XML — test class, test name, assertion message — is appended.
-          python3 tools/read-test-results.py app/build/test-results/testReleaseUnitTest >> "$OUT" || true
+          python3 tools/read-test-results.py app/build/test-results/testCustomerReleaseUnitTest >> "$OUT" || true
+          python3 tools/read-test-results.py app/build/test-results/testVendorReleaseUnitTest >> "$OUT" || true
           cat "$OUT" >> "$GITHUB_STEP_SUMMARY"
           echo "::error::The build failed — the lines that explain it are in the pull-request comment and the job summary."
           if [ "${{ github.event_name }}" = "pull_request" ]; then

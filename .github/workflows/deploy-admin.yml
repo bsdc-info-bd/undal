@@ -1,0 +1,159 @@
+name: deploy-admin
+
+# Undal HomeKitchen super-admin on Cloudflare Pages' free tier. The static shell
+# is cached at the edge; authenticated /api/admin/* calls run the same Worker
+# code and share the same KV/Firebase project as the customer platform.
+on:
+  push:
+    branches: [main]
+    paths:
+      - "admin/**"
+      - "worker/src/**"
+      - "worker/package*.json"
+      - "worker/tsconfig.json"
+      - ".github/workflows/deploy-admin.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-admin
+  cancel-in-progress: true
+
+env:
+  PROJECT_NAME: undal-admin
+
+jobs:
+  deploy:
+    name: Deploy super-admin to Cloudflare Pages
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Preflight secrets
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          FIREBASE_SA_JSON: ${{ secrets.FIREBASE_SA_JSON }}
+          FIREBASE_RTDB_URL: ${{ secrets.FIREBASE_RTDB_URL }}
+          FIREBASE_WEB_API_KEY: ${{ secrets.FIREBASE_WEB_API_KEY }}
+        run: bash tools/preflight.sh CLOUDFLARE_API_TOKEN CLOUDFLARE_ACCOUNT_ID FIREBASE_SA_JSON FIREBASE_RTDB_URL FIREBASE_WEB_API_KEY
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: worker/package-lock.json
+
+      - name: Install and verify
+        working-directory: worker
+        run: |
+          npm ci --no-audit --no-fund
+          npm run typecheck
+          npm test
+          node --check ../admin/public/app.js
+          node --check ../admin/public/branch-map.js
+
+      - name: Resolve shared Undal KV namespace
+        id: kv
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          set -euo pipefail
+          curl -fsS -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" \
+            "https://api.cloudflare.com/client/v4/accounts/${CLOUDFLARE_ACCOUNT_ID}/storage/kv/namespaces?per_page=100" \
+            > "$RUNNER_TEMP/kv.json"
+          ID=$(python3 - "$RUNNER_TEMP/kv.json" <<'PY'
+          import json,sys
+          payload=json.load(open(sys.argv[1]))
+          if not payload.get('success'):
+              raise SystemExit('Cloudflare KV list failed: '+str(payload.get('errors')))
+          for namespace in payload.get('result') or []:
+              if namespace.get('title')=='undal-kv':
+                  print(namespace['id']); break
+          PY
+          )
+          if [ -z "$ID" ]; then
+            echo "Run deploy-worker once first: it creates undal-kv." >&2
+            exit 1
+          fi
+          echo "id=$ID" >> "$GITHUB_OUTPUT"
+
+      - name: Render admin configuration
+        env:
+          KV_ID: ${{ steps.kv.outputs.id }}
+          CLOUDINARY_CLOUD_NAME: ${{ secrets.CLOUDINARY_CLOUD_NAME }}
+          FIREBASE_WEB_API_KEY: ${{ secrets.FIREBASE_WEB_API_KEY }}
+        run: |
+          set -euo pipefail
+          sed -i "s|REPLACE_KV_NAMESPACE_ID|${KV_ID}|g" admin/wrangler.toml
+          sed -i "s|REPLACE_CLOUDINARY_CLOUD_NAME|${CLOUDINARY_CLOUD_NAME:-}|g" admin/wrangler.toml
+          sed -i "s|REPLACE_FIREBASE_WEB_API_KEY|${FIREBASE_WEB_API_KEY}|g" admin/wrangler.toml
+          sed -i "s|REPLACE_GITHUB_REPO_SLUG|${GITHUB_REPOSITORY}|g" admin/wrangler.toml
+          if grep -n 'REPLACE_' admin/wrangler.toml | grep -v '^[0-9]*:[[:space:]]*#'; then exit 1; fi
+
+      - name: Create Pages project when needed
+        working-directory: admin
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          set -uo pipefail
+          if npx wrangler pages project list 2>/dev/null | grep -q "${PROJECT_NAME}"; then
+            echo "Reusing ${PROJECT_NAME}"
+          else
+            npx wrangler pages project create "${PROJECT_NAME}" --production-branch main
+          fi
+
+      - name: Push admin Function secrets
+        working-directory: admin
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          FIREBASE_SA_JSON: ${{ secrets.FIREBASE_SA_JSON }}
+          FIREBASE_RTDB_URL: ${{ secrets.FIREBASE_RTDB_URL }}
+          APP_SIGNING_SHA256: ${{ secrets.APP_SIGNING_SHA256 }}
+          RELEASE_WEBHOOK_SECRET: ${{ secrets.RELEASE_WEBHOOK_SECRET }}
+        run: |
+          set -euo pipefail
+          printf '%s' "$FIREBASE_SA_JSON" | npx wrangler pages secret put FIREBASE_SA_JSON --project-name "${PROJECT_NAME}"
+          printf '%s' "$FIREBASE_RTDB_URL" | npx wrangler pages secret put FIREBASE_RTDB_URL --project-name "${PROJECT_NAME}"
+          printf '%s' "${APP_SIGNING_SHA256:-}" | npx wrangler pages secret put APP_SIGNING_SHA256 --project-name "${PROJECT_NAME}"
+          printf '%s' "${RELEASE_WEBHOOK_SECRET:-}" | npx wrangler pages secret put RELEASE_WEBHOOK_SECRET --project-name "${PROJECT_NAME}"
+
+      - name: Deploy control room
+        working-directory: admin
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          npx wrangler pages deploy public \
+            --project-name "${PROJECT_NAME}" --branch main \
+            --commit-hash "${GITHUB_SHA}" --commit-message "Undal admin ${GITHUB_SHA::7}" --commit-dirty=true
+
+      - name: Smoke test static shell and authenticated Function
+        run: |
+          set -euo pipefail
+          base="https://${PROJECT_NAME}.pages.dev"
+          for attempt in 1 2 3 4 5 6; do
+            if curl -fsS "$base/" | grep -q 'Undal · Control room'; then break; fi
+            [ "$attempt" = 6 ] && { echo "Admin shell did not deploy" >&2; exit 1; }
+            sleep 10
+          done
+          code=$(curl -sS -o "$RUNNER_TEMP/admin-api.json" -w '%{http_code}' "$base/api/admin/overview")
+          [ "$code" = 401 ] || { echo "Unauthenticated admin API must answer 401, got $code" >&2; cat "$RUNNER_TEMP/admin-api.json"; exit 1; }
+          curl -fsS "$base/healthz" | grep -q '"ok":true'
+          echo "Admin shell is live and admin data is protected."
+
+      - name: Summarise
+        run: |
+          {
+            echo "## Undal super-admin deployed"
+            echo ""
+            echo "- URL: https://${PROJECT_NAME}.pages.dev"
+            echo "- Hosting: Cloudflare Pages free tier"
+            echo "- Access: Firebase superAdmin claim required for every data route"
+            echo "- Controls: branches, coverage map, hours, menus, orders, area requests and staff"
+          } >> "$GITHUB_STEP_SUMMARY"

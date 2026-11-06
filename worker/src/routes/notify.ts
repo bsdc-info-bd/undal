@@ -18,8 +18,8 @@ import { rtdbUpdate } from "../rtdb";
 import { raiseKitchenAlert } from "../alerting";
 import { HttpError, json, readJson } from "../util/http";
 import { formatPaisa } from "../util/money";
-import { purgeTokens, tokensForUser, vendorTokens, vendorUid } from "../recipients";
-import { requireCaller, requireVendor } from "../authverify";
+import { purgeTokens, tokensForBranch, tokensForUser, vendorTokens, vendorUid } from "../recipients";
+import { canAccessBranch, requireCaller, requireVendor, requireVendorOrAdmin } from "../authverify";
 import { memoGet, memoPut, type KvBinding } from "../util/kv";
 
 const ORDER_ALERT_TTL = "300s";
@@ -77,6 +77,7 @@ export async function handleOrderCreated(env: Env, request: Request): Promise<Re
     {
       orderId,
       shortId,
+      branchId: stringField(order, "branchId") || undefined,
       title: `New order ${shortId}`.trim(),
       body: `${items.length} item(s) · ${formatPaisa(total)} · cash on delivery`,
       ttl: ORDER_ALERT_TTL,
@@ -102,14 +103,20 @@ export async function handleOrderCreated(env: Env, request: Request): Promise<Re
 }
 
 export async function handleOrderStatus(env: Env, request: Request): Promise<Response> {
-  await requireVendor(env, request);
+  const claims = await requireVendorOrAdmin(env, request);
   const body = await readJson<{ orderId?: string }>(request);
   const orderId = body.orderId?.trim();
   if (!orderId) throw new HttpError(400, "order-id-required");
-
   const order = await fsGet(env, `orders/${orderId}`);
   if (!order) throw new HttpError(404, "order-not-found");
+  if (!canAccessBranch(claims, order.branchId)) throw new HttpError(403, "order-belongs-to-another-branch");
+  return publishOrderStatus(env, orderId);
+}
 
+/** Customer push, inbox and RTDB mirror shared by vendor and super-admin writes. */
+export async function publishOrderStatus(env: Env, orderId: string): Promise<Response> {
+  const order = await fsGet(env, `orders/${orderId}`);
+  if (!order) throw new HttpError(404, "order-not-found");
   const status = stringField(order, "status");
   const customerId = stringField(order, "customerId");
   if (!customerId) throw new HttpError(409, "order-missing-customer");
@@ -119,11 +126,8 @@ export async function handleOrderStatus(env: Env, request: Request): Promise<Res
     body: `Your Undal order is now ${status || "updated"}.`,
   };
   const note = stringField(order, "cancelNote") || stringField(order, "vendorNote");
-
   const notificationBody = note.length > 0 && status === "cancelled"
     ? `${copy.body} Note: ${note}`.slice(0, 240) : copy.body;
-  // Write once on the server: a background display push does not run the app's
-  // callback, and a phone may be offline when the event happens.
   await fsCreateIfAbsent(env, `notifInbox/${customerId}/items/${encodeURIComponent(`status-${orderId}-${status}`)}`, {
     title: copy.title, body: notificationBody, type: `order_status:${status}`,
     orderId, read: false, createdAt: new Date(),
@@ -148,12 +152,11 @@ export async function handleOrderStatus(env: Env, request: Request): Promise<Res
   });
   await purgeTokens(env, customerId, outcome.unregisteredTokens);
 
-  // Mirror the sub-second flags the apps listen to (redundancy ladder ②).
   const prepEndsAtRaw = order.prepEndsAt;
-  const prepEndsAt =
-    typeof prepEndsAtRaw === "string" && prepEndsAtRaw.length > 0 ? Date.parse(prepEndsAtRaw) : null;
+  const prepEndsAt = typeof prepEndsAtRaw === "string" && prepEndsAtRaw.length > 0 ? Date.parse(prepEndsAtRaw) : null;
   await rtdbUpdate(env, `orderLive/${orderId}`, {
     customerId,
+    branchId: stringField(order, "branchId") || "default",
     status,
     prepEndsAt,
     updatedAt: Date.now(),
@@ -173,8 +176,9 @@ export async function handleChat(env: Env, request: Request): Promise<Response> 
   const order = await fsGet(env, `orders/${orderId}`);
   if (!order) throw new HttpError(404, "order-not-found");
 
-  const callerIsVendor = claims.vendor === true;
+  const callerIsVendor = claims.vendor === true || claims.superAdmin === true;
   const callerIsCustomer = order.customerId === claims.sub;
+  if (callerIsVendor && !canAccessBranch(claims, order.branchId)) throw new HttpError(403, "order-belongs-to-another-branch");
   if (!callerIsVendor && !callerIsCustomer) throw new HttpError(403, "not-a-chat-participant");
 
   const sender = callerIsVendor ? "vendor" : "customer";
@@ -192,8 +196,9 @@ export async function handleChat(env: Env, request: Request): Promise<Response> 
     required: true,
   });
 
-  const recipientUid = callerIsVendor ? stringField(order, "customerId") : await vendorUid(env);
-  const tokens = await tokensForUser(env, recipientUid);
+  const recipientUid = callerIsVendor ? stringField(order, "customerId") : null;
+  const branchRecipients = callerIsVendor ? [] : await tokensForBranch(env, stringField(order, "branchId") || null);
+  const tokens = callerIsVendor ? await tokensForUser(env, recipientUid) : branchRecipients.map((entry) => entry.token);
   const preview = text.length > TEXT_PREVIEW_LIMIT ? `${text.slice(0, TEXT_PREVIEW_LIMIT - 1)}…` : text;
 
   const outcome = await sendToTokens(env, tokens, {
@@ -210,7 +215,14 @@ export async function handleChat(env: Env, request: Request): Promise<Response> 
     ttl: CHAT_TTL,
     collapseKey: `chat-${orderId}`,
   });
-  await purgeTokens(env, recipientUid, outcome.unregisteredTokens);
+  if (callerIsVendor) {
+    await purgeTokens(env, recipientUid, outcome.unregisteredTokens);
+  } else {
+    const remaining = new Set(outcome.unregisteredTokens);
+    await Promise.all(branchRecipients.map(async (entry) => {
+      if (remaining.has(entry.token)) await purgeTokens(env, entry.uid, [entry.token]);
+    }));
+  }
 
   return json({ ok: true, sender, sent: outcome.sent, failed: outcome.failed });
 }
@@ -264,7 +276,7 @@ export async function handleVendorSelf(env: Env, request: Request): Promise<Resp
  */
 export async function handleTestAlert(env: Env, request: Request): Promise<Response> {
   const claims = await requireVendor(env, request);
-  const body = await readJson<{ shortId?: string }>(request).catch(() => ({ shortId: undefined }));
+  const body = await readJson<{ shortId?: string; branchId?: string }>(request).catch(() => ({ shortId: undefined, branchId: undefined }));
   const shortId = (body.shortId ?? `TEST-${new Date().toISOString().slice(11, 19)}`).slice(0, 40);
 
   const outcome = await raiseKitchenAlert(
@@ -272,6 +284,7 @@ export async function handleTestAlert(env: Env, request: Request): Promise<Respo
     {
       orderId: `test-${crypto.randomUUID()}`,
       shortId,
+      branchId: body.branchId?.trim().slice(0, 64) || undefined,
       title: "Kitchen alert test",
       body: "This is a test. If you can hear this, the kitchen will ring for a real order.",
       ttl: "120s",

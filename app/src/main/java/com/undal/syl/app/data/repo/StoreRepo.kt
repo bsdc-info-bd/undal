@@ -6,6 +6,9 @@ import com.undal.syl.app.core.model.Campaign
 import com.undal.syl.app.core.model.PromosConfig
 import com.undal.syl.app.core.model.StoreConfig
 import com.undal.syl.app.core.model.StoreOpenState
+import com.undal.syl.app.core.branch.BranchSelection
+import com.undal.syl.app.core.branch.BranchMembership
+import com.undal.syl.app.BuildConfig
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
@@ -13,6 +16,9 @@ import kotlinx.coroutines.flow.callbackFlow
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -26,20 +32,52 @@ import javax.inject.Singleton
  */
 @Singleton
 class StoreRepo @Inject constructor(
-    private val firestore: FirebaseFirestore
+    private val firestore: FirebaseFirestore,
+    private val branchRepo: BranchRepo,
+    private val membership: BranchMembership,
 ) {
 
-    /** Live store document. Emits [StoreConfig.unloaded] before the first snapshot. */
-    fun observeStore(): Flow<StoreConfig> = callbackFlow {
-        val registration = firestore.collection(CONFIG).document(STORE).addSnapshotListener { snapshot, error ->
-            if (error != null) {
-                close(error)
-                return@addSnapshotListener
+    private val selection: Flow<BranchSelection> = if (BuildConfig.IS_VENDOR) {
+        membership.selection.map { it.asCustomerSelection() }
+    } else {
+        branchRepo.selection
+    }
+
+    /** Live config for the server-selected branch, with the legacy store as the migration fallback. */
+    @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
+    fun observeStore(): Flow<StoreConfig> = selection
+        .distinctUntilChanged()
+        .flatMapLatest { selection -> observeSelectedStore(selection) }
+
+    private fun observeSelectedStore(selection: BranchSelection): Flow<StoreConfig> {
+        if (selection.branchId.isBlank()) return flowOf(selection.store)
+        return callbackFlow {
+            // Resolve the document before registering the listener; an invalid id
+            // becomes a visible fallback rather than an uncaught IllegalArgumentException.
+            val reference = runCatching {
+                if (selection.branchId == "default" && selection.legacySingleBranch) {
+                    firestore.collection(CONFIG).document(STORE)
+                } else {
+                    firestore.collection(BRANCHES).document(selection.branchId)
+                }
+            }.getOrElse {
+                trySend(selection.store)
+                close(it)
+                return@callbackFlow
             }
-            trySend(snapshot.toStoreConfig())
-        }
-        awaitClose { registration.remove() }
-    }.catch { emit(StoreConfig.unloaded()) }
+            val registration = reference.addSnapshotListener { snapshot, error ->
+                if (error != null) {
+                    // The Worker answer is a safe last-known configuration; the
+                    // checkout transaction still re-reads the live document.
+                    trySend(selection.store)
+                    close(error)
+                    return@addSnapshotListener
+                }
+                trySend(snapshot.toStoreConfig(selection))
+            }
+            awaitClose { registration.remove() }
+        }.catch { emit(selection.store) }
+    }
 
     /**
      * The store document, emitted on every change *and* at every minute boundary.
@@ -98,9 +136,10 @@ class StoreRepo @Inject constructor(
         awaitClose { registration.remove() }
     }.catch { emit(emptyList()) }
 
-    private fun DocumentSnapshot?.toStoreConfig(): StoreConfig {
-        val map = this?.data ?: return StoreConfig.unloaded()
-        return StoreConfig.fromMap(map)
+    private fun DocumentSnapshot?.toStoreConfig(selection: BranchSelection): StoreConfig {
+        val map = this?.data ?: return selection.store
+        val parsed = StoreConfig.fromMap(map)
+        return parsed.copy(storeName = selection.branchName.ifBlank { parsed.storeName })
     }
 
     companion object {
@@ -108,6 +147,7 @@ class StoreRepo @Inject constructor(
         private const val STORE = "store"
         private const val PROMOS = "promos"
         private const val CAMPAIGNS = "campaigns"
+        private const val BRANCHES = "branches"
         private const val MINUTE_MILLIS = 60_000L
         /** Lands each tick just inside the new minute, never a hair before it. */
         private const val TICK_SLACK_MILLIS = 250L

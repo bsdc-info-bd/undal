@@ -210,6 +210,7 @@ class OrderStatusRepo @Inject constructor(
         var transitionalCustomerId = ""
         // The order's number as the customer knows it (UND-1042), for the notice.
         var transitionalShortId = ""
+        var transitionalBranchId = "default"
 
         val outcome = runCatching {
             firestore.runTransaction { transaction ->
@@ -257,6 +258,7 @@ class OrderStatusRepo @Inject constructor(
                 transitionalNote = (update["cancelNote"] as? String).orEmpty()
                 transitionalCustomerId = view.customerId
                 transitionalShortId = view.shortId
+                transitionalBranchId = snapshot.getString("branchId").orEmpty().ifBlank { "default" }
                 // The rules require exactly one appended entry per transition,
                 // carrying only the new status. Per-step times are the dedicated
                 // server-stamped fields (acceptedAt, readyAt, inDeliveryAt,
@@ -285,7 +287,7 @@ class OrderStatusRepo @Inject constructor(
             // limited, or simply slower than the order. A cancellation in
             // particular must be visible on the customer's tracking page while
             // they are still looking at it.
-            mirrorStatus(orderId, target, transitionalNote, transitionalCustomerId)
+            mirrorStatus(orderId, target, transitionalNote, transitionalCustomerId, transitionalBranchId)
 
             // Local reconciliation on this device: an accepted or cancelled order
             // must stop ringing immediately, and an accepted order starts the
@@ -343,10 +345,11 @@ class OrderStatusRepo @Inject constructor(
      * order transition is rolled back because this failed — Firestore is still the
      * authority, and the Worker's relay writes the same node.
      */
-    private fun mirrorStatus(orderId: String, status: OrderStatus, note: String, customerId: String) {
+    private fun mirrorStatus(orderId: String, status: OrderStatus, note: String, customerId: String, branchId: String) {
         runCatching {
             val payload = mutableMapOf<String, Any>(
                 "status" to status.wire,
+                "branchId" to branchId,
                 "updatedAt" to ServerValue.TIMESTAMP
             )
             // The customer's own read rule is `customerId === auth.uid`, and a

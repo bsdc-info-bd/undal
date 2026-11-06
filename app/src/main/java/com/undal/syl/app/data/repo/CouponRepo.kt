@@ -29,7 +29,8 @@ import javax.inject.Singleton
 @Singleton
 class CouponRepo @Inject constructor(
     private val firestore: FirebaseFirestore,
-    private val worker: WorkerApi
+    private val worker: WorkerApi,
+    private val branchRepo: BranchRepo,
 ) {
 
     /** A coupon as the app reads it, whatever shape Firestore returned. */
@@ -103,6 +104,7 @@ class CouponRepo @Inject constructor(
     /** The board, cached for a minute so a basket redraw is not a network call. */
     private var cachedBoard: List<Coupon> = emptyList()
     private var cachedAtMillis: Long = 0L
+    private var cachedBranchId: String = ""
 
     /**
      * The coupon this basket should apply by itself, or null when none helps.
@@ -129,9 +131,15 @@ class CouponRepo @Inject constructor(
 
     /** The board itself, for a "today's offers" strip in the cart. */
     suspend fun board(forceRefresh: Boolean = false): List<Coupon> {
+        val branchId = branchRepo.current().branchId
+        if (cachedBranchId != branchId) {
+            cachedBoard = emptyList()
+            cachedAtMillis = 0L
+            cachedBranchId = branchId
+        }
         val fresh = System.currentTimeMillis() - cachedAtMillis < BOARD_TTL_MILLIS
         if (!forceRefresh && fresh && cachedBoard.isNotEmpty()) return cachedBoard
-        val answer = worker.storeCoupons().getOrNull() ?: return cachedBoard
+        val answer = worker.storeCoupons(branchId).getOrNull() ?: return cachedBoard
         val rows = answer.optJSONArray("coupons")
         val board = buildList {
             for (index in 0 until (rows?.length() ?: 0)) {
@@ -152,6 +160,7 @@ class CouponRepo @Inject constructor(
     fun invalidate() {
         cachedBoard = emptyList()
         cachedAtMillis = 0L
+        cachedBranchId = ""
     }
 
     /** Reads and validates one code against the live document and the basket. */
@@ -170,6 +179,11 @@ class CouponRepo @Inject constructor(
         }
 
         val map = document.data.orEmpty()
+        val owner = (map["branchId"] as? String).orEmpty()
+        val selectedBranch = branchRepo.current().branchId
+        if (owner.isNotBlank() && owner != "*" && owner != selectedBranch) {
+            return Outcome.Rejected("That code is not available from this branch.")
+        }
         val coupon = Coupon(
             code = code,
             type = (map["type"] as? String).orEmpty(),

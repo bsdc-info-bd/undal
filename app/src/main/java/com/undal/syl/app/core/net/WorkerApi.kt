@@ -105,9 +105,12 @@ class WorkerApi @Inject constructor(
      * Never throws — an empty board is a valid answer, and the checkout then
      * prices the basket with no coupon rather than failing.
      */
-    suspend fun storeCoupons(): Result<JSONObject> = runCatching {
+    suspend fun storeCoupons(branchId: String? = null): Result<JSONObject> = runCatching {
+        val query = branchId?.takeIf { it.isNotBlank() }?.let {
+            "?branchId=" + java.net.URLEncoder.encode(it, "UTF-8")
+        }.orEmpty()
         val request = Request.Builder()
-            .url("$baseUrl/api/store/coupons")
+            .url("$baseUrl/api/store/coupons$query")
             .header("accept", "application/json")
             .get()
             .build()
@@ -122,6 +125,84 @@ class WorkerApi @Inject constructor(
                 JSONObject(body)
             }
     }
+
+    /** Resolves coverage on the server; the app never trusts its own distance calculation for checkout. */
+    suspend fun resolveBranch(lat: Double, lng: Double, branchId: String? = null): Result<JSONObject> =
+        kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+            runCatching {
+                val payload = JSONObject().put("lat", lat).put("lng", lng)
+                if (!branchId.isNullOrBlank()) payload.put("branchId", branchId)
+                val request = Request.Builder()
+                    .url("$baseUrl/api/branches/resolve")
+                    .header("accept", "application/json")
+                    .header("content-type", "application/json")
+                    .post(payload.toString().toRequestBody(JSON_MEDIA_TYPE))
+                    .build()
+                client.newBuilder().callTimeout(15, TimeUnit.SECONDS).build()
+                    .newCall(request).execute().use { response ->
+                        val text = response.body?.string().orEmpty()
+                        val json = runCatching { JSONObject(text) }.getOrElse {
+                            error("Branch routing returned an unreadable answer (HTTP ${response.code}).")
+                        }
+                        if (!response.isSuccessful) {
+                            error(json.optString("message").ifBlank { "Branch routing failed (HTTP ${response.code})." })
+                        }
+                        json
+                    }
+            }
+        }
+
+    /** Server-priced native checkout. The client sends ids and quantities, never authoritative money. */
+    suspend fun placeStoreOrder(payload: JSONObject): Result<JSONObject> =
+        kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+            runCatching {
+                val token = auth.currentUser?.getIdToken(false)?.await()?.token ?: error("Please sign in again.")
+                val request = Request.Builder()
+                    .url("$baseUrl/api/store/order")
+                    .header("authorization", "Bearer $token")
+                    .header("accept", "application/json")
+                    .header("content-type", "application/json")
+                    .post(payload.toString().toRequestBody(JSON_MEDIA_TYPE))
+                    .build()
+                client.newBuilder().callTimeout(30, TimeUnit.SECONDS).build()
+                    .newCall(request).execute().use { response ->
+                        val text = response.body?.string().orEmpty()
+                        val json = runCatching { JSONObject(text) }.getOrElse {
+                            error("Checkout returned an unreadable answer (HTTP ${response.code}).")
+                        }
+                        if (!response.isSuccessful) {
+                            error(json.optString("message").ifBlank { "Checkout was refused (HTTP ${response.code})." })
+                        }
+                        json
+                    }
+            }
+        }
+
+    /** Sends an uncovered address to the nearest branch, authenticated as this customer. */
+    suspend fun requestDeliveryExtension(payload: JSONObject): Result<JSONObject> =
+        kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+            runCatching {
+                val token = auth.currentUser?.getIdToken(false)?.await()?.token ?: error("Please sign in again.")
+                val request = Request.Builder()
+                    .url("$baseUrl/api/delivery-requests")
+                    .header("authorization", "Bearer $token")
+                    .header("accept", "application/json")
+                    .header("content-type", "application/json")
+                    .post(payload.toString().toRequestBody(JSON_MEDIA_TYPE))
+                    .build()
+                client.newBuilder().callTimeout(20, TimeUnit.SECONDS).build()
+                    .newCall(request).execute().use { response ->
+                        val text = response.body?.string().orEmpty()
+                        val json = runCatching { JSONObject(text) }.getOrElse {
+                            error("The delivery-area request could not be read (HTTP ${response.code}).")
+                        }
+                        if (!response.isSuccessful) {
+                            error(json.optString("message").ifBlank { "The delivery-area request was refused (HTTP ${response.code})." })
+                        }
+                        json
+                    }
+            }
+        }
 
     data class CleanupBatch(
         val before: String,

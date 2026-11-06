@@ -1,0 +1,82 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Kitchen-only components. None of these services or receivers is merged into
+     the customer APK. High-priority FCM remains subject to Android force-stop
+     and OEM battery policy; see docs/ANDROID_ALERTS.md. -->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+    <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+    <uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT" />
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
+
+    <application tools:targetApi="34">
+        <meta-data
+            android:name="com.google.firebase.messaging.default_notification_channel_id"
+            android:value="@string/channel_vendor_new_order"
+            tools:replace="android:value" />
+
+        <!-- Loops the official order sound at alarm volume until the order is
+             answered, with a full-screen intent and a partial wake lock. -->
+        <service
+            android:name=".core.background.OrderAlertService"
+            android:exported="false"
+            android:foregroundServiceType="mediaPlayback|specialUse"
+            android:stopWithTask="false">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="order-alerts" />
+        </service>
+
+        <!-- The live order watcher: a Firestore listener in the foreground, so an
+             order rings this phone even when push does not arrive at all. Silent
+             notification on purpose — this is a fallback, not a delivery guarantee. -->
+        <service
+            android:name=".core.background.KitchenWatchService"
+            android:exported="false"
+            android:foregroundServiceType="specialUse"
+            android:stopWithTask="false">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="order-watch" />
+        </service>
+
+        <!-- Sticky prep countdown with the ten-second tick. -->
+        <service
+            android:name=".core.background.PrepTimerService"
+            android:exported="false"
+            android:foregroundServiceType="specialUse"
+            android:stopWithTask="false">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="prep-countdown" />
+        </service>
+
+        <!-- Kitchen presence heartbeat: keeps the Worker's auto-offline rule honest. -->
+        <service
+            android:name=".core.background.PresenceHeartbeatService"
+            android:exported="false"
+            android:foregroundServiceType="specialUse"
+            android:stopWithTask="false">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="kitchen-presence" />
+        </service>
+
+        <!-- The alert watchdog: an alarm the system holds on Undal's behalf, so a
+             kitchen phone whose app was swiped away or killed by a battery
+             cleaner rebuilds its order watcher without anyone opening anything.
+             Never armed on a customer phone. -->
+        <receiver
+            android:name=".core.background.AlertWatchdogReceiver"
+            android:enabled="true"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="com.undal.syl.app.action.ALERT_WATCHDOG" />
+            </intent-filter>
+        </receiver>
+    </application>
+</manifest>

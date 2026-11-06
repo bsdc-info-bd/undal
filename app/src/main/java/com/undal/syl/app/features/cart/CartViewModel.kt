@@ -4,6 +4,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.undal.syl.app.core.cart.Cart
 import com.undal.syl.app.core.cart.CartLine
+import com.undal.syl.app.core.branch.BranchSelection
 import com.undal.syl.app.core.maps.UndalLocation
 import com.undal.syl.app.core.model.MenuSnapshot
 import com.undal.syl.app.core.model.StoreConfig
@@ -12,6 +13,7 @@ import com.undal.syl.app.core.util.Distance
 import com.undal.syl.app.core.util.Money
 import com.undal.syl.app.core.util.UndalResult
 import com.undal.syl.app.data.repo.AuthRepo
+import com.undal.syl.app.data.repo.BranchRepo
 import com.undal.syl.app.data.repo.CartRepo
 import com.undal.syl.app.data.repo.CouponRepo
 import com.undal.syl.app.data.repo.MenuRepo
@@ -42,6 +44,7 @@ import javax.inject.Inject
 @HiltViewModel
 class CartViewModel @Inject constructor(
     private val cartRepo: CartRepo,
+    private val branchRepo: BranchRepo,
     private val storeRepo: StoreRepo,
     private val menuRepo: MenuRepo,
     private val couponRepo: CouponRepo,
@@ -55,6 +58,7 @@ class CartViewModel @Inject constructor(
         val unavailableLineIds: Set<String> = emptySet(),
         val priceNotes: List<String> = emptyList(),
         val store: StoreConfig = StoreConfig.unloaded(),
+        val branch: BranchSelection = BranchSelection.legacy(),
         val openState: StoreOpenState = StoreOpenState.of(StoreConfig.unloaded()),
         val address: UndalLocation? = null,
         val distanceKm: Double? = null,
@@ -138,6 +142,7 @@ class CartViewModel @Inject constructor(
     /** Everything the screen is built from, so the offer can join the combine. */
     private data class Inputs(
         val store: StoreConfig,
+        val branch: BranchSelection,
         val menu: MenuSnapshot,
         val cart: Cart,
         val address: UndalLocation?,
@@ -150,12 +155,15 @@ class CartViewModel @Inject constructor(
             val inputs = combine(
                 // On the clock: the store closes at closing time with nothing in
                 // Firestore changing, and the bill must stop offering to order.
-                storeRepo.observeStoreOnTheClock(),
+                combine(storeRepo.observeStoreOnTheClock(), branchRepo.selection) { store, branch -> store to branch },
                 menuRepo.observeMenu(),
                 cartRepo.cart,
                 addressFlow,
                 noteFlow
-            ) { store, menu, cart, address, note -> Inputs(store, menu, cart, address, note) }
+            ) { storeAndBranch, menu, cart, address, note ->
+                val (store, branch) = storeAndBranch
+                Inputs(store, branch, menu, cart, address, note)
+            }
             // The automatic offer is a sixth input, so the bill, the badge and the
             // "applied automatically" line always describe one basket.
             combine(inputs, autoOfferFlow) { current, offer -> buildState(current, offer) }
@@ -188,7 +196,11 @@ class CartViewModel @Inject constructor(
     }
 
     fun refreshAddress() {
-        viewModelScope.launch(guard) { addressFlow.value = authRepo.loadProfileLocation() }
+        viewModelScope.launch(guard) {
+            val address = authRepo.loadProfileLocation()
+            addressFlow.value = address
+            branchRepo.resolve(address)
+        }
     }
 
     private suspend fun buildState(inputs: Inputs, autoOffer: CouponRepo.Offer?): State {
@@ -235,8 +247,17 @@ class CartViewModel @Inject constructor(
             reconciled = cartRepo.current()
         }
 
-        val distance = if (address != null) store.distanceFrom(address.lat, address.lng) else null
-        val delivery = distance?.let { store.deliveryFeeFor(it) } ?: 0L
+        val branch = inputs.branch
+        val distance = when {
+            branch.deliverable && branch.distanceKm != null -> branch.distanceKm
+            address != null -> store.distanceFrom(address.lat, address.lng)
+            else -> null
+        }
+        val delivery = if (branch.deliverable && branch.distanceKm != null) {
+            branch.deliveryPaisa
+        } else {
+            distance?.let { store.deliveryFeeFor(it) } ?: 0L
+        }
         val subtotal = reconciled.subtotalPaisa
 
         // A typed code wins; otherwise the kitchen's own automatic offer, priced by
@@ -254,6 +275,7 @@ class CartViewModel @Inject constructor(
             unavailableLineIds = unavailable,
             priceNotes = priceNotes.toList(),
             store = store,
+            branch = branch,
             openState = openState,
             address = address,
             distanceKm = distance,
@@ -269,7 +291,7 @@ class CartViewModel @Inject constructor(
             autoMessage = automatic?.message?.takeIf { unavailable.isEmpty() },
             autoHeadline = automatic?.headline.orEmpty(),
             note = note,
-            blockers = blockersFor(openState, store, address, distance, subtotal, unavailable, reconciled),
+            blockers = blockersFor(openState, store, branch, address, distance, subtotal, unavailable, reconciled),
             placing = _state.value.placing,
             placedOrderId = _state.value.placedOrderId,
             placedShortId = _state.value.placedShortId,
@@ -286,12 +308,26 @@ class CartViewModel @Inject constructor(
     private fun blockersFor(
         openState: StoreOpenState,
         store: StoreConfig,
+        branch: BranchSelection,
         address: UndalLocation?,
         distance: Double?,
         subtotal: Long,
         unavailable: Set<String>,
         cart: Cart
     ): List<String> = buildList {
+        if (!branch.deliverable) {
+            add(branch.message.ifBlank {
+                if (branch.canRequestExtension) {
+                    "No branch covers this address yet. Request extended delivery from the store page."
+                } else {
+                    "We could not confirm a branch for this address. Refresh and try again."
+                }
+            })
+        }
+        val cartOwner = cart.branchId.ifBlank { "default" }
+        if (cart.lines.isNotEmpty() && branch.deliverable && cartOwner != branch.branchId) {
+            add("This basket belongs to ${cart.branchName.ifBlank { "another branch" }}. Clear it to order from ${branch.branchName}.")
+        }
         if (!openState.serviceable) {
             add(
                 when (openState.reason) {
@@ -308,7 +344,7 @@ class CartViewModel @Inject constructor(
         if (address == null) {
             add("Add your delivery address so we can calculate the ride.")
         }
-        if (distance != null && !store.isServiceable(distance)) {
+        if (branch.deliverable && branch.distanceKm == null && distance != null && !store.isServiceable(distance)) {
             add(
                 "That address is ${Distance.formatKm(distance)} away — outside the " +
                     "${Distance.formatKm(store.radiusKm)} we can deliver."
@@ -456,6 +492,8 @@ class CartViewModel @Inject constructor(
         viewModelScope.launch(guard) {
             val draft = OrderRepo.OrderDraft(
                 store = current.store,
+                branchId = current.branch.branchId,
+                branchName = current.branch.branchName,
                 address = address,
                 distanceKm = current.distanceKm ?: 0.0,
                 customerName = authRepo.loadProfileName().orEmpty().ifBlank { "Undal customer" },

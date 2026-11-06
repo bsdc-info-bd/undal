@@ -22,5 +22,5 @@
   // @cloudflare/workers-types disagree about `fetch`, `setTimeout` and `URL`.
   // The build script is executed end to end by `worker/test/pages.test.ts`
   // instead, which is a stronger check than a type would be.
-  "include": ["src/**/*.ts", "../web/functions/**/*.ts", "../web/src/**/*.ts"]
+  "include": ["src/**/*.ts", "../web/functions/**/*.ts", "../web/src/**/*.ts", "../admin/functions/**/*.ts"]
 }

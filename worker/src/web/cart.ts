@@ -155,6 +155,8 @@ export interface CartLine {
   qty: number;
   /** "dish" or "combo" — decided by the server when it prices the cart. */
   kind: "dish" | "combo";
+  /** Optional per-line cooking instruction from the native app. */
+  note?: string;
 }
 
 export const MAX_CART_LINES = 40;
@@ -188,16 +190,19 @@ export function validateCartLines(lines: unknown): { lines: CartLine[]; issues: 
     const id = typeof candidate?.id === "string" ? candidate.id.trim() : "";
     const qty = Number(candidate?.qty);
     const kind = candidate?.kind === "combo" ? "combo" : "dish";
+    const note = typeof candidate?.note === "string" ? candidate.note.trim().slice(0, 140) : "";
     if (!id || id.length > 128 || !Number.isInteger(qty) || qty < 1 || qty > MAX_LINE_QTY) {
       issues.push({ code: "cart-line-invalid", message: "One of the lines in your cart is not valid." });
       continue;
     }
-    const existing = seen.get(id);
+    // The same dish with two cooking notes is two kitchen instructions, not one.
+    const key = `${id}\u0000${note}`;
+    const existing = seen.get(key);
     if (existing) {
       const merged = Math.min(MAX_LINE_QTY, existing.qty + qty);
-      seen.set(id, { ...existing, qty: merged });
+      seen.set(key, { ...existing, qty: merged });
     } else {
-      seen.set(id, { id, qty, kind });
+      seen.set(key, { id, qty, kind, ...(note ? { note } : {}) });
     }
   }
   return { lines: [...seen.values()], issues };
@@ -210,6 +215,7 @@ export interface PricedLine {
   unitAmountPaisa: number;
   lineTotalAmountPaisa: number;
   kind: "dish" | "combo";
+  note?: string;
 }
 
 export interface PricedCart {
@@ -258,6 +264,7 @@ export function priceCart(
       unitAmountPaisa: live.unitAmountPaisa,
       lineTotalAmountPaisa: lineTotalPaisa(live.unitAmountPaisa, line.qty),
       kind: line.kind,
+      ...(line.note ? { note: line.note } : {}),
     });
   }
 

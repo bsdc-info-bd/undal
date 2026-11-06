@@ -1,57 +1,64 @@
 package com.undal.syl.app.data.repo
 
-import com.google.firebase.firestore.FieldPath
 import com.google.firebase.firestore.FirebaseFirestore
-import com.google.firebase.firestore.Query
 import com.undal.syl.app.core.model.PresenceDay
+import com.undal.syl.app.core.branch.BranchMembership
+import com.undal.syl.app.core.branch.VendorBranch
+import com.undal.syl.app.core.util.TimeDhaka
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.callbackFlow
 import kotlinx.coroutines.flow.catch
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.flatMapLatest
 import javax.inject.Inject
 import javax.inject.Singleton
 
 /**
- * `presenceDays/{yyyy-mm-dd}` — the kitchen phone's connection history.
+ * The selected kitchen phone's connection history, written by the Worker.
  *
- * One small document per Dhaka date, written by the Worker's five-minute
- * presence sweep and read here for the dashboard's offline/online analytics. The
- * read is a live listener over a bounded query (the last seven dates), so the
- * numbers on screen update as the sweep writes them, and the cost of the read
- * does not grow with the age of the shop.
- *
- * The collection is vendor-readable and Worker-written: see
- * `firebase/firestore.rules`. A customer app never sees it.
+ * Each date is read as its own document instead of querying the collection.
+ * Firestore rules are not filters: a collection query cannot prove that every
+ * returned history document belongs to the caller's branch. Deterministic
+ * document ids avoid that ambiguity, need no composite index, and still provide
+ * live updates for the bounded seven-day dashboard.
  */
 @Singleton
 class PresenceRepo @Inject constructor(
-    private val firestore: FirebaseFirestore
+    private val firestore: FirebaseFirestore,
+    private val membership: BranchMembership,
 ) {
 
-    /**
-     * The last [days] days, newest first.
-     *
-     * Ordered by the document id — which is the date itself — so Firestore
-     * serves the range from the primary key and no composite index has to be
-     * created for a query that runs on every dashboard open.
-     */
-    fun observeDays(days: Int = 7): Flow<List<PresenceDay>> = callbackFlow {
-        val registration = firestore.collection(COLLECTION)
-            .orderBy(FieldPath.documentId(), Query.Direction.DESCENDING)
-            .limit(days.toLong())
+    /** The last [days] Dhaka dates, newest first. */
+    @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
+    fun observeDays(days: Int = 7): Flow<List<PresenceDay>> = membership.selection
+        .flatMapLatest { branch -> observeBranchDays(branch, days) }
+
+    private fun observeBranchDays(branch: VendorBranch, days: Int): Flow<List<PresenceDay>> {
+        val today = TimeDhaka.today()
+        val flows = (0 until days.coerceIn(1, 31)).map { offset ->
+            val dateKey = today.minusDays(offset.toLong()).toString()
+            val documentId = if (branch.legacySingleBranch) dateKey else "${branch.id}_$dateKey"
+            observeDay(documentId, dateKey)
+        }
+        return combine(flows) { entries -> entries.filterNotNull() }
+    }
+
+    private fun observeDay(documentId: String, dateKey: String): Flow<PresenceDay?> = callbackFlow {
+        val registration = firestore.collection(COLLECTION).document(documentId)
             .addSnapshotListener { snapshot, error ->
                 if (error != null) {
-                    close(error)
+                    trySend(null)
                     return@addSnapshotListener
                 }
                 trySend(
-                    snapshot?.documents.orEmpty().map { document ->
-                        PresenceDay.fromMap(document.id, document.data.orEmpty())
+                    snapshot?.takeIf { it.exists() }?.let { document ->
+                        PresenceDay.fromMap(dateKey, document.data.orEmpty())
                     }
                 )
             }
         awaitClose { registration.remove() }
-    }.catch { emit(emptyList()) }
+    }.catch { emit(null) }
 
     private companion object {
         const val COLLECTION = "presenceDays"

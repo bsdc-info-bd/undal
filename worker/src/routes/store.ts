@@ -23,9 +23,7 @@ import {
   normalizeBdMobile,
   normalizeCoupon,
   deliveryFeePaisa,
-  distanceFromStorePinned,
   grandTotalPaisa,
-  isWithinRadius,
   usableName,
   usableText,
   MAX_NAME_LENGTH,
@@ -43,8 +41,10 @@ import {
   pickBestCoupon,
   type CouponDocument,
 } from "../web/coupons";
-import { MENU_MEMO_TTL_MS, menuItem, toStoreConfig, webMenu } from "../web/store-data";
+import { MENU_MEMO_TTL_MS, menuForBranch, menuItem, toStoreConfig, webMenu } from "../web/store-data";
 import { closedSentence } from "../util/store-hours";
+import { loadBranches } from "./branches";
+import { branchDisplayName, resolveBranch } from "../branches";
 import { memoGet, type KvBinding } from "../util/kv";
 
 const ORDER_ALERT_TTL = "300s";
@@ -261,6 +261,8 @@ export async function handleStoreSession(env: Env): Promise<Response> {
 // --------------------------------------------------------------------- order
 
 interface OrderRequest {
+  branchId?: string;
+  source?: string;
   lines?: unknown;
   couponCode?: string;
   note?: string;
@@ -284,16 +286,17 @@ interface StoredOrder {
  * (`if (tokens.length === 0) return`), which is a kitchen that stopped ringing
  * for the web store and gave nobody a clue why.
  */
-async function alertKitchen(env: Env, orderId: string, shortId: string, itemCount: number, totalPaisa: number): Promise<void> {
+async function alertKitchen(env: Env, orderId: string, shortId: string, itemCount: number, totalPaisa: number, branchId?: string, source = "web"): Promise<void> {
   const outcome = await raiseKitchenAlert(
     env,
     {
       orderId,
       shortId,
+      branchId,
       title: `New order ${shortId}`,
-      body: `${itemCount} item(s) · ${formatPaisa(totalPaisa)} · cash on delivery (web)`,
+      body: `${itemCount} item(s) · ${formatPaisa(totalPaisa)} · cash on delivery (${source})`,
       ttl: ORDER_ALERT_TTL,
-      extra: { source: "web" },
+      extra: { source },
     },
     `order-${orderId}`,
   ).catch((error) => {
@@ -468,6 +471,8 @@ export interface WebOrderInput extends WebOrderIdentity {
   note?: string;
   /** "web" for the scripted checkout, "web-nojs" for the plain form. */
   source?: string;
+  /** A hint only; the server re-resolves the customer's pin before charging. */
+  branchId?: string;
 }
 
 export interface WebOrderResult {
@@ -507,23 +512,33 @@ export async function createWebOrder(env: Env, input: WebOrderInput): Promise<We
     throw new HttpError(400, "cart-invalid", issues[0]?.message ?? "Your cart is empty.");
   }
 
-  // ---- live catalogue, live store -----------------------------------------
-  const menu = await webMenu(env, { force: true });
-  const store = menu.store ?? toStoreConfig(await fsGet(env, "config/store").catch(() => null));
+  // ---- live branch routing and catalogue ---------------------------------
+  // The browser's branchId is only a routing preference. Coverage, distance,
+  // prices, fees and opening state are always recomputed from this delivery pin.
+  const branches = await loadBranches(env);
+  const routing = resolveBranch(branches, lat, lng, str(input.branchId).trim() || null);
+  if (routing.status !== "deliverable" || !routing.branch || !routing.branchId || routing.distanceKm === null) {
+    throw new HttpError(409, "outside-coverage", "No Undal branch currently delivers to this pin. You can request a delivery-area extension.", {
+      detail: {
+        canRequestExtension: routing.canRequestExtension,
+        nearestBranchId: routing.nearest?.branch.id ?? null,
+        nearestDistanceKm: routing.nearest?.distanceKm ?? null,
+      },
+    });
+  }
+  const branchId = routing.branchId;
+  const branchName = branchDisplayName(routing.branch);
+  const store = toStoreConfig(routing.branch);
+  if (!store) throw new HttpError(409, "branch-config-missing");
+  const menu = menuForBranch(await webMenu(env, { force: true }), branchId);
 
-  // ---- is the kitchen taking orders at all? -------------------------------
-  // The one rule every surface asks (util/store-hours.ts, StoreHours.kt): the
-  // owner's switch, the watchdog's pause, and the published hours. This line is
-  // the difference between a kitchen that keeps its schedule and one that takes
-  // a web order at 3 a.m. because somebody pressed Open last Tuesday — the page
-  // already said "Closed", and the order went through anyway.
   const closedRefusal = closedSentence(store);
   if (closedRefusal) throw new HttpError(409, "store-closed", closedRefusal);
 
   const priced = lines.map((line: CartLine) => {
     const live = menuItem(menu, line.id);
     if (!live) {
-      throw new HttpError(409, "item-missing", "A dish in your cart left the menu. Please review the cart.");
+      throw new HttpError(409, "item-missing", "A dish in your cart is not published by this branch. Please review the cart.");
     }
     if (!live.available) {
       throw new HttpError(409, "item-unavailable", `${live.name} is finished for today.`);
@@ -536,40 +551,25 @@ export async function createWebOrder(env: Env, input: WebOrderInput): Promise<We
       unitAmountPaisa,
       lineTotalAmountPaisa: lineTotalPaisa(unitAmountPaisa, line.qty),
       kind: live.kind,
+      ...(line.note ? { note: line.note } : {}),
     };
   });
 
   const subtotalPaisa = priced.reduce((sum, line) => sum + line.lineTotalAmountPaisa, 0);
-  if (store?.minOrderAmountPaisa && subtotalPaisa < store.minOrderAmountPaisa) {
+  if (store.minOrderAmountPaisa && subtotalPaisa < store.minOrderAmountPaisa) {
     throw new HttpError(
       409,
       "below-minimum",
-      `The kitchen cooks from ${formatPaisa(store.minOrderAmountPaisa)} upwards. Add a little more to your basket.`,
+      `${branchName} cooks from ${formatPaisa(store.minOrderAmountPaisa)} upwards. Add a little more to your basket.`,
     );
   }
-
-  const distanceKm = store
-    ? distanceFromStorePinned(store.storeLat, store.storeLng, lat, lng)
-    : null;
-  if (distanceKm === null) {
-    throw new HttpError(
-      409,
-      "store-pin-unpublished",
-      "The kitchen has not published its location yet, so the delivery fee cannot be measured. Please call them.",
-    );
-  }
+  const distanceKm = routing.distanceKm;
   if (distanceKm > MAX_DISTANCE_KM) {
-    throw new HttpError(409, "too-far", "That address is outside the delivery limit.");
+    throw new HttpError(409, "too-far", "That address is outside Undal's absolute 30 km delivery limit.");
   }
-  if (store && !isWithinRadius(distanceKm, store.radiusKm)) {
-    throw new HttpError(
-      409,
-      "outside-radius",
-      `The kitchen delivers inside ${store.radiusKm} km. That address is ${distanceKm.toFixed(1)} km away.`,
-    );
-  }
-
-  const deliveryPaisa = deliveryFeePaisa(distanceKm, store?.deliveryPerKmAmountPaisa ?? 0);
+  // resolveBranch already applied the polygon/radius. deliveryPaisa is calculated
+  // once more from the same rounded-up-kilometre rule used by Android receipts.
+  const deliveryPaisa = deliveryFeePaisa(distanceKm, store.deliveryPerKmAmountPaisa);
 
   // ---- coupon, re-validated live ------------------------------------------
   let discountPaisa = 0;
@@ -593,6 +593,10 @@ export async function createWebOrder(env: Env, input: WebOrderInput): Promise<We
   if (requestedCode) {
     const coupon = await fsGet(env, `coupons/${requestedCode}`);
     if (!coupon) throw new HttpError(409, "coupon-missing", `Coupon ${requestedCode} no longer exists.`);
+    const couponBranch = str(coupon.branchId);
+    if (couponBranch && couponBranch !== "*" && couponBranch !== branchId) {
+      throw new HttpError(409, "coupon-wrong-branch", `Coupon ${requestedCode} is not available from ${branchName}.`);
+    }
     const type = couponTypeOf(coupon.type);
     const verdict = evaluateCoupon(coupon as CouponDocument, {
       subtotalPaisa,
@@ -629,7 +633,9 @@ export async function createWebOrder(env: Env, input: WebOrderInput): Promise<We
       const verdict = live
         ? evaluateCoupon(live as unknown as CouponDocument, { subtotalPaisa, deliveryPaisa, ...couponClock() })
         : { eligible: false, reason: "unreadable", discountPaisa: 0 };
-      if (verdict.eligible && live) {
+      const liveBranch = live ? str(live.branchId) : "";
+      const belongsHere = !liveBranch || liveBranch === "*" || liveBranch === branchId;
+      if (verdict.eligible && live && belongsHere) {
         discountPaisa = verdict.discountPaisa;
         appliedCode = best.code;
         couponAutomatic = true;
@@ -659,6 +665,8 @@ export async function createWebOrder(env: Env, input: WebOrderInput): Promise<We
     customerName,
     phone,
     channel: input.source ?? "web",
+    branchId,
+    branchName,
     items: priced,
     subtotalAmountPaisa: subtotalPaisa,
     deliveryAmountPaisa: deliveryPaisa,
@@ -701,18 +709,19 @@ export async function createWebOrder(env: Env, input: WebOrderInput): Promise<We
   }
 
   // Chat metadata, the live mirror and the kitchen alert — all best effort.
-  await fsPatchWithServerTimestamps(env, `chats/${orderId}`, { customerId: input.uid, orderId }, [
+  await fsPatchWithServerTimestamps(env, `chats/${orderId}`, { customerId: input.uid, orderId, branchId }, [
     "createdAt",
   ]).catch(() => undefined);
   await rtdbSet(env, `orderLive/${orderId}`, {
     customerId: input.uid,
+    branchId,
     status: "placed",
     updatedAt: Date.now(),
   }).catch(() => undefined);
-  await rtdbSet(env, `chats/${orderId}`, { customerId: input.uid, createdAt: Date.now() }).catch(
+  await rtdbSet(env, `chats/${orderId}`, { customerId: input.uid, branchId, createdAt: Date.now() }).catch(
     () => undefined,
   );
-  await alertKitchen(env, orderId, shortId, priced.length, totalPaisa).catch(() => undefined);
+  await alertKitchen(env, orderId, shortId, priced.length, totalPaisa, branchId, input.source).catch(() => undefined);
 
   return {
     order: { id: orderId, shortId, totalPaisa, status: "placed" },
@@ -747,7 +756,8 @@ export async function handleStoreOrder(env: Env, request: Request): Promise<Resp
     lines: body.lines,
     couponCode: body.couponCode,
     note: body.note,
-    source: "web",
+    source: body.source === "android" ? "android" : "web",
+    branchId: body.branchId,
   });
 
   return json(
@@ -858,8 +868,10 @@ export async function handleStoreMenuApi(env: Env): Promise<Response> {
  * "what is running tonight?" glance. Same source, same board, so the two can
  * never disagree.
  */
-export async function handleStoreCouponsApi(env: Env): Promise<Response> {
-  const menu = await webMenu(env);
+export async function handleStoreCouponsApi(env: Env, request?: Request): Promise<Response> {
+  const branchId = request ? new URL(request.url).searchParams.get("branchId")?.trim() : "";
+  const snapshot = await webMenu(env);
+  const menu = branchId ? menuForBranch(snapshot, branchId) : snapshot;
   const board = menu.coupons ?? [];
   const automatic = board.filter((entry) => entry.autoApply);
   return json(

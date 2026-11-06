@@ -26,7 +26,7 @@ import com.undal.syl.app.core.design.UndalPageIntro
 import com.undal.syl.app.core.design.UndalSecondaryButton
 import com.undal.syl.app.core.design.UndalScaffold
 import com.undal.syl.app.core.theme.UndalDimens
-import com.undal.syl.app.features.vendor.VendorSection
+import com.undal.syl.app.core.design.UndalSection
 
 /**
  * Privacy and policy pages that work with the radio off (P-031 · V-096).
@@ -57,7 +57,7 @@ fun PolicyScreen(onBack: () -> Unit) {
             item { Spacer(Modifier.height(UndalDimens.sm)) }
 
             item {
-                VendorSection(
+                UndalSection(
                     title = "What we collect",
                     subtitle = "Only what a delivery needs."
                 ) {
@@ -82,7 +82,7 @@ fun PolicyScreen(onBack: () -> Unit) {
             item { Spacer(Modifier.height(UndalDimens.sm)) }
 
             item {
-                VendorSection(
+                UndalSection(
                     title = "What we never do",
                     subtitle = "The short list matters more than the long one."
                 ) {
@@ -104,7 +104,7 @@ fun PolicyScreen(onBack: () -> Unit) {
             item { Spacer(Modifier.height(UndalDimens.sm)) }
 
             item {
-                VendorSection(
+                UndalSection(
                     title = "Where the data lives",
                     subtitle = "Firebase Spark and Cloudinary free tier — the same stack that runs the store."
                 ) {
@@ -129,7 +129,7 @@ fun PolicyScreen(onBack: () -> Unit) {
             item { Spacer(Modifier.height(UndalDimens.sm)) }
 
             item {
-                VendorSection(
+                UndalSection(
                     title = "Your choices",
                     subtitle = "What you can ask for, and how."
                 ) {
@@ -152,7 +152,7 @@ fun PolicyScreen(onBack: () -> Unit) {
             item { Spacer(Modifier.height(UndalDimens.sm)) }
 
             item {
-                VendorSection(
+                UndalSection(
                     title = "Cash on delivery, cancellations and refunds",
                     subtitle = "No money moves inside this app."
                 ) {
@@ -175,7 +175,7 @@ fun PolicyScreen(onBack: () -> Unit) {
             item { Spacer(Modifier.height(UndalDimens.sm)) }
 
             item {
-                VendorSection(
+                UndalSection(
                     title = "Reaching a person",
                     subtitle = "One kitchen, one phone, one number."
                 ) {

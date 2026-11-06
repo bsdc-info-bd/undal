@@ -7,6 +7,8 @@ import androidx.datastore.preferences.core.stringPreferencesKey
 import com.undal.syl.app.core.cart.Cart
 import com.undal.syl.app.core.cart.CartCodec
 import com.undal.syl.app.core.cart.CartLine
+import com.undal.syl.app.core.branch.BranchMembership
+import com.undal.syl.app.BuildConfig
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
@@ -23,7 +25,9 @@ import javax.inject.Singleton
  */
 @Singleton
 class CartRepo @Inject constructor(
-    private val dataStore: DataStore<Preferences>
+    private val dataStore: DataStore<Preferences>,
+    private val branchRepo: BranchRepo,
+    private val membership: BranchMembership,
 ) {
 
     val cart: Flow<Cart> = dataStore.data.map { preferences ->
@@ -32,7 +36,11 @@ class CartRepo @Inject constructor(
 
     suspend fun current(): Cart = CartCodec.decode(dataStore.data.first()[KEY_CART])
 
-    suspend fun add(line: CartLine): Cart = mutate { it.withLine(line) }
+    suspend fun add(line: CartLine): Cart {
+        val selection = if (BuildConfig.IS_VENDOR) membership.current().asCustomerSelection() else branchRepo.current()
+        check(selection.deliverable) { selection.message.ifBlank { "This address is outside Undal's delivery area." } }
+        return mutate { it.forBranch(selection.branchId, selection.branchName).withLine(line) }
+    }
 
     suspend fun setQuantity(lineId: String, note: String, quantity: Int): Cart =
         mutate { it.withQuantity(lineId, note, quantity) }

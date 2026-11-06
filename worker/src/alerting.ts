@@ -27,7 +27,7 @@
  */
 import type { Env } from "./env";
 import { sendToTokens, sendToTopic, type FanOutResult } from "./fcmv1";
-import { purgeTokens, tokensForUser, vendorUid } from "./recipients";
+import { branchTopic, purgeTokens, tokensForBranch, tokensForUser, vendorUid } from "./recipients";
 
 /**
  * The topic every kitchen device subscribes to.
@@ -47,6 +47,8 @@ export function kitchenTopic(env: Env): string {
 export interface KitchenAlert {
   orderId: string;
   shortId: string;
+  /** Routing key. Absent means the legacy single-kitchen topic only. */
+  branchId?: string;
   title: string;
   body: string;
   /**
@@ -95,7 +97,10 @@ export async function raiseKitchenAlert(
   alert: KitchenAlert,
   collapseKey?: string,
 ): Promise<KitchenAlertOutcome> {
-  const topic = kitchenTopic(env);
+  const routedBranch = alert.branchId?.trim() || "";
+  // A branch order must never fan out to every Undal kitchen. Only legacy
+  // orders (no branchId) use the original undal_kitchen topic.
+  const topic = routedBranch ? branchTopic(routedBranch) : kitchenTopic(env);
   const data: Record<string, string> = {
     ...(alert.extra ?? {}),
     type: alert.type ?? "order_created",
@@ -105,17 +110,20 @@ export async function raiseKitchenAlert(
     body: alert.body,
     channelId: "vendor_new_order",
     clickAction: "vendor_order",
+    ...(routedBranch ? { branchId: routedBranch } : {}),
     ...(alert.test ? { test: "true" } : {}),
     ...(alert.kind ? { kind: alert.kind } : {}),
     sentAt: String(Date.now()),
   };
   if (!alert.test) delete data.test;
   if (!alert.kind) delete data.kind;
-  // Never collapse new orders: Android keeps only four collapse keys, so
-  // using one key per order can silently discard a busy kitchen's backlog.
-  const options = { data, ttl: alert.ttl ?? "300s", highPriority: true,
-    collapseKey: data.type === "order_created" ? undefined : collapseKey };
-
+  // New orders never collapse: FCM retains only four collapse keys per app.
+  const options = {
+    data,
+    ttl: alert.ttl ?? "300s",
+    highPriority: true,
+    collapseKey: data.type === "order_created" ? undefined : collapseKey,
+  };
   const outcome: KitchenAlertOutcome = {
     tokens: 0,
     tokenSent: 0,
@@ -132,41 +140,60 @@ export async function raiseKitchenAlert(
     unregistered: false,
   }));
 
-  // --- route 1: the kitchen account's own devices -------------------------
-  const uid = await vendorUid(env).catch(() => null);
-  if (!uid) {
-    outcome.warning = "no vendor account document found (vendor/{uid})";
-  } else {
-    const tokens = await tokensForUser(env, uid).catch(() => [] as string[]);
-    outcome.tokens = tokens.length;
-    if (tokens.length === 0) {
-      outcome.warning =
-        "the kitchen account has no registered device token — open the Undal app on the kitchen phone and run the readiness check";
+  if (routedBranch) {
+    // Direct tokens make delivery independent of topic subscription lag and
+    // provide the uid needed to purge each dead token from the right account.
+    const registrations = await tokensForBranch(env, routedBranch).catch(() => []);
+    outcome.tokens = registrations.length;
+    if (registrations.length === 0) {
+      outcome.warning = `no registered staff device for branch ${routedBranch}`;
     } else {
-      const fan: FanOutResult = await sendToTokens(env, tokens, options).catch(() => ({
-        sent: 0,
-        failed: tokens.length,
-        unregisteredTokens: [] as string[],
+      const byUid = new Map<string, string[]>();
+      for (const registration of registrations) {
+        byUid.set(registration.uid, [...(byUid.get(registration.uid) ?? []), registration.token]);
+      }
+      await Promise.all([...byUid.entries()].map(async ([uid, tokens]) => {
+        const fan: FanOutResult = await sendToTokens(env, tokens, options).catch(() => ({
+          sent: 0,
+          failed: tokens.length,
+          unregisteredTokens: [] as string[],
+        }));
+        outcome.tokenSent += fan.sent;
+        outcome.tokenFailed += fan.failed;
+        if (fan.unregisteredTokens.length > 0) await purgeTokens(env, uid, fan.unregisteredTokens).catch(() => undefined);
       }));
-      outcome.tokenSent = fan.sent;
-      outcome.tokenFailed = fan.failed;
-      if (fan.unregisteredTokens.length > 0) {
-        await purgeTokens(env, uid, fan.unregisteredTokens).catch(() => undefined);
+    }
+  } else {
+    // Original migration path. Kept intact for orders written by old builds.
+    const uid = await vendorUid(env).catch(() => null);
+    if (!uid) {
+      outcome.warning = "no vendor account document found (vendor/{uid})";
+    } else {
+      const tokens = await tokensForUser(env, uid).catch(() => [] as string[]);
+      outcome.tokens = tokens.length;
+      if (tokens.length === 0) {
+        outcome.warning = "the kitchen account has no registered device token — open Undal Vendor and run readiness";
+      } else {
+        const fan: FanOutResult = await sendToTokens(env, tokens, options).catch(() => ({
+          sent: 0,
+          failed: tokens.length,
+          unregisteredTokens: [] as string[],
+        }));
+        outcome.tokenSent = fan.sent;
+        outcome.tokenFailed = fan.failed;
+        if (fan.unregisteredTokens.length > 0) await purgeTokens(env, uid, fan.unregisteredTokens).catch(() => undefined);
       }
     }
   }
 
-  // --- route 2: the topic every kitchen device subscribes to --------------
-  // This route does not consult the account at all, which is exactly why it is
-  // here: a renamed, recreated or unprovisioned vendor account cannot silence an
-  // order while a device is subscribed.
   const topicPush = await topicPromise;
   outcome.topicSent = topicPush.ok;
   if (!topicPush.ok && topicPush.code !== "NO_TARGET") {
     outcome.warning = outcome.warning ?? `topic fan-out failed (${topicPush.code})`;
   }
-
   outcome.delivered = outcome.tokenSent + (outcome.topicSent ? 1 : 0);
-  if (outcome.delivered === 0) outcome.warning = "No alert route was accepted by FCM. Check credentials, tokens and Worker logs; the next sweep will retry.";
+  if (outcome.delivered === 0) {
+    outcome.warning = "No alert route was accepted by FCM. Check branch staff, tokens and Worker logs; the next sweep retries.";
+  }
   return outcome;
 }

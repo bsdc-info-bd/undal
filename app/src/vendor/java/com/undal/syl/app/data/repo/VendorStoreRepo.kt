@@ -8,6 +8,7 @@ import androidx.datastore.preferences.core.stringPreferencesKey
 import com.google.firebase.firestore.FieldValue
 import com.google.firebase.firestore.FirebaseFirestore
 import com.undal.syl.app.core.model.StoreConfig
+import com.undal.syl.app.core.branch.BranchMembership
 import com.undal.syl.app.core.model.StoreHours
 import com.undal.syl.app.core.model.StoreOpenState
 import com.undal.syl.app.core.model.StoreSlot
@@ -40,7 +41,8 @@ import javax.inject.Singleton
 class VendorStoreRepo @Inject constructor(
     private val firestore: FirebaseFirestore,
     private val dataStore: DataStore<Preferences>,
-    private val uploader: CloudinaryUploader
+    private val uploader: CloudinaryUploader,
+    private val membership: BranchMembership,
 ) {
 
     data class ScheduleSnapshot(
@@ -89,7 +91,7 @@ class VendorStoreRepo @Inject constructor(
                 "updatedAt" to FieldValue.serverTimestamp()
             )
         }
-        firestore.collection(CONFIG).document(STORE).update(payload).await()
+        storeDocument().update(payload).await()
     }.fold(
         onSuccess = { UndalResult.Success(Unit) },
         onFailure = { UndalResult.Failure(UndalErrors.firestore(it), it) }
@@ -135,7 +137,7 @@ class VendorStoreRepo @Inject constructor(
             payload["open"] = takingOrders
             payload["openSynced"] = takingOrders
         }
-        firestore.collection(CONFIG).document(STORE).update(payload).await()
+        storeDocument().update(payload).await()
         if (current != null) {
             dataStore.edit { preferences -> preferences[PREVIOUS_SNAPSHOT] = current }
         }
@@ -174,7 +176,7 @@ class VendorStoreRepo @Inject constructor(
         if (perKmPaisa <= 0L) error("The per-kilometre fee must be more than zero.")
         if (radiusKm !in 1.0..15.0) error("The radius must stay between 1 and 15 km.")
         if (minOrderPaisa < 0L) error("The minimum order cannot be negative.")
-        firestore.collection(CONFIG).document(STORE)
+        storeDocument()
             .update(
                 mapOf(
                     "deliveryPerKmAmountPaisa" to perKmPaisa,
@@ -192,7 +194,7 @@ class VendorStoreRepo @Inject constructor(
     suspend fun setPin(lat: Double, lng: Double, addressText: String): UndalResult<Unit> = runCatching {
         if (lat !in -90.0..90.0 || lng !in -180.0..180.0) error("That pin is not on the map.")
         if (lat == 0.0 && lng == 0.0) error("Pin the kitchen before saving.")
-        firestore.collection(CONFIG).document(STORE)
+        storeDocument()
             .update(
                 mapOf(
                     "storeLat" to lat,
@@ -213,7 +215,7 @@ class VendorStoreRepo @Inject constructor(
         logoUrl: String
     ): UndalResult<Unit> = runCatching {
         if (storeName.trim().length < 2) error("The store needs a name customers recognise.")
-        firestore.collection(CONFIG).document(STORE)
+        storeDocument()
             .update(
                 mapOf(
                     "storeName" to storeName.trim().take(60),
@@ -316,6 +318,17 @@ class VendorStoreRepo @Inject constructor(
         "${Money.format(Money.deliveryFeePaisa(distanceKm, perKmPaisa))} for " +
             "${UndalDigits.format(distanceKm, 1)} km"
 
+
+    /** The selected branch document; only the pre-migration default uses config/store. */
+    private suspend fun storeDocument(): com.google.firebase.firestore.DocumentReference {
+        val branch = membership.current()
+        return if (branch.legacySingleBranch) {
+            firestore.collection(CONFIG).document(STORE)
+        } else {
+            firestore.collection(BRANCHES).document(branch.id)
+        }
+    }
+
     // ------------------------------------------------------------- persistence
 
     private fun encode(weekly: Map<String, List<StoreSlot>>, specialDates: List<StoreSpecialDate>): String {
@@ -382,6 +395,7 @@ class VendorStoreRepo @Inject constructor(
     private companion object {
         const val CONFIG = "config"
         const val STORE = "store"
+        const val BRANCHES = "branches"
         val SCHEDULE_SNAPSHOT = stringPreferencesKey("vendor_schedule_snapshot")
         val PREVIOUS_SNAPSHOT = stringPreferencesKey("vendor_schedule_snapshot_previous")
     }

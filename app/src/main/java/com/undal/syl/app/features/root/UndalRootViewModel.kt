@@ -3,6 +3,7 @@ package com.undal.syl.app.features.root
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.google.firebase.auth.FirebaseAuth
+import com.undal.syl.app.BuildConfig
 import com.undal.syl.app.core.background.KitchenWatchService
 import com.undal.syl.app.core.background.OrderAlertController
 import com.undal.syl.app.core.background.PresenceHeartbeatWorker
@@ -113,7 +114,7 @@ class UndalRootViewModel @Inject constructor(
 
                     is SessionState.SignedIn -> {
                         _emailVerified.value = state.user.emailVerified
-                        registerDevice(state.user.uid, state.user.isVendorClaim)
+                        registerDevice(state.user.uid, BuildConfig.IS_VENDOR && state.user.isVendorClaim)
                         resolveRole()
                     }
                 }
@@ -162,7 +163,7 @@ class UndalRootViewModel @Inject constructor(
                     // guessed differently — and it does guess differently on a
                     // cold start, because a token being fetched has no claims yet.
                     session.uid?.let { uid ->
-                        registerDevice(uid, resolution.role == UndalRole.VENDOR)
+                        registerDevice(uid, BuildConfig.IS_VENDOR && resolution.role == UndalRole.VENDOR)
                     }
                     _destination.value = when (resolution.role) {
                         UndalRole.VENDOR -> {

@@ -142,7 +142,7 @@ describe("the route table", () => {
     assert.match(source, /request\.method === "DELETE"/, "removing a saved address is a DELETE");
     assert.match(
       source,
-      /"access-control-allow-methods": "GET,POST,DELETE,OPTIONS"/,
+      /"access-control-allow-methods": "GET,POST,PUT,PATCH,DELETE,OPTIONS"/,
       "a browser preflight must be told DELETE is allowed, or the address book cannot be edited from the web",
     );
   });

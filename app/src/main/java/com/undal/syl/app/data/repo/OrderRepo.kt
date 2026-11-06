@@ -15,6 +15,9 @@ import com.undal.syl.app.core.maps.UndalLocation
 import com.undal.syl.app.core.telemetry.UndalTelemetry
 import com.undal.syl.app.core.model.MenuSnapshot
 import com.undal.syl.app.core.model.StoreConfig
+import com.undal.syl.app.core.net.WorkerApi
+import org.json.JSONArray
+import org.json.JSONObject
 import com.undal.syl.app.core.model.StoreOpenState
 import com.undal.syl.app.core.util.CouponMath
 import com.undal.syl.app.core.util.Money
@@ -59,12 +62,15 @@ class OrderRepo @Inject constructor(
     private val database: FirebaseDatabase,
     private val auth: FirebaseAuth,
     private val telemetry: UndalTelemetry,
+    private val worker: WorkerApi,
     @ApplicationContext private val context: Context
 ) {
 
     /** Everything needed to place one order. */
     data class OrderDraft(
         val store: StoreConfig,
+        val branchId: String = "default",
+        val branchName: String = "Undal HomeKitchen",
         val address: UndalLocation,
         val distanceKm: Double,
         val customerName: String,
@@ -169,8 +175,12 @@ class OrderRepo @Inject constructor(
     }
 
     private suspend fun placeOrderTraced(draft: OrderDraft): UndalResult<PlacedOrder> {
-        val uid = auth.currentUser?.uid
-            ?: return UndalResult.Failure("Please sign in again — your session expired.")
+        if (auth.currentUser?.uid == null) {
+            return UndalResult.Failure("Please sign in again — your session expired.")
+        }
+        if (draft.branchId.isBlank()) {
+            return UndalResult.Failure("We could not confirm your branch. Refresh your delivery address and try again.")
+        }
         if (draft.lines.isEmpty()) return UndalResult.Failure("Your cart is empty.")
         if (draft.lines.size > 40) return UndalResult.Failure("An order can hold at most 40 different dishes.")
         if (!draft.address.isValid) {
@@ -181,201 +191,58 @@ class OrderRepo @Inject constructor(
                 "Add a valid Bangladeshi mobile number (01XXXXXXXXX) in your profile — " +
                     "the rider calls it when the food arrives."
             )
-        if (draft.distanceKm < 0.0 || draft.distanceKm > 30.0) {
-            return UndalResult.Failure("That address is outside the 30 km delivery limit.")
+
+        // The Worker is the sole checkout authority. It resolves the pin again,
+        // verifies branch coverage/hours, reads every live price and computes all
+        // money before reserving the order number and alerting that branch. This
+        // also removes the old client-transaction privilege from Firestore rules.
+        val lines = JSONArray()
+        draft.lines.forEach { line ->
+            lines.put(JSONObject().apply {
+                put("id", line.id)
+                put("qty", line.quantity)
+                put("kind", if (line.isCombo) "combo" else "dish")
+                if (line.note.isNotBlank()) put("note", line.note.trim().take(140))
+            })
         }
+        val payload = JSONObject()
+            .put("source", "android")
+            .put("branchId", draft.branchId)
+            .put("customerName", draft.customerName.trim())
+            .put("phone", phone)
+            .put("lines", lines)
+            .put("couponCode", draft.couponCode.trim().uppercase(Locale.ENGLISH))
+            .put("note", draft.note.trim().take(300))
+            .put("address", JSONObject().apply {
+                put("lat", draft.address.lat)
+                put("lng", draft.address.lng)
+                put("title", draft.address.title)
+                put("desc", draft.address.desc)
+                put("note", draft.address.note)
+            })
 
-        val orderReference = firestore.collection(ORDERS).document()
-        val orderId = orderReference.id
-        val couponCode = draft.couponCode.trim().uppercase(Locale.ENGLISH)
-
-        val outcome = runCatching {
-            firestore.runTransaction<PlacedOrder> { transaction ->
-                // Is the kitchen taking orders — decided now, from the live store
-                // document, not when the cart screen was last drawn. A cart left
-                // open across closing time, or a phone holding a store snapshot
-                // from before the owner paused, must not slip an order in.
-                val liveStore = transaction.get(firestore.collection(CONFIG).document(STORE)).data
-                    ?.let { StoreConfig.fromMap(it) }
-                    ?: StoreConfig.unloaded()
-                val openState = StoreOpenState.of(liveStore)
-                if (!openState.serviceable) throw OrderBlocked(closedSentence(openState))
-
-                val counterReference = firestore.collection(COUNTERS).document(ORDERS)
-                val counterSnapshot = transaction.get(counterReference)
-                val nextCounterValue = (counterSnapshot.getLong("value") ?: 1000L) + 1L
-                if (nextCounterValue > 999_999L) {
-                    throw OrderBlocked("The order counter has run out — please tell the kitchen.")
-                }
-                val shortId = "UND-$nextCounterValue"
-
-                // Live re-read of every dish: price and availability are the
-                // kitchen's to change, and the customer must never be charged a
-                // price they did not see.
-                val itemLines = draft.lines.map { line ->
-                    val collection = if (line.isCombo) COMBOS else MENU_ITEMS
-                    val snapshot = transaction.get(firestore.collection(collection).document(line.id))
-                    if (!snapshot.exists()) {
-                        throw OrderBlocked("${line.name} is no longer on the menu. Please remove it and try again.")
-                    }
-                    val available = when {
-                        line.isCombo -> snapshot.getBoolean("available") ?: true
-                        else -> snapshot.getBoolean("available") ?: false
-                    }
-                    if (!available) {
-                        throw OrderBlocked("${line.name} is finished for today. Please remove it to continue.")
-                    }
-                    val liveUnit = when {
-                        line.isCombo -> snapshot.getLong("amountPaisa") ?: line.unitAmountPaisa
-                        else -> {
-                            val full = snapshot.getLong("amountPaisa") ?: line.unitAmountPaisa
-                            val discount = snapshot.getLong("discountAmountPaisa") ?: 0L
-                            if (discount in 1 until full) full - discount else full
-                        }
-                    }
-                    if (liveUnit != line.unitAmountPaisa) {
-                        throw OrderBlocked(
-                            "${line.name} now costs ${Money.format(liveUnit)} (you had " +
-                                "${Money.format(line.unitAmountPaisa)}). Please review your cart before ordering."
-                        )
-                    }
-                    mapOf(
-                        "id" to line.id,
-                        "name" to line.name,
-                        "qty" to line.quantity,
-                        "unitAmountPaisa" to liveUnit,
-                        "lineTotalAmountPaisa" to Money.lineTotal(liveUnit, line.quantity),
-                        "note" to line.note,
-                        "isCombo" to line.isCombo
-                    )
-                }
-
-                val subtotal = itemLines.sumOf { it["lineTotalAmountPaisa"] as Long }
-                val delivery = Money.deliveryFeePaisa(draft.distanceKm, draft.store.deliveryPerKmAmountPaisa)
-
-                var discount = 0L
-                var appliedCode = ""
-                if (couponCode.isNotBlank()) {
-                    val couponReference = firestore.collection(COUPONS).document(couponCode)
-                    val couponSnapshot = transaction.get(couponReference)
-                    if (!couponSnapshot.exists()) {
-                        throw OrderBlocked("Coupon $couponCode no longer exists. Remove it to continue.")
-                    }
-
-                    // The same rule the cart quoted, the Worker enforces and the web
-                    // storefront shows: one promotion, four surfaces, one verdict.
-                    val coupon = CouponMath.Coupon(
-                        code = couponCode,
-                        type = couponSnapshot.getString("type").orEmpty(),
-                        value = couponSnapshot.getLong("value") ?: 0L,
-                        active = couponSnapshot.getBoolean("active") ?: false,
-                        description = couponSnapshot.getString("description").orEmpty(),
-                        minSubtotalAmountPaisa = couponSnapshot.getLong("minSubtotalAmountPaisa") ?: 0L,
-                        maxDiscountPaisa = couponSnapshot.getLong("maxDiscountPaisa") ?: 0L,
-                        // `get`, not `getTimestamp`: the latter throws for any other
-                        // shape, and a coupon dated by hand failed the whole order.
-                        expiresAtMillis = CouponMath.expiryMillis(
-                            couponSnapshot.get("expiresAt") ?: couponSnapshot.get("expiresAtMillis")
-                        ),
-                        startsAt = couponSnapshot.getString("startsAt").orEmpty(),
-                        endsAt = couponSnapshot.getString("endsAt").orEmpty(),
-                        daysOfWeek = CouponMath.days(couponSnapshot.get("daysOfWeek")),
-                        usageLimit = couponSnapshot.getLong("usageLimit") ?: 0L,
-                        usedCount = couponSnapshot.getLong("usedCount") ?: 0L
-                    )
-                    val verdict = CouponMath.evaluate(
-                        coupon,
-                        CouponMath.Context(subtotalPaisa = subtotal, deliveryPaisa = delivery)
-                    )
-                    if (!verdict.eligible) {
-                        throw OrderBlocked("Coupon $couponCode ${couponRefusal(verdict.reason, coupon, subtotal)}")
-                    }
-                    discount = verdict.discountPaisa
-                    appliedCode = couponCode
-                    val usedCount = coupon.usedCount
-                    transaction.update(couponReference, "usedCount", usedCount + 1L)
-                }
-
-                val total = Money.grandTotal(subtotal, delivery, discount)
-                if (total <= 0L) throw OrderBlocked("This order would total nothing. Please review your cart.")
-
-                val orderDocument = mutableMapOf<String, Any?>(
-                    "shortId" to shortId,
-                    "customerId" to uid,
-                    "customerName" to draft.customerName.trim(),
-                    "phone" to phone,
-                    "items" to itemLines,
-                    "subtotalAmountPaisa" to subtotal,
-                    "deliveryAmountPaisa" to delivery,
-                    "discountAmountPaisa" to discount,
-                    "totalAmountPaisa" to total,
-                    "payment" to "COD",
-                    "address" to draft.address.toFirestoreMap(),
-                    "distanceKm" to draft.distanceKm,
-                    "status" to OrderStatus.PLACED.wire,
-                    "timeline" to listOf(mapOf("status" to OrderStatus.PLACED.wire)),
-                    "chatId" to orderId,
-                    "createdAt" to FieldValue.serverTimestamp(),
-                    "updatedAt" to FieldValue.serverTimestamp()
-                )
-                if (appliedCode.isNotBlank()) orderDocument["couponCode"] = appliedCode
-                if (draft.note.isNotBlank()) orderDocument["note"] = draft.note.trim().take(300)
-
-                if (counterSnapshot.exists()) {
-                    transaction.update(counterReference, "value", nextCounterValue)
+        return worker.placeStoreOrder(payload).fold(
+            onSuccess = { answer ->
+                val order = answer.optJSONObject("order")
+                    ?: return@fold UndalResult.Failure("The order was accepted but its receipt was incomplete. Check order history before retrying.")
+                val id = order.optString("id")
+                val shortId = order.optString("shortId")
+                if (id.isBlank() || shortId.isBlank()) {
+                    UndalResult.Failure("The order receipt was incomplete. Check order history before retrying.")
                 } else {
-                    transaction.set(counterReference, mapOf("value" to nextCounterValue))
+                    UndalResult.Success(
+                        PlacedOrder(
+                            orderId = id,
+                            shortId = shortId,
+                            totalAmountPaisa = order.optLong("totalPaisa"),
+                        )
+                    )
                 }
-                transaction.set(orderReference, orderDocument)
-                transaction.set(
-                    firestore.collection(CHATS).document(orderId),
-                    mapOf(
-                        "customerId" to uid,
-                        "orderId" to orderId,
-                        "createdAt" to FieldValue.serverTimestamp()
-                    )
-                )
-                PlacedOrder(orderId = orderId, shortId = shortId, totalAmountPaisa = total)
-            }.await()
-        }.fold(
-            onSuccess = { UndalResult.Success(it) },
+            },
             onFailure = { error ->
-                UndalResult.Failure(
-                    (error as? OrderBlocked)?.message ?: UndalErrors.firestore(error),
-                    error
-                )
-            }
+                UndalResult.Failure(error.message ?: "The order could not be placed. Please try again.", error)
+            },
         )
-
-        if (outcome is UndalResult.Success) {
-            // The live mirror is what every screen and the Worker's crons read:
-            // it must exist the moment the order exists (C-069).
-            runCatching {
-                database.getReference(LIVE).child(outcome.value.orderId).setValue(
-                    mapOf(
-                        "customerId" to uid,
-                        "status" to OrderStatus.PLACED.wire,
-                        "updatedAt" to ServerValue.TIMESTAMP
-                    )
-                )
-            }
-            runCatching {
-                database.getReference(CHAT_NODE).child(outcome.value.orderId).setValue(
-                    mapOf(
-                        "customerId" to uid,
-                        "createdAt" to ServerValue.TIMESTAMP
-                    )
-                )
-            }
-            // The kitchen phone must ring even if this customer's app is closed
-            // one second later, so the relay is queued through WorkManager.
-            NotifyRetryWorker.enqueue(
-                context = context,
-                orderId = outcome.value.orderId,
-                kind = NotifyRetryWorker.KIND_ORDER_CREATED
-            )
-        }
-        return outcome
     }
 
     // ------------------------------------------------------------------- read

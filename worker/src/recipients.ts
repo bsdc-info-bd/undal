@@ -39,7 +39,37 @@ export async function tokensForUser(env: Env, uid: string | null | undefined): P
 }
 
 export async function vendorTokens(env: Env): Promise<string[]> {
-  return tokensForUser(env, await vendorUid(env));
+  const registrations = await tokensForBranch(env, "default");
+  return registrations.map((entry) => entry.token);
+}
+
+/** Stable FCM topic for one branch. Ids are slugged by the admin API. */
+export function branchTopic(branchId: string): string {
+  const safe = branchId.toLowerCase().replace(/[^a-z0-9-]/g, "-").slice(0, 48) || "default";
+  return `undal_branch_${safe}`;
+}
+
+/**
+ * Staff assigned to a branch. During migration a legacy vendor document with no
+ * branchIds receives only default/legacy orders, never another branch's alerts.
+ */
+export async function vendorUidsForBranch(env: Env, branchId?: string | null): Promise<string[]> {
+  const branch = branchId?.trim() || "default";
+  const vendors = await fsQuery(env, { collectionId: "vendor", limit: 100 });
+  return vendors.filter((vendor) => {
+    if (vendor.disabled === true) return false;
+    const assigned = Array.isArray(vendor.branchIds)
+      ? vendor.branchIds.filter((id): id is string => typeof id === "string")
+      : [];
+    return assigned.includes(branch) || assigned.includes("*") ||
+      (branch === "default" && assigned.length === 0);
+  }).map((vendor) => vendor.id);
+}
+
+export async function tokensForBranch(env: Env, branchId?: string | null): Promise<Array<{ uid: string; token: string }>> {
+  const uids = await vendorUidsForBranch(env, branchId);
+  const lists = await Promise.all(uids.map(async (uid) => (await tokensForUser(env, uid)).map((token) => ({ uid, token }))));
+  return lists.flat();
 }
 
 /** Removes tokens FCM reported as dead so the fan-out list stays clean. */

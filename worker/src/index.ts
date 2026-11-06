@@ -76,10 +76,12 @@ import { handleIcon, handleManifest, handleServiceWorker } from "./web/pwa";
 import { handleItemSharePage, handleOrderOpenPage, handleSmartOpen } from "./web/deeplink";
 import { favicon } from "./web/layout";
 import { failurePage, notFoundPage, wantsHtml } from "./web/error-pages";
-import { runOpeningReminder } from "./crons/opening";
-import { runPresenceSweep } from "./crons/presence";
+import { runAllOpeningReminders } from "./crons/opening";
+import { runAllPresenceSweeps } from "./crons/branch-presence";
 import { runRealertSweep } from "./crons/realert";
 import { runPromoBlast } from "./crons/promo";
+import { handleAdminApi } from "./routes/admin";
+import { handleBranchList, handleBranchResolve, handleDeliveryExtensionRequest } from "./routes/branches";
 
 const PRESENCE_CRON = "*/5 * * * *";
 /**
@@ -193,7 +195,7 @@ async function route(request: Request, env: Env, ctx?: ExecutionContext): Promis
       status: 204,
       headers: {
         "access-control-allow-headers": "authorization,content-type,x-undal-release-secret",
-        "access-control-allow-methods": "GET,POST,DELETE,OPTIONS",
+        "access-control-allow-methods": "GET,POST,PUT,PATCH,DELETE,OPTIONS",
         "access-control-max-age": "86400",
       },
     });
@@ -201,8 +203,9 @@ async function route(request: Request, env: Env, ctx?: ExecutionContext): Promis
 
   if (path === "/healthz") return health(env);
 
-  const isApi = path.startsWith("/notify/") || path.startsWith("/admin/");
-  const isStoreApi = path.startsWith("/api/store/") || path.startsWith("/api/account/");
+  const isApi = path.startsWith("/notify/") || path.startsWith("/admin/") || path.startsWith("/api/admin/");
+  const isStoreApi = path.startsWith("/api/store/") || path.startsWith("/api/account/") ||
+    path.startsWith("/api/branches") || path === "/api/delivery-requests";
   // Icons, the manifest and the service worker are counted nowhere: they are bytes
   // that never change, they cost nothing to serve, and counting them was how an
   // installable-web page spent a customer's whole budget on its own artwork.
@@ -227,6 +230,10 @@ async function route(request: Request, env: Env, ctx?: ExecutionContext): Promis
   }
 
   if (path === "/admin/cleanup" && request.method === "POST") return handleCleanup(env, request);
+  if (path.startsWith("/api/admin/")) return handleAdminApi(env, request, path);
+  if (path === "/api/branches" && request.method === "GET") return handleBranchList(env);
+  if (path === "/api/branches/resolve" && request.method === "POST") return handleBranchResolve(env, request);
+  if (path === "/api/delivery-requests" && request.method === "POST") return handleDeliveryExtensionRequest(env, request);
 
   if (path === "/" || path === "/store") return edgeCached(request, ctx, () => handleStoreFront(env, request), 30);
   if (path === "/about") return edgeCached(request, ctx, () => handleAboutPage(env, request), 60);
@@ -317,7 +324,7 @@ async function route(request: Request, env: Env, ctx?: ExecutionContext): Promis
   }
 
   if (path === "/api/store/menu") return handleStoreMenuApi(env);
-  if (path === "/api/store/coupons") return handleStoreCouponsApi(env);
+  if (path === "/api/store/coupons") return handleStoreCouponsApi(env, request);
   if (path === "/api/account/session") return handleCookieSession(request);
   if (path === "/api/account/profile") return handleAccountProfileGet(env, request);
   if (path === "/api/account/addresses") return handleAccountAddressesGet(env, request);
@@ -374,20 +381,20 @@ export default {
       ctx.waitUntil(
         // Presence first — a store that has to be paused is paused before the
         // opening reminder below asks anybody to open anything.
-        runPresenceSweep(env)
-          .then((result) => {
-            // Only the sweeps that decided something are logged: five minutes of
-            // "device-present" is a log nobody reads.
-            if (result.action !== "none" || result.reason === "device-never-seen") {
-              console.log("undal-cron presence", JSON.stringify(result));
-            }
+        runAllPresenceSweeps(env)
+          .then((results) => {
+            // Only sweeps that decided something are logged: five minutes of
+            // "device-present" for every branch is a log nobody reads.
+            const decisions = results.filter((result) => result.action !== "none" || result.reason === "device-never-seen");
+            if (decisions.length > 0) console.log("undal-cron presence", JSON.stringify(decisions));
           })
           .catch((error) => console.error("undal-cron presence failed", error)),
       );
       ctx.waitUntil(
-        runOpeningReminder(env)
-          .then((result) => {
-            if (result.reminded) console.log("undal-cron opening", JSON.stringify(result));
+        runAllOpeningReminders(env)
+          .then((results) => {
+            const reminders = results.filter((result) => result.reminded);
+            if (reminders.length > 0) console.log("undal-cron opening", JSON.stringify(reminders));
           })
           .catch((error) => console.error("undal-cron opening failed", error)),
       );

@@ -1,0 +1,18 @@
+# Undal super-admin — Cloudflare Pages free tier
+name = "undal-admin"
+compatibility_date = "2026-10-01"
+pages_build_output_dir = "public"
+
+[vars]
+CLOUDINARY_CLOUD_NAME = "REPLACE_CLOUDINARY_CLOUD_NAME"
+FIREBASE_WEB_API_KEY = "REPLACE_FIREBASE_WEB_API_KEY"
+APP_PACKAGE_NAME = "com.undal.syl.app"
+VENDOR_PACKAGE_NAME = "com.undal.syl.vendor"
+GITHUB_REPO_SLUG = "REPLACE_GITHUB_REPO_SLUG"
+PROMO_TOPIC = "promos_all"
+KITCHEN_TOPIC = "undal_kitchen"
+PRERENDER_MAX_AGE_SECONDS = "0"
+
+[[kv_namespaces]]
+binding = "UNDAL_KV"
+id = "REPLACE_KV_NAMESPACE_ID"

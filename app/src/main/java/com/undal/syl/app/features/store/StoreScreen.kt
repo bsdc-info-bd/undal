@@ -192,7 +192,8 @@ fun StoreScreen(
                             StoreHeader(
                                 state = state,
                                 reachabilityLine = viewModel.reachabilityLine(state.reachability),
-                                onEditAddress = onEditAddress
+                                onEditAddress = onEditAddress,
+                                onRequestExtension = viewModel::requestDeliveryExtension,
                             )
                         },
                         secondary = {
@@ -480,7 +481,8 @@ private fun StoreHeroArtwork(featured: MenuCard?, modifier: Modifier = Modifier)
 private fun StoreHeader(
     state: StoreViewModel.State,
     reachabilityLine: String,
-    onEditAddress: () -> Unit
+    onEditAddress: () -> Unit,
+    onRequestExtension: () -> Unit,
 ) {
     Column {
         Surface(
@@ -570,6 +572,29 @@ private fun StoreHeader(
                             }
                         )
                     }
+                }
+                if (state.branch.canRequestExtension) {
+                    Spacer(Modifier.height(UndalDimens.xs))
+                    TextButton(
+                        onClick = onRequestExtension,
+                        enabled = !state.extensionRequestSending,
+                    ) {
+                        Text(if (state.extensionRequestSending) "Sending request…" else "Ask ${state.branch.nearestBranchName.ifBlank { "the nearest branch" }} to deliver here")
+                    }
+                }
+                if (state.extensionRequestMessage != null) {
+                    Text(
+                        text = state.extensionRequestMessage,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onErrorContainer,
+                    )
+                }
+                if (state.branch.deliverable) {
+                    Text(
+                        text = "Your kitchen: ${state.branch.branchName}" + if (state.branch.fromCache) " · last confirmed" else "",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = if (state.openState.serviceable) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onErrorContainer,
+                    )
                 }
                 Spacer(Modifier.height(UndalDimens.xs))
                 Text(
