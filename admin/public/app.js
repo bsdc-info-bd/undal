@@ -25,7 +25,8 @@ const state = {
   uid: sessionStorage.getItem('undal_admin_uid') || '',
   data: null,
   route: location.hash.slice(1) || 'dashboard',
-  branchFilter: '*',
+  menuBranchFilter: '*',
+  orderBranchFilter: 'all',
   orderFilter: 'active',
   search: '',
   loading: false,
@@ -40,6 +41,10 @@ const routes = {
   requests: ['DELIVERY COVERAGE', 'Area requests.'],
   team: ['ACCESS & ROLES', 'Branch team.'],
 };
+if (!routes[state.route]) {
+  state.route = 'dashboard';
+  history.replaceState(null, '', '#dashboard');
+}
 
 async function api(path, options = {}) {
   const headers = { accept: 'application/json', ...(options.body ? { 'content-type': 'application/json' } : {}), ...(options.headers || {}) };
@@ -209,10 +214,10 @@ function branchCard(branch) {
 
 function renderMenu() {
   const branches = [{ id: '*', name: 'All branches (global menu)' }, ...state.data.branches];
-  const items = state.data.menuItems.filter((item) => (state.branchFilter === 'all' || (item.branchId || '*') === state.branchFilter) && `${item.name} ${item.description || ''}`.toLowerCase().includes(state.search.toLowerCase()));
+  const items = state.data.menuItems.filter((item) => (state.menuBranchFilter === 'all' || (item.branchId || '*') === state.menuBranchFilter) && `${item.name} ${item.description || ''}`.toLowerCase().includes(state.search.toLowerCase()));
   const categories = Object.fromEntries(state.data.categories.map((category) => [category.id, category.name]));
   return `<div class="section-head"><div><h2>One library, local control.</h2><p>Global dishes belong to the Undal brand. Branch dishes appear only at the kitchen you choose.</p></div><button class="button button--primary" data-action="new-menu">＋ Add dish</button></div>
-    <div class="filter-bar"><div class="search-box"><input data-search placeholder="Search dishes…" value="${esc(state.search)}" aria-label="Search dishes"></div><select data-branch-filter aria-label="Filter menu by branch">${branches.map((branch) => `<option value="${esc(branch.id)}" ${state.branchFilter === branch.id ? 'selected' : ''}>${esc(branch.name)}</option>`).join('')}<option value="all" ${state.branchFilter === 'all' ? 'selected' : ''}>Every menu entry</option></select><button class="button button--secondary" data-action="new-category">＋ Category</button></div>
+    <div class="filter-bar"><div class="search-box"><input data-search placeholder="Search dishes…" value="${esc(state.search)}" aria-label="Search dishes"></div><select data-menu-branch-filter aria-label="Filter menu by branch">${branches.map((branch) => `<option value="${esc(branch.id)}" ${state.menuBranchFilter === branch.id ? 'selected' : ''}>${esc(branch.name)}</option>`).join('')}<option value="all" ${state.menuBranchFilter === 'all' ? 'selected' : ''}>Every menu entry</option></select><button class="button button--secondary" data-action="new-category">＋ Category</button></div>
     <div class="table-wrap"><table><thead><tr><th>Dish</th><th>Category</th><th>Branch</th><th>Price</th><th>Availability</th><th></th></tr></thead><tbody>${items.map((item) => `<tr><td><div class="item-cell"><span class="item-thumb">${item.imageUrl ? `<img src="${esc(item.imageUrl)}" alt="" loading="lazy">` : '♨'}</span><div><strong>${esc(item.name)}</strong><small>${esc((item.description || 'No description').slice(0, 55))}</small></div></div></td><td>${esc(categories[item.categoryId] || item.categoryId || 'Uncategorised')}</td><td>${esc(branchName(item.branchId || '*'))}</td><td><strong>${money(item.amountPaisa)}</strong>${Number(item.discountAmountPaisa) ? `<small>−${money(item.discountAmountPaisa)} discount</small>` : ''}</td><td>${statusPill(item.available === false ? 'sold out' : 'available')}</td><td><button class="button button--secondary button--small" data-edit-menu="${esc(item.id)}">Edit</button></td></tr>`).join('')}</tbody></table>${items.length ? '' : empty('▤', 'No dishes here yet', 'Add a dish or choose another branch filter.', '<button class="button button--primary" data-action="new-menu">Add dish</button>')}</div>`;
 }
 
@@ -224,13 +229,13 @@ function branchName(id) {
 function renderOrders() {
   const branches = [{ id: 'all', name: 'Every branch' }, ...state.data.branches];
   const filtered = state.data.orders.filter((order) => {
-    const branchMatch = state.branchFilter === 'all' || (order.branchId || 'default') === state.branchFilter;
+    const branchMatch = state.orderBranchFilter === 'all' || (order.branchId || 'default') === state.orderBranchFilter;
     const statusMatch = state.orderFilter === 'all' || (state.orderFilter === 'active' ? ['placed', 'accepted', 'ready', 'in_delivery'].includes(order.status) : order.status === state.orderFilter);
     const searchMatch = `${order.shortId} ${order.customerName} ${order.phone}`.toLowerCase().includes(state.search.toLowerCase());
     return branchMatch && statusMatch && searchMatch;
   }).sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt));
   return `<div class="section-head"><div><h2>Every order, right kitchen.</h2><p>Live branch queues with the same state machine used by the vendor app.</p></div><button class="button button--secondary" data-action="refresh">↻ Sync now</button></div>
-    <div class="filter-bar"><div class="search-box"><input data-search placeholder="Order, customer or phone…" value="${esc(state.search)}" aria-label="Search orders"></div><select data-order-filter aria-label="Filter order status">${[['active','Active queue'],['placed','New'],['accepted','Preparing'],['ready','Ready'],['in_delivery','Out for delivery'],['delivered','Delivered'],['cancelled','Cancelled'],['all','All statuses']].map(([id,label]) => `<option value="${id}" ${state.orderFilter === id ? 'selected' : ''}>${label}</option>`).join('')}</select><select data-branch-filter aria-label="Filter orders by branch">${branches.map((branch) => `<option value="${branch.id}" ${state.branchFilter === branch.id ? 'selected' : ''}>${esc(branch.name)}</option>`).join('')}</select></div>
+    <div class="filter-bar"><div class="search-box"><input data-search placeholder="Order, customer or phone…" value="${esc(state.search)}" aria-label="Search orders"></div><select data-order-filter aria-label="Filter order status">${[['active','Active queue'],['placed','New'],['accepted','Preparing'],['ready','Ready'],['in_delivery','Out for delivery'],['delivered','Delivered'],['cancelled','Cancelled'],['all','All statuses']].map(([id,label]) => `<option value="${id}" ${state.orderFilter === id ? 'selected' : ''}>${label}</option>`).join('')}</select><select data-order-branch-filter aria-label="Filter orders by branch">${branches.map((branch) => `<option value="${esc(branch.id)}" ${state.orderBranchFilter === branch.id ? 'selected' : ''}>${esc(branch.name)}</option>`).join('')}</select></div>
     <div class="table-wrap"><table><thead><tr><th>Order</th><th>Customer</th><th>Branch</th><th>Items</th><th>Total</th><th>Status</th><th>Action</th></tr></thead><tbody>${filtered.map((order) => `<tr><td><strong>${esc(order.shortId || order.id)}</strong><small>${shortDate(order.createdAt)}</small></td><td><strong>${esc(order.customerName)}</strong><small>${esc(order.phone)}</small></td><td>${esc(order.branchName || branchName(order.branchId))}</td><td>${Array.isArray(order.items) ? order.items.reduce((sum,item) => sum + Number(item.qty || 1),0) : 0}</td><td><strong>${money(order.totalAmountPaisa)}</strong><small>Cash on delivery</small></td><td>${statusPill(order.status)}</td><td>${orderAction(order)}</td></tr>`).join('')}</tbody></table>${filtered.length ? '' : empty('◷', 'No orders in this view', 'Try another status or branch. New orders arrive automatically.')}</div>`;
 }
 
@@ -317,7 +322,7 @@ function elementsChecked(form, name) { return form.elements[name]?.checked === t
 
 function openMenuEditor(id) {
   const original = state.data.menuItems.find((item) => item.id === id);
-  const item = original || { name:'', description:'', amountPaisa:25000, discountAmountPaisa:0, available:true, featured:false, veg:false, spiceLevel:0, branchId: state.branchFilter === 'all' ? '*' : state.branchFilter };
+  const item = original || { name:'', description:'', amountPaisa:25000, discountAmountPaisa:0, available:true, featured:false, veg:false, spiceLevel:0, branchId: state.menuBranchFilter === 'all' ? '*' : state.menuBranchFilter };
   openDialog(`${dialogHead(original ? `Edit ${item.name}` : 'Add a dish', 'Price is stored as exact paisa. Global dishes are available to every branch.')}
     <form id="menu-form" data-menu-id="${esc(id || '')}"><div class="dialog-body"><div class="form-grid">
       <label class="field">Dish name<input name="name" required minlength="2" value="${esc(item.name)}" placeholder="Undal special kacchi"></label>
@@ -376,7 +381,7 @@ document.addEventListener('click', async (event) => {
   if (button.dataset.editBranch) return openBranchEditor(button.dataset.editBranch);
   if (button.dataset.editMenu) return openMenuEditor(button.dataset.editMenu);
   if (button.dataset.editStaff) return openStaffEditor(button.dataset.editStaff);
-  if (button.dataset.branchOrders) { state.branchFilter = button.dataset.branchOrders; state.orderFilter = 'active'; return navigate('orders'); }
+  if (button.dataset.branchOrders) { state.orderBranchFilter = button.dataset.branchOrders; state.orderFilter = 'active'; return navigate('orders'); }
   if (button.dataset.orderNext) return updateOrder(button.dataset.orderNext, button.dataset.status);
   if (button.dataset.orderCancel) return updateOrder(button.dataset.orderCancel, 'cancelled');
   if (button.dataset.requestDecision) {
@@ -391,13 +396,18 @@ document.addEventListener('input', (event) => {
   if (event.target.matches('[data-search]')) { state.search = event.target.value; const position = event.target.selectionStart; render(); const next = $('[data-search]'); if (next) { next.focus(); next.setSelectionRange(position,position); } }
 });
 document.addEventListener('change', (event) => {
-  if (event.target.matches('[data-branch-filter]')) { state.branchFilter = event.target.value; render(); }
+  if (event.target.matches('[data-menu-branch-filter]')) { state.menuBranchFilter = event.target.value; render(); }
+  if (event.target.matches('[data-order-branch-filter]')) { state.orderBranchFilter = event.target.value; render(); }
   if (event.target.matches('[data-order-filter]')) { state.orderFilter = event.target.value; render(); }
 });
 $('#editor-dialog').addEventListener('cancel', () => { state.map?.destroy(); state.map = null; });
 $('#refresh-button').addEventListener('click', () => refresh(true));
 $('#logout-button').addEventListener('click', () => signOut());
-window.addEventListener('popstate', () => { state.route = location.hash.slice(1) || 'dashboard'; render(); });
+window.addEventListener('popstate', () => {
+  const route = location.hash.slice(1) || 'dashboard';
+  state.route = routes[route] ? route : 'dashboard';
+  render();
+});
 
 $('#login-form').addEventListener('submit', async (event) => {
   event.preventDefault();
@@ -415,7 +425,14 @@ $('#login-form').addEventListener('submit', async (event) => {
     await api('/api/admin/session');
     form.reset();
     await enter();
-  } catch(error) { errorNode.textContent = error.status === 403 ? 'This account is not an Undal super administrator.' : error.message; errorNode.hidden = false; state.token=''; sessionStorage.removeItem('undal_admin_token'); }
+  } catch(error) {
+    errorNode.textContent = error.status === 403 ? 'This account is not an Undal super administrator.' : error.message;
+    errorNode.hidden = false;
+    state.token = '';
+    state.uid = '';
+    sessionStorage.removeItem('undal_admin_token');
+    sessionStorage.removeItem('undal_admin_uid');
+  }
   finally { setBusy(button,false); }
 });
 

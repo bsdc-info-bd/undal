@@ -39,7 +39,9 @@ service cloud.firestore {
 
     // A migration gate, not a client preference. It starts false for the
     // original single store. The super-admin migration can turn it on only
-    // after legacy order documents have received their default branchId.
+    // after legacy records have received their default branchId and every
+    // active staff account has explicit branch claims. Before activation an
+    // empty assignment keeps legacy default access; afterwards it has none.
     function branchIsolationEnabled() {
       return exists(/databases/$(database)/documents/config/store)
         && get(/databases/$(database)/documents/config/store).data.get('branchIsolationEnabled', false) == true;
@@ -54,7 +56,8 @@ service cloud.firestore {
       let branch = branchId is string && branchId.size() > 0 ? branchId : 'default';
       let assignments = request.auth.token.get('branchIds', []);
       return isSuperAdmin() || (isVendor() &&
-        ((branch == 'default' && assignments.size() == 0) || assignments.hasAny([branch, '*'])));
+        ((branch == 'default' && assignments.size() == 0 && !branchIsolationEnabled())
+         || assignments.hasAny([branch, '*'])));
     }
 
     function canManageMenuBranch(branchId) {

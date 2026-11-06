@@ -7,6 +7,7 @@ on:
       # The customer website on Pages is the same router as the Worker, so a
       # change to either one is verified against both.
       - "web/**"
+      - "admin/**"
       - "firebase/**"
       - "firebase.json"
       - "tools/**"
@@ -28,7 +29,7 @@ jobs:
           cache-dependency-path: worker/package-lock.json
       - run: npm ci --no-audit --no-fund
         working-directory: worker
-      - run: npm run typecheck && npm test
+      - run: npm run typecheck && npm test && npm run test:admin
         working-directory: worker
       - run: node --test tools/test-migrate-branches.mjs
       - run: |

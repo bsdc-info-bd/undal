@@ -52,6 +52,7 @@ jobs:
           npm ci --no-audit --no-fund
           npm run typecheck
           npm test
+          npm run test:admin
           node --check ../admin/public/app.js
           node --check ../admin/public/branch-map.js
 
@@ -142,10 +143,10 @@ jobs:
             [ "$attempt" = 6 ] && { echo "Admin shell did not deploy" >&2; exit 1; }
             sleep 10
           done
+          curl -fsS "$base/app.js" | grep -q "api/admin/overview"
           code=$(curl -sS -o "$RUNNER_TEMP/admin-api.json" -w '%{http_code}' "$base/api/admin/overview")
           [ "$code" = 401 ] || { echo "Unauthenticated admin API must answer 401, got $code" >&2; cat "$RUNNER_TEMP/admin-api.json"; exit 1; }
-          curl -fsS "$base/healthz" | grep -q '"ok":true'
-          echo "Admin shell is live and admin data is protected."
+          echo "Admin shell and static modules are live; admin data is protected."
 
       - name: Summarise
         run: |

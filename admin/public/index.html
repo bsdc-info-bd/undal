@@ -38,7 +38,7 @@
         <label>Password<input id="login-password" name="password" type="password" autocomplete="current-password" required minlength="8" placeholder="Your password"></label>
         <p id="login-error" class="form-error" role="alert" hidden></p>
         <button class="button button--primary button--wide" type="submit"><span>Enter control room</span><span aria-hidden="true">→</span></button>
-        <p class="security-note"><span aria-hidden="true">◆</span> Your password goes directly to Firebase Auth over HTTPS. This panel stores only the short-lived session token in this tab.</p>
+        <p class="security-note"><span aria-hidden="true">◆</span> Your password goes over HTTPS to the same-origin control plane, which verifies it with Firebase Auth. This panel stores only the short-lived session token in this tab.</p>
       </form>
     </div>
   </section>

@@ -51,6 +51,7 @@ const defaultClaims = {
 const northDb = () => env.authenticatedContext("north-staff", northClaims).firestore();
 const southDb = () => env.authenticatedContext("south-staff", southClaims).firestore();
 const legacyDb = () => env.authenticatedContext("legacy-staff", { vendor: true }).firestore();
+const defaultDb = () => env.authenticatedContext("default-staff", defaultClaims).firestore();
 const customerDb = () => env.authenticatedContext("customer-1").firestore();
 const northRtdb = () => env.authenticatedContext("north-staff", northClaims).database();
 const southRtdb = () => env.authenticatedContext("south-staff", southClaims).database();
@@ -120,32 +121,29 @@ test("Firestore order reads and the real branch feed are isolated", async () => 
   await assertFails(southDb().collection("orders").where("branchId", "==", "north").limit(120).get());
 });
 
-test("the legacy gate is explicit and default queries remain available after isolation", async () => {
+test("the legacy gate closes and default access requires a refreshed assignment", async () => {
   const db = legacyDb();
   await assertSucceeds(db.collection("orders").limit(50).get());
   await env.withSecurityRulesDisabled((context) =>
     context.firestore().doc("config/store").update({ branchIsolationEnabled: true }));
-  // Use fresh applications after changing the compatibility document. This
-  // proves the server decision rather than reusing the first query's cache.
-  const isolated = legacyDb();
-  await assertFails(isolated.doc("orders/north-order").get());
-  await assertFails(isolated.collection("orders").where("branchId", "==", "north").limit(50).get());
-  // Depending on the backend's query analysis this compatibility query is
-  // either rejected or reduced to the records an unassigned legacy account may
-  // read. Both are safe; seeing a real non-default branch is never safe.
-  const visible = await isolated.collection("orders").limit(50).get().then(
-    (snapshot) => snapshot.docs.map((document) => document.id).sort(),
-    (error) => {
-      if (error.code !== "permission-denied") throw error;
-      return null;
-    },
+
+  // Empty claims are a pre-migration compatibility path only. Once isolation
+  // is active they must not turn into implicit default (or unscoped) access.
+  const unassigned = legacyDb();
+  await assertFails(unassigned.doc("orders/north-order").get({ source: "server" }));
+  await assertFails(unassigned.doc("orders/default-order").get({ source: "server" }));
+  await assertFails(unassigned.collection("orders").limit(50).get({ source: "server" }));
+  await assertFails(
+    unassigned.collection("orders").where("branchId", "==", "default").limit(50).get({ source: "server" }),
   );
-  if (visible !== null) assert.deepEqual(visible, ["default-order", "legacy-order"]);
+
+  const assigned = defaultDb();
+  await assertFails(assigned.doc("orders/north-order").get({ source: "server" }));
   const defaults = await assertSucceeds(
-    isolated.collection("orders").where("branchId", "==", "default").orderBy("createdAt", "desc").limit(120).get(),
+    assigned.collection("orders").where("branchId", "==", "default").orderBy("createdAt", "desc").limit(120).get({ source: "server" }),
   );
   assert.deepEqual(defaults.docs.map((document) => document.id), ["default-order"]);
-  await assertSucceeds(isolated.doc("orders/legacy-order").get(), "a missing branchId means legacy default for a direct read");
+  await assertSucceeds(assigned.doc("orders/legacy-order").get({ source: "server" }));
 });
 
 test("customers can list only their own orders and cannot create a client-priced order", async () => {
@@ -182,7 +180,8 @@ test("presence history uses authorized direct reads, not a shared collection que
   await assertFails(northDb().collection("presenceDays").limit(31).get());
   await env.withSecurityRulesDisabled((context) =>
     context.firestore().doc("config/store").update({ branchIsolationEnabled: true }));
-  await assertSucceeds(legacyDb().doc("presenceDays/2026-11-06").get());
+  await assertFails(legacyDb().doc("presenceDays/2026-11-06").get({ source: "server" }));
+  await assertSucceeds(defaultDb().doc("presenceDays/2026-11-06").get({ source: "server" }));
 });
 
 test("RTDB presence and orderLive root queries enforce branchAccess", async () => {
