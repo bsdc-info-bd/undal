@@ -129,7 +129,18 @@ test("the legacy gate is explicit and default queries remain available after iso
   // proves the server decision rather than reusing the first query's cache.
   const isolated = legacyDb();
   await assertFails(isolated.doc("orders/north-order").get());
-  await assertFails(isolated.collection("orders").limit(50).get());
+  await assertFails(isolated.collection("orders").where("branchId", "==", "north").limit(50).get());
+  // Depending on the backend's query analysis this compatibility query is
+  // either rejected or reduced to the records an unassigned legacy account may
+  // read. Both are safe; seeing a real non-default branch is never safe.
+  const visible = await isolated.collection("orders").limit(50).get().then(
+    (snapshot) => snapshot.docs.map((document) => document.id).sort(),
+    (error) => {
+      if (error.code !== "permission-denied") throw error;
+      return null;
+    },
+  );
+  if (visible !== null) assert.deepEqual(visible, ["default-order", "legacy-order"]);
   const defaults = await assertSucceeds(
     isolated.collection("orders").where("branchId", "==", "default").orderBy("createdAt", "desc").limit(120).get(),
   );

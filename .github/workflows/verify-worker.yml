@@ -9,8 +9,7 @@ on:
       - "web/**"
       - "firebase/**"
       - "firebase.json"
-      - "tools/check-*.mjs"
-      - "tools/check_no_placeholders.sh"
+      - "tools/**"
       - ".github/workflows/verify-worker.yml"
   workflow_dispatch:
 permissions:
@@ -31,6 +30,7 @@ jobs:
         working-directory: worker
       - run: npm run typecheck && npm test
         working-directory: worker
+      - run: node --test tools/test-migrate-branches.mjs
       - run: |
           node tools/check-web-compat.mjs
           node tools/check-web-rules.mjs
