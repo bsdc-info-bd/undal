@@ -385,7 +385,7 @@ export default {
           .then((results) => {
             // Only sweeps that decided something are logged: five minutes of
             // "device-present" for every branch is a log nobody reads.
-            const decisions = results.filter((result) => result.action !== "none" || result.reason === "device-never-seen");
+            const decisions = results.filter((result) => !result.ok || result.action !== "none" || result.reason === "device-never-seen");
             if (decisions.length > 0) console.log("undal-cron presence", JSON.stringify(decisions));
           })
           .catch((error) => console.error("undal-cron presence failed", error)),
@@ -393,7 +393,7 @@ export default {
       ctx.waitUntil(
         runAllOpeningReminders(env)
           .then((results) => {
-            const reminders = results.filter((result) => result.reminded);
+            const reminders = results.filter((result) => !result.ok || result.reminded);
             if (reminders.length > 0) console.log("undal-cron opening", JSON.stringify(reminders));
           })
           .catch((error) => console.error("undal-cron opening failed", error)),

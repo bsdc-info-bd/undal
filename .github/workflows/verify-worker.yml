@@ -15,6 +15,7 @@ on:
   workflow_dispatch:
 permissions:
   contents: read
+  pull-requests: write
 jobs:
   verify:
     name: Worker tests and storefront contracts
@@ -57,6 +58,21 @@ jobs:
       # same query/write shapes as the Android repositories. No production
       # project or credential is involved: demo-undal exists only in this job.
       - run: |
+          set -o pipefail
           npx --yes firebase-tools@latest emulators:exec \
             --project demo-undal --only firestore,database \
-            'npm --prefix worker run test:rules'
+            'npm --prefix worker run test:rules' 2>&1 | tee "$RUNNER_TEMP/firebase-rules.log"
+      - name: Report emulator failure
+        if: failure() && github.event_name == 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          {
+            echo "## Firebase rules verification stopped"
+            echo ""
+            echo '```'
+            tail -160 "$RUNNER_TEMP/firebase-rules.log"
+            echo '```'
+          } > "$RUNNER_TEMP/firebase-rules-errors.md"
+          gh pr comment "${{ github.event.pull_request.number }}" \
+            --body-file "$RUNNER_TEMP/firebase-rules-errors.md" --edit-last --create-if-none
