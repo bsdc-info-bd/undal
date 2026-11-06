@@ -223,8 +223,9 @@ fun UndalRoot(
             is UndalRootViewModel.Destination.Auth -> UndalRoutes.LOGIN
             is UndalRootViewModel.Destination.CustomerLocation -> UndalRoutes.LOCATION_SETUP
             is UndalRootViewModel.Destination.CustomerHome -> UndalRoutes.CUSTOMER_HOME
-            is UndalRootViewModel.Destination.VendorDiagnostics -> UndalRoutes.ROUTER_ERROR
-            is UndalRootViewModel.Destination.VendorConsole -> UndalRoutes.ROUTER_ERROR
+            is UndalRootViewModel.Destination.VendorDiagnostics -> UndalRoutes.PORTAL_HANDOFF
+            is UndalRootViewModel.Destination.VendorConsole -> UndalRoutes.PORTAL_HANDOFF
+            is UndalRootViewModel.Destination.WrongPortal -> UndalRoutes.PORTAL_HANDOFF
             is UndalRootViewModel.Destination.Error -> UndalRoutes.ROUTER_ERROR
         }
         navigateSafely(navController, target, viewModel::onNavigationFailed)
@@ -232,9 +233,14 @@ fun UndalRoot(
 
     // A push deep link wins immediately: if the kitchen phone is ringing, the
     // first thing it shows is the order that is ringing.
-    LaunchedEffect(initialDeepLink) {
+    LaunchedEffect(initialDeepLink, destination) {
+        if (destination is UndalRootViewModel.Destination.Splash ||
+            destination is UndalRootViewModel.Destination.Auth ||
+            destination is UndalRootViewModel.Destination.WrongPortal ||
+            destination is UndalRootViewModel.Destination.Error
+        ) return@LaunchedEffect
         val route = UndalRoutes.routeForDeepLink(initialDeepLink) ?: return@LaunchedEffect
-        if (route == UndalRoutes.SPLASH) return@LaunchedEffect
+        if (route == UndalRoutes.SPLASH || UndalRoutes.isVendor(route)) return@LaunchedEffect
         navigateSafely(navController, route, viewModel::onNavigationFailed) { launchSingleTop = true }
     }
 
@@ -250,6 +256,16 @@ fun UndalRoot(
       ) {
         composable(UndalRoutes.SPLASH) {
             UndalSplash(message = "Opening Undal HomeKitchen…")
+        }
+
+        composable(UndalRoutes.PORTAL_HANDOFF) {
+            val role = (destination as? UndalRootViewModel.Destination.WrongPortal)?.accountRole
+                ?: com.undal.syl.app.core.session.UndalRole.VENDOR
+            UndalPortalHandoffScreen(
+                accountRole = role,
+                onSignOut = viewModel::signOut,
+                onOpenSupport = { navigateSafely(navController, UndalRoutes.SUPPORT, viewModel::onNavigationFailed) },
+            )
         }
 
         // The router could not decide where this phone belongs — said in words,

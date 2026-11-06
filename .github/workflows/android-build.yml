@@ -144,7 +144,7 @@ jobs:
             # registered the vendor Firebase app. This file is deliberately
             # compile-only and is never signed or published (see step conditions).
             cat > app/src/vendor/google-services.json <<'JSON'
-          {"project_info":{"project_number":"0","project_id":"undal-ci-compile-only"},"client":[{"client_info":{"mobilesdk_app_id":"1:0:android:0000000000000001","android_client_info":{"package_name":"com.undal.syl.vendor"}},"api_key":[{"current_key":"CI_COMPILE_ONLY_NOT_A_CREDENTIAL"}]}],"configuration_version":"1"}
+          {"project_info":{"project_number":"0","project_id":"undal-ci-compile-only"},"client":[{"client_info":{"mobilesdk_app_id":"1:0:android:0000000000000001","android_client_info":{"package_name":"com.undal.syl.vendor"}},"api_key":[{"current_key":"CI_COMPILE_ONLY_NOT_A_CREDENTIAL"}]},{"client_info":{"mobilesdk_app_id":"1:0:android:0000000000000002","android_client_info":{"package_name":"com.undal.syl.vendor.debug"}},"api_key":[{"current_key":"CI_COMPILE_ONLY_NOT_A_CREDENTIAL"}]}],"configuration_version":"1"}
           JSON
           fi
           echo "order sound: $(stat -c%s app/src/main/res/raw/undal_order_alert.mp3) bytes"

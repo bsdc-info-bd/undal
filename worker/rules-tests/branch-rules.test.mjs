@@ -125,12 +125,16 @@ test("the legacy gate is explicit and default queries remain available after iso
   await assertSucceeds(db.collection("orders").limit(50).get());
   await env.withSecurityRulesDisabled((context) =>
     context.firestore().doc("config/store").update({ branchIsolationEnabled: true }));
-  await assertFails(db.collection("orders").limit(50).get());
+  // Use fresh applications after changing the compatibility document. This
+  // proves the server decision rather than reusing the first query's cache.
+  const isolated = legacyDb();
+  await assertFails(isolated.doc("orders/north-order").get());
+  await assertFails(isolated.collection("orders").limit(50).get());
   const defaults = await assertSucceeds(
-    db.collection("orders").where("branchId", "==", "default").orderBy("createdAt", "desc").limit(120).get(),
+    isolated.collection("orders").where("branchId", "==", "default").orderBy("createdAt", "desc").limit(120).get(),
   );
   assert.deepEqual(defaults.docs.map((document) => document.id), ["default-order"]);
-  await assertSucceeds(db.doc("orders/legacy-order").get(), "a missing branchId means legacy default for a direct read");
+  await assertSucceeds(isolated.doc("orders/legacy-order").get(), "a missing branchId means legacy default for a direct read");
 });
 
 test("customers can list only their own orders and cannot create a client-priced order", async () => {
