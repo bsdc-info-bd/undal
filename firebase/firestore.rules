@@ -162,7 +162,9 @@ service cloud.firestore {
     // users/{uid} — the customer profile, one document per customer
     // ======================================================================
     match /users/{userId} {
-      allow read: if isOwner(userId) || isVendor();
+      // A branch order contains everything the kitchen may see. Never trade a
+      // customer's private address book/profile for a convenience photo read.
+      allow read: if isOwner(userId) || isSuperAdmin();
       allow create: if isOwner(userId)
         && request.resource.data.keys().hasAll([
              'name', 'email', 'phone', 'address', 'role', 'fcmSub', 'createdAt'

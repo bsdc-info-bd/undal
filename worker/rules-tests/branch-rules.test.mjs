@@ -83,6 +83,11 @@ beforeEach(async () => {
     });
     await db.doc("vendor/north-staff").set({ role: "vendor", name: "North staff", branchIds: ["north"] });
     await db.doc("vendor/south-staff").set({ role: "vendor", name: "South staff", branchIds: ["south"] });
+    await db.doc("users/customer-1").set({
+      name: "Customer One", phone: "01712345678", photoUrl: "https://res.cloudinary.com/undal/one.jpg",
+      address: { title: "Private home", desc: "Not shared with every branch", note: "Private note", lat: 24.9, lng: 91.8 },
+    });
+    await db.doc("users/customer-2").set({ name: "Customer Two", phone: "01812345678" });
     await db.doc("branches/north").set({ name: "North", active: true, open: true });
     await db.doc("branches/south").set({ name: "South", active: true, open: true });
     await db.doc("coupons/NORTH").set({ branchId: "north", active: true });
@@ -163,6 +168,15 @@ test("staff assignments are server-managed and vendor profiles are private", asy
   await assertFails(db.doc("vendor/south-staff").get());
   await assertFails(db.doc("vendor/north-staff").update({ branchIds: ["south"] }));
   await assertFails(db.collection("vendor").limit(10).get());
+});
+
+test("customer profiles and addresses are never a branch-vendor convenience read", async () => {
+  await assertSucceeds(customerDb().doc("users/customer-1").get({ source: "server" }));
+  await assertFails(northDb().doc("users/customer-1").get({ source: "server" }));
+  await assertFails(northDb().doc("users/customer-1/addresses/home").get({ source: "server" }));
+  await assertFails(northDb().collection("users").limit(5).get({ source: "server" }));
+  await assertSucceeds(env.authenticatedContext("platform-admin", { superAdmin: true }).firestore()
+    .doc("users/customer-1").get({ source: "server" }));
 });
 
 test("branch configuration writes and coupon feeds cannot cross branches", async () => {

@@ -141,7 +141,9 @@ data class VendorOrder(
     val subtotalPaisa: Long,
     val deliveryPaisa: Long,
     val discountPaisa: Long,
-    val totalAmountPaisa: Long
+    val totalAmountPaisa: Long,
+    /** Order-scoped snapshot; staff never need the customer's private profile. */
+    val customerPhotoUrl: String = "",
 ) {
 
     val itemCount: Int get() = lines.sumOf { it.qty }
@@ -278,7 +280,8 @@ data class VendorOrder(
                 subtotalPaisa = (map["subtotalAmountPaisa"] as? Number)?.toLong() ?: 0L,
                 deliveryPaisa = (map["deliveryAmountPaisa"] as? Number)?.toLong() ?: 0L,
                 discountPaisa = (map["discountAmountPaisa"] as? Number)?.toLong() ?: 0L,
-                totalAmountPaisa = (map["totalAmountPaisa"] as? Number)?.toLong() ?: 0L
+                totalAmountPaisa = (map["totalAmountPaisa"] as? Number)?.toLong() ?: 0L,
+                customerPhotoUrl = (map["customerPhotoUrl"] as? String).orEmpty(),
             )
         }
 

@@ -57,6 +57,19 @@ const num = (value: unknown, fallback = 0): number => {
   return Number.isFinite(parsed) ? parsed : fallback;
 };
 
+/** Only the customer's uploaded Cloudinary photo may cross into a kitchen order. */
+export function customerPhotoSnapshot(value: unknown): string {
+  const candidate = str(value).trim();
+  if (!candidate || candidate.length > 600) return "";
+  try {
+    const url = new URL(candidate);
+    const cloudinary = url.hostname === "res.cloudinary.com" || url.hostname.endsWith(".cloudinary.com");
+    return url.protocol === "https:" && cloudinary && !url.username && !url.password ? url.toString() : "";
+  } catch {
+    return "";
+  }
+}
+
 // ------------------------------------------------------------------- session
 
 /**
@@ -658,6 +671,12 @@ export async function createWebOrder(env: Env, input: WebOrderInput): Promise<We
   const orderId = crypto.randomUUID().replace(/-/g, "");
   const orderPath = `orders/${orderId}`;
   const createdAt = new Date().toISOString();
+  // Kitchen staff must never need blanket read access to users/{uid} (which
+  // contains private addresses). Snapshot only the uploaded photo onto the one
+  // order they are assigned; a missing/profile-read failure is not a checkout
+  // failure and simply leaves the existing initials placeholder in place.
+  const customerProfile = await fsGet(env, `users/${input.uid}`).catch(() => null);
+  const customerPhotoUrl = customerPhotoSnapshot(customerProfile?.photoUrl);
 
   const orderFields: Record<string, unknown> = {
     shortId,
@@ -686,6 +705,7 @@ export async function createWebOrder(env: Env, input: WebOrderInput): Promise<We
     timeline: [{ status: "placed" }],
     chatId: orderId,
   };
+  if (customerPhotoUrl) orderFields.customerPhotoUrl = customerPhotoUrl;
   if (appliedCode) {
     orderFields.couponCode = appliedCode;
     orderFields.couponAuto = couponAutomatic;
