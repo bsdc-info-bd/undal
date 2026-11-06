@@ -135,6 +135,51 @@ test("activation cannot write when verification has a blocker", async () => {
   await assert.rejects(() => migration.activate("ACTIVATE_BRANCH_ISOLATION"), /activation blocked/);
 });
 
+test("activation closes and reads back both compatibility gates", async (context) => {
+  const calls = [];
+  const fetch = async (url, init = {}) => {
+    calls.push({ url, method: init.method || "GET", body: init.body });
+    if (init.method === "POST") return json({ writeResults: [] });
+    if (init.method === "PATCH") return json({ "config/branchIsolationEnabled": true });
+    if (url.includes("config/branchIsolationEnabled.json")) return json(true);
+    if (url.includes("config/store")) {
+      return json({ fields: { branchIsolationEnabled: { booleanValue: true } } });
+    }
+    throw new Error(`unexpected activation read ${url}`);
+  };
+  context.mock.method(globalThis, "fetch", fetch);
+  const migration = new BranchMigration(
+    { project_id: "demo" }, "token", "https://demo.firebaseio.com", fetch,
+  );
+  migration.scan = async () => ({ readyToActivate: true, blockers: [] });
+  const result = await migration.activate("ACTIVATE_BRANCH_ISOLATION");
+  assert.deepEqual(result.gates, { firestore: true, rtdb: true });
+  const firestoreWrite = calls.findIndex((call) => call.method === "POST");
+  const rtdbWrite = calls.findIndex((call) => call.method === "PATCH");
+  assert.ok(firestoreWrite >= 0 && rtdbWrite > firestoreWrite, "Firestore fails closed before RTDB changes");
+  assert.deepEqual(JSON.parse(calls[rtdbWrite].body), { "config/branchIsolationEnabled": true });
+  assert.ok(calls.some((call) => call.method === "GET" && call.url.includes("config/branchIsolationEnabled.json")));
+});
+
+test("a paired-gate failure is explicit and never reported as activated", async (context) => {
+  const fetch = async (url, init = {}) => {
+    if (init.method === "POST") return json({ writeResults: [] });
+    if (init.method === "PATCH") {
+      return { ok: false, status: 503, text: async () => "emulator unavailable", json: async () => ({}) };
+    }
+    throw new Error(`unexpected activation read ${url}`);
+  };
+  context.mock.method(globalThis, "fetch", fetch);
+  const migration = new BranchMigration(
+    { project_id: "demo" }, "token", "https://demo.firebaseio.com", fetch,
+  );
+  migration.scan = async () => ({ readyToActivate: true, blockers: [] });
+  await assert.rejects(
+    () => migration.activate("ACTIVATE_BRANCH_ISOLATION"),
+    /Firestore remains closed to legacy checkout.*rerun activation/,
+  );
+});
+
 test("a default backfill is a dry run and performs no writes", async () => {
   const migration = Object.create(BranchMigration.prototype);
   const report = { readyToActivate: false };

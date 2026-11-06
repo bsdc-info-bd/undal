@@ -6,6 +6,7 @@
     "chats": {
       "$orderId": {
         ".read": "auth != null && (data.child('customerId').val() === auth.uid || auth.token.superAdmin === true || (auth.token.vendor === true && (auth.token.branchAccess[data.child('branchId').val()] === true || (data.child('branchId').val() === 'default' && auth.token.branchIds == null) || (!data.child('branchId').exists() && auth.token.branchIds == null))))",
+        ".write": "auth != null && root.child('config').child('branchIsolationEnabled').val() !== true && !data.exists() && newData.child('customerId').val() === auth.uid && newData.child('createdAt').isNumber() && (!newData.child('branchId').exists() || newData.child('branchId').val() === 'default')",
         "customerId": {
           ".validate": "newData.isString() && newData.val().length > 0 && newData.val().length <= 128"
         },
@@ -97,7 +98,7 @@
       ".indexOn": ["branchId"],
       "$orderId": {
         ".read": "auth != null && (data.child('customerId').val() === auth.uid || auth.token.superAdmin === true || (auth.token.vendor === true && (auth.token.branchAccess[data.child('branchId').val()] === true || (data.child('branchId').val() === 'default' && auth.token.branchIds == null) || (!data.child('branchId').exists() && auth.token.branchIds == null))))",
-        ".write": "auth != null && auth.token.vendor === true && data.exists() && newData.hasChildren(['customerId', 'branchId', 'status', 'updatedAt']) && (auth.token.branchAccess[data.child('branchId').val()] === true || (data.child('branchId').val() === 'default' && auth.token.branchIds == null) || (!data.child('branchId').exists() && auth.token.branchIds == null)) && (newData.child('branchId').val() === data.child('branchId').val() || (!data.child('branchId').exists() && newData.child('branchId').val() === 'default')) && (newData.child('customerId').val() === data.child('customerId').val() || (!data.child('customerId').exists() && newData.child('customerId').isString()))",
+        ".write": "auth != null && ((auth.token.vendor === true && data.exists() && newData.hasChildren(['customerId', 'branchId', 'status', 'updatedAt']) && (auth.token.branchAccess[data.child('branchId').val()] === true || (data.child('branchId').val() === 'default' && auth.token.branchIds == null) || (!data.child('branchId').exists() && auth.token.branchIds == null)) && (newData.child('branchId').val() === data.child('branchId').val() || (!data.child('branchId').exists() && newData.child('branchId').val() === 'default')) && (newData.child('customerId').val() === data.child('customerId').val() || (!data.child('customerId').exists() && newData.child('customerId').isString()))) || (root.child('config').child('branchIsolationEnabled').val() !== true && !data.exists() && newData.hasChildren(['customerId', 'status', 'updatedAt']) && newData.child('customerId').val() === auth.uid && newData.child('status').val() === 'placed' && newData.child('updatedAt').isNumber() && (!newData.child('branchId').exists() || newData.child('branchId').val() === 'default')))",
         "customerId": {
           ".validate": "newData.isString() && newData.val().length > 0 && newData.val().length <= 128"
         },

@@ -170,6 +170,12 @@ the repository is the rule in force — not only after someone remembers to run
 `seed-config` by hand (which stays safe to re-run: it only ever creates missing
 documents).
 
+For an existing single-store installation, these rules are deliberately safe to
+publish before migration: while both compatibility gates are false, an old APK
+keeps its validated default-branch checkout writes. The guarded activation in
+`docs/BRANCH_MIGRATION.md` closes the Firestore and RTDB legacy paths together
+after the new apps have been rolled out and the data/staff audit is clean.
+
 ### 3e · `android-build`
 
 Runs the no-unfinished-work gate and unit tests for both flavors, compiles both

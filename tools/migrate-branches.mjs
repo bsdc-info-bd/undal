@@ -9,7 +9,8 @@
  *
  * Requires FIREBASE_SA_JSON and FIREBASE_RTDB_URL. The first two commands never
  * activate isolation. Activation performs a fresh complete scan, verifies Auth
- * claims and the default branch, then makes the only compatibility-flag write.
+ * claims and the default branch, then closes the paired Firestore/RTDB legacy
+ * checkout gates and reads both back before reporting activation.
  */
 import { pathToFileURL } from "node:url";
 import {
@@ -148,6 +149,20 @@ export class BranchMigration {
     const query = new URLSearchParams({ access_token: this.token });
     if (shallow) query.set("shallow", "true");
     return `${this.rtdbUrl}/${path}.json?${query}`;
+  }
+
+  async writeRtdbIsolationGate() {
+    const response = await this.fetch(this.rtdbUrlFor(""), {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ "config/branchIsolationEnabled": true }),
+    });
+    await responseJson(response, "activate the RTDB compatibility gate");
+  }
+
+  async readRtdbIsolationGate() {
+    const response = await this.fetch(this.rtdbUrlFor("config/branchIsolationEnabled"));
+    return await responseJson(response, "verify the RTDB compatibility gate") === true;
   }
 
   async patchRtdbBranchIds(root, ids) {
@@ -344,7 +359,31 @@ export class BranchMigration {
       branchIsolationEnabled: true,
       branchIsolationMigration: "tools/migrate-branches.mjs",
     }, { serverTimestamps: ["branchIsolationActivatedAt"] });
-    return { activated: true, report };
+
+    // Firestore closes first: if the paired write cannot be made, legacy direct
+    // checkout fails closed instead of creating an order whose live mirror is
+    // then rejected. The Worker uses the service account in both systems, so
+    // current clients continue through the authoritative path. A retry is safe
+    // and idempotent; never undo the first gate to make an old APK work again.
+    try {
+      await this.writeRtdbIsolationGate();
+      const [store, rtdbEnabled] = await Promise.all([
+        readDocument(this.account, this.token, "config/store"),
+        this.readRtdbIsolationGate(),
+      ]);
+      const firestoreEnabled = store?.branchIsolationEnabled === true;
+      if (!firestoreEnabled || !rtdbEnabled) {
+        throw new Error(`read-back disagreed (Firestore=${firestoreEnabled}, RTDB=${rtdbEnabled})`);
+      }
+      return { activated: true, gates: { firestore: true, rtdb: true }, report };
+    } catch (cause) {
+      const detail = String(cause?.message || cause);
+      throw new Error(
+        `Firestore isolation was written, but the paired RTDB gate could not be activated and verified: ${detail}. ` +
+        "Firestore remains closed to legacy checkout (fail closed). Repair access and rerun activation; " +
+        "do not toggle the Firestore flag back to restore an old APK.",
+      );
+    }
   }
 }
 

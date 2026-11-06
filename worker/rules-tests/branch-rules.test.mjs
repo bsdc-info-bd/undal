@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { after, before, beforeEach, test } from "node:test";
+import firebase from "firebase/compat/app";
+import "firebase/compat/firestore";
 import {
   assertFails,
   assertSucceeds,
@@ -64,6 +66,31 @@ function order(id, branchId, customerId = "customer-1") {
     branchId,
     createdAt: new Date("2026-11-06T10:00:00.000Z"),
     updatedAt: new Date("2026-11-06T10:00:00.000Z"),
+  };
+}
+
+// The complete shape written by the last direct-Firestore Android checkout.
+// Server timestamps are essential: the shipping rules deliberately reject a
+// client clock posing as createdAt/updatedAt.
+function legacyClientOrder(id) {
+  return {
+    shortId: "UND-1001",
+    customerId: "customer-1",
+    customerName: "Customer One",
+    phone: "01712345678",
+    items: [{ id: "rice", qty: 1, unitAmountPaisa: 12000, lineTotalAmountPaisa: 12000 }],
+    subtotalAmountPaisa: 12000,
+    deliveryAmountPaisa: 2000,
+    discountAmountPaisa: 0,
+    totalAmountPaisa: 14000,
+    payment: "COD",
+    address: { lat: 24.9, lng: 91.8, title: "Zindabazar", desc: "House 14", note: "Beside mosque" },
+    distanceKm: 1,
+    status: "placed",
+    timeline: [{ status: "placed" }],
+    chatId: id,
+    createdAt: firebase.firestore.FieldValue.serverTimestamp(),
+    updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
   };
 }
 
@@ -151,7 +178,7 @@ test("the legacy gate closes and default access requires a refreshed assignment"
   await assertSucceeds(assigned.doc("orders/legacy-order").get({ source: "server" }));
 });
 
-test("customers can list only their own orders and cannot create a client-priced order", async () => {
+test("customers can list only their own orders and cannot create an invalid client-priced order", async () => {
   const db = customerDb();
   const history = await assertSucceeds(
     db.collection("orders").where("customerId", "==", "customer-1").orderBy("createdAt", "desc").limit(20).get(),
@@ -160,6 +187,57 @@ test("customers can list only their own orders and cannot create a client-priced
   await assertSucceeds(db.doc("orders/north-order").get());
   await assertFails(db.doc("orders/south-order").update({ status: "accepted" }));
   await assertFails(db.doc("orders/invented").set(order("invented", "north")));
+});
+
+test("the complete legacy checkout survives rollout and every legacy write closes on activation", async () => {
+  const db = customerDb();
+  await env.withSecurityRulesDisabled((context) =>
+    context.firestore().doc("coupons/LEGACY").set({ active: true, usedCount: 0, usageLimit: 0 }));
+
+  // This is the old APK's transaction and its two best-effort RTDB mirrors, not
+  // a minimal order that succeeds only because a validation rule was forgotten.
+  await assertSucceeds(db.doc("orders/legacy-client-order").set(legacyClientOrder("legacy-client-order")));
+  await assertSucceeds(db.doc("chats/legacy-client-order").set({
+    customerId: "customer-1", orderId: "legacy-client-order",
+    createdAt: firebase.firestore.FieldValue.serverTimestamp(),
+  }));
+  await assertSucceeds(db.doc("counters/orders").set({ value: 1000 }));
+  await assertSucceeds(db.doc("coupons/LEGACY").update({ usedCount: 1 }));
+
+  const rtdb = customerRtdb();
+  await assertSucceeds(rtdb.ref("orderLive/legacy-client-order").set({
+    customerId: "customer-1", status: "placed", updatedAt: Date.now(),
+  }));
+  await assertSucceeds(rtdb.ref("chats/legacy-client-order").set({
+    customerId: "customer-1", createdAt: Date.now(),
+  }));
+
+  // Compatibility never authorizes another branch or relaxes the money rule.
+  await assertFails(db.doc("orders/legacy-cross-branch").set({
+    ...legacyClientOrder("legacy-cross-branch"), branchId: "north",
+  }));
+  await assertFails(db.doc("orders/legacy-bad-money").set({
+    ...legacyClientOrder("legacy-bad-money"), totalAmountPaisa: 1,
+  }));
+
+  await env.withSecurityRulesDisabled(async (context) => {
+    await context.firestore().doc("config/store").update({ branchIsolationEnabled: true });
+    await context.database().ref("config/branchIsolationEnabled").set(true);
+  });
+
+  await assertFails(db.doc("orders/after-activation").set(legacyClientOrder("after-activation")));
+  await assertFails(db.doc("chats/after-activation").set({
+    customerId: "customer-1", orderId: "after-activation",
+    createdAt: firebase.firestore.FieldValue.serverTimestamp(),
+  }));
+  await assertFails(db.doc("counters/orders").update({ value: 1001 }));
+  await assertFails(db.doc("coupons/LEGACY").update({ usedCount: 2 }));
+  await assertFails(rtdb.ref("orderLive/after-activation").set({
+    customerId: "customer-1", status: "placed", updatedAt: Date.now(),
+  }));
+  await assertFails(rtdb.ref("chats/after-activation").set({
+    customerId: "customer-1", createdAt: Date.now(),
+  }));
 });
 
 test("staff assignments are server-managed and vendor profiles are private", async () => {
@@ -214,6 +292,8 @@ test("RTDB presence and orderLive root queries enforce branchAccess", async () =
 });
 
 test("RTDB mirrors preserve ownership and customers cannot advance an order", async () => {
+  await env.withSecurityRulesDisabled((context) =>
+    context.database().ref("config/branchIsolationEnabled").set(true));
   const db = northRtdb();
   await assertSucceeds(db.ref("orderLive/north-order").update({ status: "accepted", updatedAt: Date.now() }));
   await assertFails(db.ref("orderLive/north-order").update({ branchId: "south" }));
@@ -222,7 +302,9 @@ test("RTDB mirrors preserve ownership and customers cannot advance an order", as
   await assertFails(customerRtdb().ref("orderLive/north-order").update({ status: "ready" }));
 });
 
-test("chat sends are immutable, role-bound and branch-bound", async () => {
+test("chat sends are immutable, role-bound and branch-bound after activation", async () => {
+  await env.withSecurityRulesDisabled((context) =>
+    context.database().ref("config/branchIsolationEnabled").set(true));
   const db = northRtdb();
   await assertSucceeds(db.ref("chats/north-order").once("value"));
   await assertSucceeds(db.ref("chats/north-order/messages/vendor-reply").set({ sender: "vendor", text: "Cooking", ts: 2 }));

@@ -1,7 +1,8 @@
 # Multi-branch migration runbook
 
 This runbook moves the original single-store records to the reserved `default`
-branch and only then enables `config/store.branchIsolationEnabled`.
+branch and only then enables the paired compatibility gates: Firestore
+`config/store.branchIsolationEnabled` and RTDB `config/branchIsolationEnabled`.
 
 **No migration or production activation is performed by CI, by installing an
 APK, or by opening the admin.** The commands below are deliberate operator
@@ -15,11 +16,14 @@ account into the repository, a pull request, a screenshot, or a chat message.
    CI fixture is not a production Firebase registration.
 2. Deploy the Worker, Firestore/RTDB rules, Firestore indexes, admin Pages app,
    and the new customer/vendor Android releases through the normal reviewed
-   deployment process. Keep the compatibility flag **false** during this stage.
-3. Retire customer builds that create orders directly in Firestore. The new
-   rules deliberately make checkout Worker-authoritative (`allow create: if
-   false`), so an older direct-write client cannot safely coexist with those
-   rules. Use the staged rollout/enforced-upgrade path before enabling them.
+   deployment process. Keep both compatibility flags **false** during this
+   stage. The rules retain the old APK's validated default-branch order, chat,
+   counter, coupon and live-mirror writes only in this pre-activation state, so
+   publishing the branch rules does not interrupt current customers.
+3. Retire customer builds that create orders directly in Firestore **before
+   activation**. Use the staged rollout/enforced-upgrade path. Activation closes
+   every one of those legacy write paths and makes checkout exclusively
+   Worker-authoritative; new customer and vendor builds already use that path.
 4. In the admin, create and verify every real branch, including its kitchen pin,
    delivery coverage, fees, hours and accepting-orders state. Assign each active
    staff account explicit branches. Staff must sign out and back in after an
@@ -118,20 +122,27 @@ node tools/migrate-branches.mjs activate --confirm=ACTIVATE_BRANCH_ISOLATION
 ```
 
 Activation performs its own fresh scan and refuses to write if anything is
-missing. Only then does it set `branchIsolationEnabled: true` and server-stamped
-activation metadata on `config/store`.
+missing. It then sets `branchIsolationEnabled: true` and server-stamped
+activation metadata on Firestore `config/store`, followed by
+`config/branchIsolationEnabled: true` in RTDB. Firestore closes first so a
+partial failure cannot accept an old order and then reject its live mirror. The
+command reads both values back and reports success only when both are true.
+Writes are idempotent, so after repairing an upstream error rerun the same
+activation command; do not roll back the Firestore flag to revive an old APK.
 
 After activation, verify with non-production test accounts where possible:
 
 - each branch sees only its own live orders, coupons, presence and chats;
 - default-branch staff can still see the migrated legacy records;
 - customers see their own orders across branches but cannot write an order;
+- old direct order/counter/coupon/live-mirror writes are refused, while current
+  customer chat messages and vendor status updates still work;
 - a vendor account in the customer APK is handed to the vendor app, and vice
   versa;
 - checkout, pricing, notifications, auto-close/reopen and staff sign-in all work
   against the deployed Worker and indexes.
 
-Do not casually toggle the flag back. After real branches contain live data,
+Do not casually toggle either flag back. After real branches contain live data,
 rollback requires a reviewed data/access plan, not a console edit.
 
 ## Exit status and reports
@@ -142,7 +153,8 @@ rollback requires a reviewed data/access plan, not a console edit.
   `verification.blockers`; activation was **not** attempted.
 - `1`: authentication, an upstream read/write, confirmation, or an activation
   precondition failed. Activation does not write when its fresh scan is not
-  clean.
+  clean. If the paired RTDB step fails after the Firestore write, the error says
+  so explicitly; repair the cause and rerun rather than rolling back.
 
 Reports contain document/user ids for diagnosis. Treat them as operational
 metadata and do not commit production reports to Git.

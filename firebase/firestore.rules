@@ -6,9 +6,10 @@ rules_version = '2';
 // Principles
 //  1. Money is never trusted from the client shape alone: totals must equal
 //     subtotal + delivery - discount, every amount is a non-negative int (paisa).
-//  2. The customer writes their order exactly once, with status == 'placed'.
-//     There is no customer update path at all, so self-cancellation is
-//     impossible by construction (LAW / C-077).
+//  2. During the explicitly pre-activation rollout, a legacy customer build
+//     can write its validated default-branch order exactly once. Activation
+//     closes that compatibility path and checkout becomes Worker-only. There
+//     is no customer update path, so self-cancellation is impossible (C-077).
 //  3. The vendor moves orders along the state machine only, appending exactly
 //     one timeline entry per transition, and never touches money fields.
 //  4. Everything the delivery radius, km-fee and schedule depend on is
@@ -156,6 +157,51 @@ service cloud.firestore {
              'timeline', 'updatedAt', 'collectedAmountPaisa',
              'acceptedAt', 'readyAt', 'inDeliveryAt', 'deliveredAt'
            ]);
+    }
+
+    // The last released single-store APK checks out in one Firestore
+    // transaction. Keep that exact, already-validated path alive only while the
+    // migration gate is false, and only for the default branch. The new APK and
+    // web checkout use the Worker; activation removes this client-priced path.
+    function legacyCheckoutOrderValid(orderId) {
+      return !branchIsolationEnabled()
+        && signedIn()
+        && request.resource.data.customerId == uid()
+        && request.resource.data.get('branchId', 'default') == 'default'
+        && request.resource.data.status == 'placed'
+        && request.resource.data.payment == 'COD'
+        && request.resource.data.keys().hasAll([
+             'shortId', 'customerId', 'customerName', 'phone', 'items',
+             'subtotalAmountPaisa', 'deliveryAmountPaisa', 'discountAmountPaisa',
+             'totalAmountPaisa', 'payment', 'address', 'distanceKm', 'status',
+             'timeline', 'chatId', 'createdAt', 'updatedAt'
+           ])
+        && request.resource.data.shortId is string
+        && request.resource.data.shortId.matches('^UND-[0-9]{4,6}$')
+        && nonBlankString(request.resource.data.customerName)
+        && request.resource.data.phone is string
+        && request.resource.data.phone.matches('^01[3-9][0-9]{8}$')
+        && nonNegativeInt(request.resource.data.subtotalAmountPaisa)
+        && nonNegativeInt(request.resource.data.deliveryAmountPaisa)
+        && nonNegativeInt(request.resource.data.discountAmountPaisa)
+        && request.resource.data.totalAmountPaisa == request.resource.data.subtotalAmountPaisa
+             + request.resource.data.deliveryAmountPaisa
+             - request.resource.data.discountAmountPaisa
+        && request.resource.data.totalAmountPaisa > 0
+        && request.resource.data.discountAmountPaisa <= request.resource.data.subtotalAmountPaisa
+        && request.resource.data.items is list
+        && request.resource.data.items.size() > 0
+        && request.resource.data.items.size() <= 40
+        && fullAddress()
+        && request.resource.data.distanceKm is number
+        && request.resource.data.distanceKm >= 0
+        && request.resource.data.distanceKm <= 30
+        && request.resource.data.timeline is list
+        && request.resource.data.timeline.size() == 1
+        && request.resource.data.timeline[0].status == 'placed'
+        && request.resource.data.chatId == orderId
+        && request.resource.data.createdAt == request.time
+        && request.resource.data.updatedAt == request.time;
     }
 
     // ======================================================================
@@ -368,8 +414,19 @@ service cloud.firestore {
       // carries no `usedCount` at all, which made `usedCount + 1` an error and
       // refused it too. The expiry is only judged here when it is a timestamp;
       // the order path judges every other shape with the shared coupon rule.
-      allow update: if canManageMenuBranch(resource.data.get('branchId', '*'))
-        && canManageMenuBranch(request.resource.data.get('branchId', '*'));
+      allow update: if (canManageMenuBranch(resource.data.get('branchId', '*'))
+        && canManageMenuBranch(request.resource.data.get('branchId', '*')))
+        || (!branchIsolationEnabled()
+             && resource.data.get('branchId', 'default') == 'default'
+             && signedIn()
+             && code == code.upper()
+             && onlyChanged(['usedCount'])
+             && resource.data.active == true
+             && request.resource.data.usedCount == resource.data.get('usedCount', 0) + 1
+             && (resource.data.get('usageLimit', 0) <= 0
+                 || resource.data.get('usedCount', 0) < resource.data.get('usageLimit', 0))
+             && (!(resource.data.get('expiresAt', null) is timestamp)
+                 || resource.data.expiresAt > request.time));
     }
 
     // ======================================================================
@@ -381,10 +438,10 @@ service cloud.firestore {
       allow list: if signedIn() && request.query.limit <= 150
         && (legacyGlobalVendor() || assignedBranch(resource.data.get('branchId', 'default'))
             || resource.data.customerId == uid());
-      // Checkout is server-only: /api/store/order verifies the Firebase caller,
-      // branch coverage, live menu prices, fees, coupon and counter before using
-      // the service account. A client must never be able to invent its own bill.
-      allow create: if false;
+      // /api/store/order is the authority for every new client. The legacy
+      // validator is a temporary pre-activation bridge for already-installed
+      // APKs; it cannot target a non-default branch and disappears on migration.
+      allow create: if legacyCheckoutOrderValid(orderId);
       allow update: if assignedBranch(resource.data.get('branchId', 'default')) && vendorTransitionValid();
       allow delete: if false;
     }
@@ -395,7 +452,14 @@ service cloud.firestore {
     match /chats/{orderId} {
       allow read: if legacyGlobalVendor() || assignedBranch(resource.data.get('branchId', 'default'))
         || (signedIn() && resource.data.customerId == uid());
-      allow create: if false;
+      // The old checkout writes this metadata in the same transaction. Like
+      // the legacy order itself, that create permission ends at activation.
+      allow create: if !branchIsolationEnabled()
+        && signedIn()
+        && request.resource.data.customerId == uid()
+        && request.resource.data.orderId == orderId
+        && request.resource.data.get('branchId', 'default') == 'default'
+        && request.resource.data.createdAt == request.time;
       allow update: if assignedBranch(resource.data.get('branchId', 'default'))
         && onlyChanged(['lastVendorReadAt', 'lastCustomerReadAt', 'updatedAt']);
       allow delete: if false;
@@ -483,7 +547,21 @@ service cloud.firestore {
 
     match /counters/{counterId} {
       allow read: if signedIn();
-      allow create, update: if false;
+      // Only the pre-activation transaction may advance the client counter.
+      // New Worker checkouts use the service account and bypass these rules.
+      allow create: if !branchIsolationEnabled()
+        && signedIn()
+        && counterId == 'orders'
+        && request.resource.data.keys().hasOnly(['value'])
+        && request.resource.data.value is int
+        && request.resource.data.value >= 1000
+        && request.resource.data.value <= 99999;
+      allow update: if !branchIsolationEnabled()
+        && signedIn()
+        && counterId == 'orders'
+        && onlyChanged(['value'])
+        && request.resource.data.value == resource.data.value + 1
+        && request.resource.data.value <= 999999;
       allow delete: if false;
     }
 
