@@ -239,7 +239,7 @@ nav.store.is-stuck{box-shadow:0 10px 30px #20392c1f;border-bottom-color:var(--li
  background:var(--brand-soft);color:var(--brand);font-size:.9rem}
 .undal-toast.is-error .undal-toast-mark{background:var(--danger-soft);color:var(--danger)}
 .undal-toast button{flex:none;background:transparent;border:0;color:var(--muted);font-size:1.1rem;
- cursor:pointer;min-width:32px;min-height:32px;border-radius:10px}
+ cursor:pointer;min-width:44px;min-height:44px;border-radius:10px}
 .undal-toast button:hover{color:var(--ink);background:var(--surface-3)}
 
 /* === the basket, always in reach ============================================ */

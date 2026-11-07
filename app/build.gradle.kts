@@ -55,7 +55,6 @@ android {
     compileSdk = libs.versions.compileSdk.get().toInt()
 
     defaultConfig {
-        applicationId = libs.versions.packageName.get()
         minSdk = libs.versions.minSdk.get().toInt()
         targetSdk = libs.versions.targetSdk.get().toInt()
         versionCode = undalVersionCode
@@ -85,6 +84,28 @@ android {
         buildConfigField("String", "STORE_TIMEZONE", asBuildConfigString("Asia/Dhaka"))
         buildConfigField("String", "CURRENCY_SYMBOL", asBuildConfigString("BDT"))
         buildConfigField("String", "ORDER_SOUND_NAME", asBuildConfigString("undal_order_alert"))
+    }
+
+    // Two installable products from one maintained codebase. Vendor composables
+    // and repositories live only in src/vendor, so the customer APK does not
+    // contain a hidden merchant portal. The vendor APK retains the storefront
+    // preview as well as every existing kitchen capability.
+    flavorDimensions += "portal"
+    productFlavors {
+        create("customer") {
+            dimension = "portal"
+            applicationId = libs.versions.packageName.get()
+            buildConfigField("boolean", "IS_VENDOR", "false")
+            buildConfigField("String", "PORTAL", asBuildConfigString("customer"))
+            resValue("string", "app_product_name", "Undal HomeKitchen")
+        }
+        create("vendor") {
+            dimension = "portal"
+            applicationId = "com.undal.syl.vendor"
+            buildConfigField("boolean", "IS_VENDOR", "true")
+            buildConfigField("String", "PORTAL", asBuildConfigString("vendor"))
+            resValue("string", "app_product_name", "Undal Vendor")
+        }
     }
 
     buildTypes {
@@ -304,5 +325,7 @@ val verifyReleaseInputs = tasks.register("verifyReleaseInputs") {
 // Checked before anything is compiled, and before anything is packaged, so the
 // failure arrives in seconds instead of after a two-minute build.
 tasks.matching {
-    it.name == "compileReleaseKotlin" || it.name == "assembleRelease" || it.name == "bundleRelease"
+    it.name == "assembleRelease" || it.name == "bundleRelease" ||
+        it.name.matches(Regex("compile(Customer|Vendor)ReleaseKotlin")) ||
+        it.name.matches(Regex("(assemble|bundle)(Customer|Vendor)Release"))
 }.configureEach { dependsOn(verifyReleaseInputs) }

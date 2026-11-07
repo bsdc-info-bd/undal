@@ -105,8 +105,10 @@ class MainActivity : ComponentActivity() {
         // where the controller has not been written to yet — which is exactly the
         // killed-app case the alert ladder exists for, and the one where the lock
         // screen most has to get out of the way.
-        val ringing = OrderAlertController.ringing.value != null ||
-            deepLink?.startsWith("vendor/order/") == true
+        val ringing = BuildConfig.IS_VENDOR && (
+            OrderAlertController.ringing.value != null ||
+                deepLink?.startsWith("vendor/order/") == true
+            )
         if (!ringing) {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
                 runCatching { setShowWhenLocked(false) }

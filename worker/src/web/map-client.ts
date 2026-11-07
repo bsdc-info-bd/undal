@@ -359,6 +359,10 @@ export const MAP_SCRIPT = `
     }
 
     function geocode() {
+      // Reverse geocoding is a label, never a prerequisite for using the pin.
+      // In particular, do not throw a later timer exception on a WebView that
+      // has no fetch: the typed address and the native checkout still work.
+      if (typeof window.fetch !== "function") return;
       var requestedRevision = revision;
       var requestedPoint = { lat: center.lat, lng: center.lng };
       // Straight from this browser to OpenStreetMap: the customer's position is

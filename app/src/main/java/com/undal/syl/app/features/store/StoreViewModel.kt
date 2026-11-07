@@ -3,6 +3,7 @@ package com.undal.syl.app.features.store
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.undal.syl.app.core.cart.CartLine
+import com.undal.syl.app.core.branch.BranchSelection
 import com.undal.syl.app.core.maps.UndalLocation
 import com.undal.syl.app.core.model.Campaign
 import com.undal.syl.app.core.model.MenuCard
@@ -14,6 +15,7 @@ import com.undal.syl.app.core.util.Distance
 import com.undal.syl.app.core.util.Money
 import com.undal.syl.app.core.util.TimeDhaka
 import com.undal.syl.app.data.repo.AuthRepo
+import com.undal.syl.app.data.repo.BranchRepo
 import com.undal.syl.app.data.repo.CartRepo
 import com.undal.syl.app.data.repo.CouponRepo
 import com.undal.syl.app.data.repo.MenuRepo
@@ -38,6 +40,7 @@ import javax.inject.Inject
 class StoreViewModel @Inject constructor(
     private val storeRepo: StoreRepo,
     private val menuRepo: MenuRepo,
+    private val branchRepo: BranchRepo,
     private val cartRepo: CartRepo,
     private val authRepo: AuthRepo,
     private val couponRepo: CouponRepo
@@ -57,6 +60,9 @@ class StoreViewModel @Inject constructor(
     data class State(
         val loading: Boolean = true,
         val store: StoreConfig = StoreConfig.unloaded(),
+        val branch: BranchSelection = BranchSelection.legacy(),
+        val extensionRequestSending: Boolean = false,
+        val extensionRequestMessage: String? = null,
         val openState: StoreOpenState = StoreOpenState.of(StoreConfig.unloaded()),
         val menu: MenuSnapshot = MenuSnapshot(),
         val cards: List<MenuCard> = emptyList(),
@@ -141,12 +147,13 @@ class StoreViewModel @Inject constructor(
             }
             combine(
                 // On the clock, so "Open now" turns into "Closed now" at closing time.
-                storeRepo.observeStoreOnTheClock(),
+                combine(storeRepo.observeStoreOnTheClock(), branchRepo.selection) { store, branch -> store to branch },
                 menuRepo.observeMenu(),
                 cartRepo.cart,
                 addressFlow,
                 filterAndQuantities
-            ) { store, menu, cart, address, (filter, quantities) ->
+            ) { storeAndBranch, menu, cart, address, (filter, quantities) ->
+                val (store, branch) = storeAndBranch
                 val openState = StoreOpenState.of(store)
                 val dietaryIds = if (filter.vegetarianOnly) menu.vegetarianCardIds() else emptySet()
                 val popularIds = if (filter.popularOnly) menu.popularDishIds() else emptySet()
@@ -164,6 +171,7 @@ class StoreViewModel @Inject constructor(
                 State(
                     loading = false,
                     store = store,
+                    branch = branch,
                     openState = openState,
                     menu = menu,
                     cards = cards,
@@ -176,7 +184,7 @@ class StoreViewModel @Inject constructor(
                     popularOnly = filter.popularOnly,
                     hideUnavailable = filter.hideUnavailable,
                     address = address,
-                    reachability = reachabilityOf(store, address),
+                    reachability = reachabilityOf(store, address, branch),
                     feeLabel = "${Money.format(store.deliveryPerKmAmountPaisa)} per km",
                     minimumOrderLabel = Money.format(store.minOrderAmountPaisa),
                     cartCount = cart.itemCount,
@@ -191,7 +199,11 @@ class StoreViewModel @Inject constructor(
                 // Worker's public board on their own clock, and the menu snapshot
                 // rebuilds the whole State on every emission. Carrying them across
                 // is what stops a menu update from emptying the offer strip.
-                _state.value = next.copy(offers = _state.value.offers)
+                _state.value = next.copy(
+                    offers = _state.value.offers,
+                    extensionRequestSending = _state.value.extensionRequestSending,
+                    extensionRequestMessage = _state.value.extensionRequestMessage,
+                )
             }
         }
         viewModelScope.launch(guard) { refreshOffers() }
@@ -214,7 +226,44 @@ class StoreViewModel @Inject constructor(
     /** Re-reads the pinned address; call this whenever the customer returns. */
     fun refreshAddress() {
         viewModelScope.launch(guard) {
-            addressFlow.value = authRepo.loadProfileLocation()
+            val address = authRepo.loadProfileLocation()
+            addressFlow.value = address
+            branchRepo.resolve(address)
+        }
+    }
+
+    /** Ask the nearest kitchen to review this uncovered address. */
+    fun requestDeliveryExtension() {
+        val address = _state.value.address
+        val branch = _state.value.branch
+        if (address == null || !address.isValid || !branch.canRequestExtension) {
+            _state.value = _state.value.copy(
+                extensionRequestMessage = "Save your area, road and rider landmark before requesting delivery.",
+            )
+            return
+        }
+        viewModelScope.launch(guard) {
+            _state.value = _state.value.copy(extensionRequestSending = true, extensionRequestMessage = null)
+            branchRepo.requestExtension(address).fold(
+                onSuccess = { answer ->
+                    val request = answer.optJSONObject("request")
+                    val name = request?.optString("branchName").orEmpty().ifBlank { branch.nearestBranchName }
+                    _state.value = _state.value.copy(
+                        extensionRequestSending = false,
+                        extensionRequestMessage = if (answer.optBoolean("created")) {
+                            "Request sent to $name. The admin must approve the new coverage before you can order."
+                        } else {
+                            "Good news — $name now covers this address. Refresh to see its menu."
+                        },
+                    )
+                },
+                onFailure = { error ->
+                    _state.value = _state.value.copy(
+                        extensionRequestSending = false,
+                        extensionRequestMessage = error.message ?: "The request could not be sent. Please try again.",
+                    )
+                },
+            )
         }
     }
 
@@ -328,8 +377,21 @@ class StoreViewModel @Inject constructor(
         _state.value = _state.value.copy(errorMessage = null)
     }
 
-    private fun reachabilityOf(store: StoreConfig, address: UndalLocation?): Reachability {
+    private fun reachabilityOf(
+        store: StoreConfig,
+        address: UndalLocation?,
+        branch: BranchSelection,
+    ): Reachability {
         if (address == null) return Reachability.Unknown
+        if (branch.outsideCoverage) {
+            return Reachability.TooFar(
+                distanceKm = branch.nearestDistanceKm ?: 0.0,
+                radiusKm = 0.0,
+            )
+        }
+        if (branch.deliverable && branch.distanceKm != null) {
+            return Reachability.Deliverable(branch.distanceKm, branch.deliveryPaisa)
+        }
         if (!store.hasPublishedPin) return Reachability.NoPin
         val distance = store.distanceFrom(address.lat, address.lng) ?: return Reachability.Unknown
         return if (store.isServiceable(distance)) {
@@ -346,8 +408,11 @@ class StoreViewModel @Inject constructor(
         is Reachability.Deliverable ->
             "We deliver to ${reachability.distanceKm.let { Distance.formatKm(it) }} — fee " +
                 Money.format(reachability.feePaisa)
-        is Reachability.TooFar ->
+        is Reachability.TooFar -> if (reachability.radiusKm <= 0.0) {
+            "No branch covers this address yet. You can ask the nearest kitchen to review it."
+        } else {
             "That address is ${Distance.formatKm(reachability.distanceKm)} away, outside our " +
                 "${Distance.formatKm(reachability.radiusKm)} delivery area."
+        }
     }
 }

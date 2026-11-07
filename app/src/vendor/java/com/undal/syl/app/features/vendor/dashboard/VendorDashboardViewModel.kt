@@ -6,6 +6,8 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.google.firebase.auth.FirebaseAuth
 import com.undal.syl.app.core.background.KitchenWatchService
+import com.undal.syl.app.core.branch.BranchMembership
+import com.undal.syl.app.core.branch.VendorBranch
 import com.undal.syl.app.core.background.OrderAlertController
 import com.undal.syl.app.core.background.PresenceHeartbeat
 import com.undal.syl.app.core.background.PresenceHeartbeatWorker
@@ -51,6 +53,7 @@ import javax.inject.Inject
 @HiltViewModel
 class VendorDashboardViewModel @Inject constructor(
     private val vendorOrderRepo: VendorOrderRepo,
+    private val membership: BranchMembership,
     private val storeRepo: StoreRepo,
     private val vendorStoreRepo: VendorStoreRepo,
     private val registrar: TokenRegistrar,
@@ -65,6 +68,8 @@ class VendorDashboardViewModel @Inject constructor(
     data class State(
         val loading: Boolean = true,
         val store: StoreConfig = StoreConfig.unloaded(),
+        val branches: List<VendorBranch> = emptyList(),
+        val branch: VendorBranch? = null,
         val openState: StoreOpenState = StoreOpenState.of(StoreConfig.unloaded()),
         val today: List<VendorOrder> = emptyList(),
         val week: List<VendorDayPoint> = emptyList(),
@@ -130,6 +135,7 @@ class VendorDashboardViewModel @Inject constructor(
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000L), System.currentTimeMillis())
 
     init {
+        observeBranches()
         observeStore()
         observeToday()
         observeWeek()
@@ -156,6 +162,30 @@ class VendorDashboardViewModel @Inject constructor(
             if (health.vendorClaim) {
                 PresenceHeartbeat.startService(context)
             }
+        }
+    }
+
+    private fun observeBranches() {
+        viewModelScope.launch(guard) {
+            val branches = membership.availableBranches()
+            _state.value = _state.value.copy(branches = branches)
+            membership.selection.collect { branch ->
+                _state.value = _state.value.copy(branch = branch)
+            }
+        }
+    }
+
+    fun selectBranch(context: Context, branchId: String) {
+        if (branchId == _state.value.branch?.id) return
+        viewModelScope.launch(guard) {
+            val branch = membership.select(branchId)
+            // Rebind the foreground order watcher as well as every screen flow.
+            KitchenWatchService.stop(context)
+            KitchenWatchService.start(context)
+            _state.value = _state.value.copy(
+                branch = branch,
+                infoMessage = "Now operating ${branch.name}.",
+            )
         }
     }
 

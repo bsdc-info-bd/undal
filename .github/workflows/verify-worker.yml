@@ -7,11 +7,15 @@ on:
       # The customer website on Pages is the same router as the Worker, so a
       # change to either one is verified against both.
       - "web/**"
-      - "tools/check-*.mjs"
-      - "tools/check_no_placeholders.sh"
+      - "admin/**"
+      - "firebase/**"
+      - "firebase.json"
+      - "tools/**"
       - ".github/workflows/verify-worker.yml"
+  workflow_dispatch:
 permissions:
   contents: read
+  pull-requests: write
 jobs:
   verify:
     name: Worker tests and storefront contracts
@@ -25,11 +29,51 @@ jobs:
           cache-dependency-path: worker/package-lock.json
       - run: npm ci --no-audit --no-fund
         working-directory: worker
-      - run: npm run typecheck && npm test
+      - run: npm run typecheck && npm test && npm run test:admin
         working-directory: worker
+      - run: node --test tools/test-migrate-branches.mjs
       - run: |
           node tools/check-web-compat.mjs
           node tools/check-web-rules.mjs
           node tools/check-coupon-parity.mjs
           node tools/check-alert-ladder.mjs
           bash tools/check_no_placeholders.sh
+
+  firebase-rules:
+    name: Firestore and RTDB branch isolation
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: worker/package-lock.json
+      - run: npm ci --no-audit --no-fund
+        working-directory: worker
+      # The emulator loads the shipping rules and indexes, then executes the
+      # same query/write shapes as the Android repositories. No production
+      # project or credential is involved: demo-undal exists only in this job.
+      - run: |
+          set -o pipefail
+          npx --yes firebase-tools@latest emulators:exec \
+            --project demo-undal --only firestore,database \
+            'npm --prefix worker run test:rules' 2>&1 | tee "$RUNNER_TEMP/firebase-rules.log"
+      - name: Report emulator failure
+        if: failure() && github.event_name == 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          {
+            echo "## Firebase rules verification stopped"
+            echo ""
+            echo '```'
+            tail -160 "$RUNNER_TEMP/firebase-rules.log"
+            echo '```'
+          } > "$RUNNER_TEMP/firebase-rules-errors.md"
+          gh pr comment "${{ github.event.pull_request.number }}" \
+            --body-file "$RUNNER_TEMP/firebase-rules-errors.md" --edit-last --create-if-none

@@ -4,9 +4,12 @@ import android.content.Context
 import android.content.Intent
 import com.google.firebase.database.FirebaseDatabase
 import com.google.firebase.database.ServerValue
+import com.undal.syl.app.core.branch.BranchMembership
+import com.undal.syl.app.core.branch.VendorBranch
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.callbackFlow
+import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.tasks.await
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -34,7 +37,8 @@ import javax.inject.Singleton
  */
 @Singleton
 class PresenceHeartbeat @Inject constructor(
-    private val database: FirebaseDatabase
+    private val database: FirebaseDatabase,
+    private val membership: BranchMembership,
 ) {
 
     data class Presence(
@@ -43,11 +47,15 @@ class PresenceHeartbeat @Inject constructor(
         val device: String
     )
 
-    private val reference get() = database.getReference("presence").child("vendor")
+    private fun reference(branch: VendorBranch) = if (branch.legacySingleBranch) {
+        database.getReference("presence").child("vendor")
+    } else {
+        database.getReference("presence").child("branches").child(branch.id).child("vendor")
+    }
 
-    /** Writes a server-timestamped heartbeat; the clock used is Google's, not the phone's. */
+    /** Writes a server-timestamped heartbeat for the selected branch. */
     suspend fun beat(): Result<Unit> = runCatching {
-        reference.setValue(presencePayload(online = true)).await()
+        reference(membership.current()).setValue(presencePayload(online = true)).await()
         Unit
     }
 
@@ -59,11 +67,14 @@ class PresenceHeartbeat @Inject constructor(
      * partial write to a node that does not exist yet is refused outright.
      */
     suspend fun markOffline(): Result<Unit> = runCatching {
-        reference.updateChildren(presencePayload(online = false)).await()
+        reference(membership.current()).updateChildren(presencePayload(online = false)).await()
         Unit
     }
 
-    fun observe(): Flow<Presence?> = callbackFlow {
+    @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
+    fun observe(): Flow<Presence?> = membership.selection.flatMapLatest { branch -> observeBranch(branch) }
+
+    private fun observeBranch(branch: VendorBranch): Flow<Presence?> = callbackFlow {
         val listener = object : com.google.firebase.database.ValueEventListener {
             override fun onDataChange(snapshot: com.google.firebase.database.DataSnapshot) {
                 val lastSeen = snapshot.child("lastSeen").getValue(Long::class.java) ?: 0L
@@ -76,6 +87,7 @@ class PresenceHeartbeat @Inject constructor(
                 trySend(null)
             }
         }
+        val reference = reference(branch)
         reference.addValueEventListener(listener)
         awaitClose { reference.removeEventListener(listener) }
     }

@@ -102,6 +102,7 @@ export async function runRealertSweep(env: Env): Promise<RealertSweepResult> {
             {
               orderId,
               shortId,
+              branchId: text(order, "branchId") || undefined,
               title: `Order ${shortId} was never answered`,
               body:
                 `${customer} has been waiting ${waitedMinutes(age)} minutes. ` +
@@ -129,6 +130,7 @@ export async function runRealertSweep(env: Env): Promise<RealertSweepResult> {
             {
               orderId,
               shortId,
+              branchId: text(order, "branchId") || undefined,
               title: `New order ${shortId}`,
               body: `${itemCount(order)} item(s) · ${formatPaisa(Number(order.totalAmountPaisa ?? 0))} · still waiting`,
               ttl: "300s",

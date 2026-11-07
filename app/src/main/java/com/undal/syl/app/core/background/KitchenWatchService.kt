@@ -18,8 +18,15 @@ import com.google.firebase.firestore.ListenerRegistration
 import com.undal.syl.app.MainActivity
 import com.undal.syl.app.R
 import com.undal.syl.app.core.fcm.AlarmChannels
+import com.undal.syl.app.core.branch.BranchMembership
+import com.undal.syl.app.core.branch.VendorBranch
 import com.undal.syl.app.core.util.OrderStatus
 import dagger.hilt.android.AndroidEntryPoint
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.launch
 import javax.inject.Inject
 
 /**
@@ -58,9 +65,13 @@ class KitchenWatchService : Service() {
     @Inject lateinit var auth: FirebaseAuth
     @Inject lateinit var firestore: FirebaseFirestore
     @Inject lateinit var database: FirebaseDatabase
+    @Inject lateinit var membership: BranchMembership
 
+    private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+    private var watchedBranch: VendorBranch? = null
+    private var starting = false
     private var ordersRegistration: ListenerRegistration? = null
-    private var liveReference: com.google.firebase.database.DatabaseReference? = null
+    private var liveReference: com.google.firebase.database.Query? = null
 
     /** Orders this service has already handed to the alert, so it rings once. */
     private val handedOver = mutableSetOf<String>()
@@ -72,6 +83,9 @@ class KitchenWatchService : Service() {
             // moment a transition happens, on whichever device made it.
             snapshot.children.forEach { child ->
                 val orderId = child.key ?: return@forEach
+                val branch = watchedBranch
+                val owner = child.child("branchId").getValue(String::class.java).orEmpty().ifBlank { "default" }
+                if (branch != null && !branch.legacySingleBranch && owner != branch.id) return@forEach
                 val status = child.child("status").getValue(String::class.java)
                 if (status != null && status != OrderStatus.PLACED.wire) {
                     OrderAlertService.silence(applicationContext, orderId)
@@ -146,10 +160,26 @@ class KitchenWatchService : Service() {
     }
 
     private fun startWatching() {
-        if (ordersRegistration != null) return
+        if (starting || ordersRegistration != null) return
+        starting = true
+        serviceScope.launch {
+            val branch = runCatching { membership.current() }.getOrElse {
+                starting = false
+                KitchenWatchState.stopped(it.message ?: "branch membership could not be read")
+                stopWatching()
+                return@launch
+            }
+            attachWatcher(branch)
+            starting = false
+        }
+    }
 
-        ordersRegistration = firestore.collection(ORDERS)
+    private fun attachWatcher(branch: VendorBranch) {
+        watchedBranch = branch
+        var query = firestore.collection(ORDERS)
             .whereEqualTo("status", OrderStatus.PLACED.wire)
+        if (!branch.legacySingleBranch) query = query.whereEqualTo("branchId", branch.id)
+        ordersRegistration = query
             .addSnapshotListener { snapshot, error ->
                 if (error != null) {
                     Log.w(TAG, "order watcher stopped: ${error.message}")
@@ -177,9 +207,12 @@ class KitchenWatchService : Service() {
                 }
             }
 
-        liveReference = database.getReference(LIVE).also { reference ->
-            reference.addValueEventListener(liveListener)
-        }
+        // RTDB rules are not filters: the listener itself must select only the
+        // branch named by this device's claims. A root listener would be refused.
+        liveReference = database.getReference(LIVE)
+            .orderByChild("branchId")
+            .equalTo(branch.id)
+            .also { reference -> reference.addValueEventListener(liveListener) }
         KitchenWatchState.started()
         Log.i(TAG, "kitchen watch started")
     }
@@ -209,6 +242,8 @@ class KitchenWatchService : Service() {
         ordersRegistration = null
         liveReference?.removeEventListener(liveListener)
         liveReference = null
+        watchedBranch = null
+        serviceScope.cancel()
         KitchenWatchState.stopped()
         UndalForeground.leave(this, AlarmChannels.WATCH_NOTIFICATION_ID)
         super.onDestroy()

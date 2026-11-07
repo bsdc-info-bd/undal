@@ -9,14 +9,16 @@ import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.firestore.FirebaseFirestore
 import com.google.firebase.firestore.Query
 import com.undal.syl.app.core.model.VendorOrder
+import com.undal.syl.app.core.branch.BranchMembership
+import com.undal.syl.app.core.branch.VendorBranch
 import com.undal.syl.app.core.util.Money
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.callbackFlow
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.map
-import kotlinx.coroutines.tasks.await
 import java.util.Date
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -34,7 +36,8 @@ class VendorOrderRepo @Inject constructor(
     private val firestore: FirebaseFirestore,
     private val auth: FirebaseAuth,
     private val notifInboxRepo: NotifInboxRepo,
-    private val dataStore: DataStore<Preferences>
+    private val dataStore: DataStore<Preferences>,
+    private val membership: BranchMembership,
 ) {
 
     data class Feed(
@@ -42,12 +45,18 @@ class VendorOrderRepo @Inject constructor(
         val fromCache: Boolean = false
     )
 
-    /** Orders created since [startMillis], newest first, live. */
-    fun observeSince(startMillis: Long, limit: Long = 120L): Flow<Feed> = callbackFlow {
-        val registration = firestore.collection(ORDERS)
+    /** Orders created since [startMillis], newest first, live and branch-scoped. */
+    @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
+    fun observeSince(startMillis: Long, limit: Long = 120L): Flow<Feed> = membership.selection
+        .flatMapLatest { branch -> observeBranchSince(branch, startMillis, limit) }
+
+    private fun observeBranchSince(branch: VendorBranch, startMillis: Long, limit: Long): Flow<Feed> = callbackFlow {
+        var query = firestore.collection(ORDERS)
             .whereGreaterThanOrEqualTo("createdAt", Timestamp(Date(startMillis)))
+        if (!branch.legacySingleBranch) query = query.whereEqualTo("branchId", branch.id)
+        val registration = query
             .orderBy("createdAt", Query.Direction.DESCENDING)
-            .limit(limit)
+            .limit(limit.coerceIn(1L, 150L))
             .addSnapshotListener { snapshot, error ->
                 if (error != null) {
                     close(error)
@@ -68,7 +77,11 @@ class VendorOrderRepo @Inject constructor(
     fun observeWeek(): Flow<Feed> = observeSince(VendorOrder.todayStartMillis() - WEEK_BACK_MILLIS)
 
     /** One order, live, for the detail screen. */
-    fun observeOrder(orderId: String): Flow<VendorOrder?> = callbackFlow {
+    @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
+    fun observeOrder(orderId: String): Flow<VendorOrder?> = membership.selection
+        .flatMapLatest { branch -> observeBranchOrder(branch, orderId) }
+
+    private fun observeBranchOrder(branch: VendorBranch, orderId: String): Flow<VendorOrder?> = callbackFlow {
         val registration = firestore.collection(ORDERS).document(orderId)
             .addSnapshotListener { snapshot, error ->
                 if (error != null) {
@@ -79,7 +92,12 @@ class VendorOrderRepo @Inject constructor(
                     trySend(null)
                     return@addSnapshotListener
                 }
-                trySend(VendorOrder.fromDocument(snapshot.id, snapshot.data.orEmpty()))
+                val owner = snapshot.getString("branchId").orEmpty().ifBlank { "default" }
+                if (!branch.legacySingleBranch && owner != branch.id) {
+                    trySend(null)
+                } else {
+                    trySend(VendorOrder.fromDocument(snapshot.id, snapshot.data.orEmpty()))
+                }
             }
         awaitClose { registration.remove() }
     }.catch { emit(null) }
@@ -116,20 +134,8 @@ class VendorOrderRepo @Inject constructor(
         }
     }
 
-    /**
-     * The customer's profile photo, when they uploaded one (V-026). The security
-     * rules let the kitchen read any user document, so no extra plumbing is
-     * needed for one extra picture on the order card.
-     */
-    suspend fun customerPhoto(customerId: String): String? = runCatching {
-        if (customerId.isBlank()) return@runCatching null
-        firestore.collection(USERS).document(customerId).get().await().getString(PHOTO)
-    }.getOrNull()
-
     companion object {
         private const val ORDERS = "orders"
-        private const val USERS = "users"
-        private const val PHOTO = "photoUrl"
         private const val WEEK_BACK_MILLIS = 6L * 24L * 60L * 60L * 1000L
         private const val HISTORY_LIMIT = 60
         private val ALERT_IDS = stringSetPreferencesKey("vendor_alert_ids")

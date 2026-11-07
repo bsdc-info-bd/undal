@@ -850,6 +850,7 @@ ${closedBlock}
   var position = null;
   var ticked = false;
   var info = {};
+  var CAN_FETCH = typeof window.fetch === "function" && typeof window.Promise === "function";
 
   /** A field's text, or "" — a missing box must never kill the order button. */
   function field(id) {
@@ -911,10 +912,10 @@ ${closedBlock}
    * The tap that has to work on every phone.
    *
    * The button is a submit button in a real <form>, so this listener is an
-   * *upgrade*, never the mechanism: the moment it is attached the script stops
-   * the browser posting and does the same thing with fetch — and if this file
-   * ever failed to attach it (a dead map script, an in-app browser, an old
-   * WebView), the plain post to /checkout/place places the identical order.
+   * *upgrade*, never the mechanism: after the pin and fields are validated, a
+   * browser with fetch/Promise stops the browser posting and sends JSON instead.
+   * If this file failed to attach, or those APIs are absent, the plain post to
+   * /checkout/place places the identical order with the same hidden fields.
    *
    * That is why it is attached *before* the map is built: what must work first
    * is the order, and the map is the nicety.
@@ -941,8 +942,8 @@ ${closedBlock}
       }
       return;
     }
-    event.preventDefault();
     if (!ticked) {
+      event.preventDefault();
       resultHost.innerHTML = '<div class="notice error">Tick the pin to confirm that is your address. The rider is sent to exactly that point.</div>';
       return;
     }
@@ -959,9 +960,18 @@ ${closedBlock}
     if (!window.undalUsableText(desc)) missing.push("the house and road");
     if (!window.undalUsableText(note)) missing.push("one landmark the rider can ask for");
     if (missing.length > 0) {
+      event.preventDefault();
       resultHost.innerHTML = '<div class="notice error">Still needed: ' + missing.join(", ") + ".</div>";
       return;
     }
+    // The pin has been confirmed and the fields are valid. If this WebView has
+    // no fetch/Promise, leave the submit alone: /checkout/place accepts these
+    // exact hidden coordinates and lines, so the tap still reaches the kitchen.
+    if (!CAN_FETCH) {
+      syncHiddenFields();
+      return;
+    }
+    event.preventDefault();
     button.disabled = true;
     button.textContent = "Telling the kitchen…";
     resultHost.innerHTML = "";
@@ -1384,11 +1394,16 @@ export async function handleOrderTracking(orderId: string): Promise<Response> {
         document.getElementById("undal-connection").textContent = "Could not refresh. Showing the last update; retrying while this page stays open.";
       });
   }
-  poll();
-  // Eight seconds, not twenty: the kitchen's tap and the customer's screen were
-  // twenty seconds apart, which reads as "the page is not updating" for the one
-  // update a customer is waiting for. A finished order stops the clock entirely.
-  window._undalPoll = window.setInterval(poll, 8000);
+  if (typeof window.fetch !== "function") {
+    document.getElementById("undal-connection").textContent =
+      "Live updates are not supported by this browser. Reload this page to check again, or contact the kitchen with your order number.";
+  } else {
+    poll();
+    // Eight seconds, not twenty: the kitchen's tap and the customer's screen were
+    // twenty seconds apart, which reads as "the page is not updating" for the one
+    // update a customer is waiting for. A finished order stops the clock entirely.
+    window._undalPoll = window.setInterval(poll, 8000);
+  }
 })();
 </script>`,
     nav: nav("track"),

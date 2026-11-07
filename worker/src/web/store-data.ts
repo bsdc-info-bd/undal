@@ -42,6 +42,7 @@ export interface WebStoreConfig {
 
 export interface WebDish {
   id: string;
+  branchId?: string;
   kind: "dish";
   name: string;
   description: string;
@@ -64,6 +65,7 @@ export interface WebDish {
 
 export interface WebCombo {
   id: string;
+  branchId?: string;
   kind: "combo";
   name: string;
   description: string;
@@ -82,6 +84,7 @@ export type WebItem = WebDish | WebCombo;
 
 export interface WebSection {
   id: string;
+  branchId?: string;
   name: string;
   order: number;
   active: boolean;
@@ -90,6 +93,7 @@ export interface WebSection {
 
 export interface WebSubsection {
   id: string;
+  branchId?: string;
   categoryId: string;
   name: string;
   order: number;
@@ -98,6 +102,7 @@ export interface WebSubsection {
 
 export interface WebCampaign {
   id: string;
+  branchId?: string;
   title: string;
   subtitle: string;
   type: string;
@@ -151,6 +156,7 @@ function toDish(record: FsRecord): WebDish {
   const hasDiscount = discountAmountPaisa > 0 && discountAmountPaisa < amountPaisa;
   return {
     id: String(record.id),
+    branchId: str(record.branchId, "*"),
     kind: "dish",
     name: str(record.name, "Dish"),
     description: str(record.description),
@@ -176,6 +182,7 @@ function toCombo(record: FsRecord): WebCombo {
   const refs = Array.isArray(record.itemRefs) ? record.itemRefs : [];
   return {
     id: String(record.id),
+    branchId: str(record.branchId, "*"),
     kind: "combo",
     name: str(record.name, "Combo"),
     description: str(record.description),
@@ -270,6 +277,7 @@ async function readMenu(env: Env): Promise<WebMenu> {
     sections: sections
       .map((record) => ({
         id: String(record.id),
+        branchId: str(record.branchId, "*"),
         name: str(record.name),
         order: num(record.order),
         active: bool(record.active, true),
@@ -292,6 +300,7 @@ async function readMenu(env: Env): Promise<WebMenu> {
     campaigns: campaigns
       .map((record) => ({
         id: String(record.id),
+        branchId: str(record.branchId, "*"),
         title: str(record.title),
         subtitle: str(record.subtitle),
         type: str(record.type, "percent"),
@@ -405,4 +414,24 @@ export function queryMenu(menu: WebMenu, query: MenuQuery): WebItem[] {
         return bCount - aCount;
       });
   }
+}
+
+/**
+ * Global catalogue entries plus entries owned by this branch. Legacy documents
+ * without branchId are global, which keeps existing menus online during rollout.
+ */
+export function menuForBranch(menu: WebMenu, branchId: string): WebMenu {
+  const visible = (entry: { branchId?: string }) => !entry.branchId || entry.branchId === "*" || entry.branchId === branchId;
+  const dishes = menu.dishes.filter(visible);
+  const combos = menu.combos.filter(visible);
+  const categoryIds = new Set(dishes.map((dish) => dish.categoryId));
+  return {
+    ...menu,
+    dishes,
+    combos,
+    sections: menu.sections.filter((section) => visible(section) && categoryIds.has(section.id)),
+    subsections: menu.subsections.filter(visible),
+    campaigns: menu.campaigns.filter(visible),
+    coupons: menu.coupons.filter(visible),
+  };
 }

@@ -158,6 +158,25 @@ fun VendorDashboardScreen(
                 contentPadding = androidx.compose.foundation.layout.PaddingValues(UndalDimens.screenPadding),
                 verticalArrangement = Arrangement.spacedBy(UndalDimens.sm)
             ) {
+                if (state.branches.size > 1) {
+                    item {
+                        VendorSection(
+                            title = "Branch",
+                            subtitle = "Orders, menus, hours and alerts switch together.",
+                        ) {
+                            Column(verticalArrangement = Arrangement.spacedBy(UndalDimens.xs)) {
+                                state.branches.forEach { branch ->
+                                    UndalSecondaryButton(
+                                        text = if (branch.id == state.branch?.id) "✓ ${branch.name}" else branch.name,
+                                        onClick = { viewModel.selectBranch(context, branch.id) },
+                                        enabled = branch.id != state.branch?.id,
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+
                 if (!state.vendorClaim && !state.loading) {
                     item {
                         UndalAlertBanner(

@@ -3,6 +3,7 @@ package com.undal.syl.app.features.root
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.google.firebase.auth.FirebaseAuth
+import com.undal.syl.app.BuildConfig
 import com.undal.syl.app.core.background.KitchenWatchService
 import com.undal.syl.app.core.background.OrderAlertController
 import com.undal.syl.app.core.background.PresenceHeartbeatWorker
@@ -60,6 +61,9 @@ class UndalRootViewModel @Inject constructor(
 
         data object VendorConsole : Destination
 
+        /** A valid account opened in the other portal's APK. */
+        data class WrongPortal(val accountRole: UndalRole) : Destination
+
         data class Error(val message: String) : Destination
     }
 
@@ -113,7 +117,7 @@ class UndalRootViewModel @Inject constructor(
 
                     is SessionState.SignedIn -> {
                         _emailVerified.value = state.user.emailVerified
-                        registerDevice(state.user.uid, state.user.isVendorClaim)
+                        registerDevice(state.user.uid, BuildConfig.IS_VENDOR && state.user.isVendorClaim)
                         resolveRole()
                     }
                 }
@@ -149,7 +153,13 @@ class UndalRootViewModel @Inject constructor(
             when (resolution) {
                 is RoleGate.RoleResolution.NotSignedIn -> _destination.value = Destination.Auth
 
-                is RoleGate.RoleResolution.NeedsProfile -> _destination.value = Destination.CustomerLocation
+                is RoleGate.RoleResolution.NeedsProfile -> {
+                    _destination.value = if (BuildConfig.IS_VENDOR) {
+                        Destination.WrongPortal(UndalRole.CUSTOMER)
+                    } else {
+                        Destination.CustomerLocation
+                    }
+                }
 
                 is RoleGate.RoleResolution.Failed -> {
                     _errorMessage.value = resolution.message
@@ -162,21 +172,21 @@ class UndalRootViewModel @Inject constructor(
                     // guessed differently — and it does guess differently on a
                     // cold start, because a token being fetched has no claims yet.
                     session.uid?.let { uid ->
-                        registerDevice(uid, resolution.role == UndalRole.VENDOR)
+                        registerDevice(uid, BuildConfig.IS_VENDOR && resolution.role == UndalRole.VENDOR)
                     }
                     _destination.value = when (resolution.role) {
-                        UndalRole.VENDOR -> {
+                        UndalRole.VENDOR -> when {
+                            !BuildConfig.IS_VENDOR -> Destination.WrongPortal(UndalRole.VENDOR)
                             // The kitchen sees the device wizard once, then the console
                             // for every later start (V-004).
-                            if (progress.diagnosticsDone.first()) {
-                                Destination.VendorConsole
-                            } else {
-                                Destination.VendorDiagnostics
-                            }
+                            progress.diagnosticsDone.first() -> Destination.VendorConsole
+                            else -> Destination.VendorDiagnostics
                         }
 
-                        UndalRole.CUSTOMER -> {
-                            if (resolution.hasLocation) Destination.CustomerHome else Destination.CustomerLocation
+                        UndalRole.CUSTOMER -> when {
+                            BuildConfig.IS_VENDOR -> Destination.WrongPortal(UndalRole.CUSTOMER)
+                            resolution.hasLocation -> Destination.CustomerHome
+                            else -> Destination.CustomerLocation
                         }
 
                         UndalRole.UNKNOWN -> Destination.Error(

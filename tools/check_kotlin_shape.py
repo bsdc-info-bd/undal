@@ -198,6 +198,18 @@ def declarations(path: pathlib.Path) -> tuple[str, set[str], set[str], set[str],
     return package_of(text), names, types, members, nested
 
 
+def exclusive_flavor(path: pathlib.Path) -> str | None:
+    """Return the product flavor owning a source file, if it has one.
+
+    `src/customer` and `src/vendor` are alternative implementations, not one
+    compilation unit. Either may declare the same root-screen type as the other;
+    a duplicate in `main`, or within one flavor, is still a compiler error.
+    """
+    relative = path.relative_to(SOURCE_ROOT)
+    flavor = relative.parts[0] if relative.parts else ""
+    return flavor if flavor in {"customer", "vendor"} else None
+
+
 def source_checks(files: list[pathlib.Path]) -> int:
     """Cross-file guards the compiler would catch, runnable without a JDK.
 
@@ -224,11 +236,14 @@ def source_checks(files: list[pathlib.Path]) -> int:
         bucket = per_package.setdefault(package, {})
         for name in names - nested:
             if name in bucket and bucket[name] != path:
-                print(
-                    f"{path.relative_to(ROOT)}: {name} is already declared in "
-                    f"{bucket[name].relative_to(ROOT)} (same package {package})"
-                )
-                problems += 1
+                previous = bucket[name]
+                flavors = {exclusive_flavor(previous), exclusive_flavor(path)}
+                if flavors != {"customer", "vendor"}:
+                    print(
+                        f"{path.relative_to(ROOT)}: {name} is already declared in "
+                        f"{previous.relative_to(ROOT)} (same package {package})"
+                    )
+                    problems += 1
             bucket[name] = path
 
     for path in files:

@@ -32,6 +32,7 @@
 
 /** `coupons/{CODE}` as the kitchen writes it. Every field is optional: old codes still work. */
 export interface CouponDocument {
+  branchId?: string;
   code?: string;
   type?: string;
   value?: number;
@@ -69,6 +70,7 @@ export interface CouponDocument {
 
 /** What a customer can safely see: no usage counters, no internal notes. */
 export interface CouponBoardEntry {
+  branchId?: string;
   code: string;
   type: CouponType;
   value: number;
@@ -453,6 +455,7 @@ export function toBoardEntry(raw: CouponDocument): CouponBoardEntry | null {
   const autoApply = raw.autoApply !== false;
   return {
     autoApply,
+    branchId: typeof raw.branchId === "string" ? raw.branchId : "*",
     // Two independent switches, and the kitchen owns both. `autoApply` decides
     // whether a basket applies it with no code typed; `showOnWeb` decides whether
     // it appears in the offer strip. A code-only promotion the kitchen chose to

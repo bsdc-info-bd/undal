@@ -6,6 +6,8 @@ import com.google.firebase.Timestamp
 import com.google.firebase.firestore.FieldValue
 import com.google.firebase.firestore.FirebaseFirestore
 import com.undal.syl.app.core.model.Campaign
+import com.undal.syl.app.core.branch.BranchMembership
+import com.undal.syl.app.core.branch.VendorBranch
 import com.undal.syl.app.core.model.CampaignDraft
 import com.undal.syl.app.core.model.Combo
 import com.undal.syl.app.core.model.ComboDraft
@@ -19,6 +21,7 @@ import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.callbackFlow
 import kotlinx.coroutines.flow.catch
+import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.tasks.await
 import java.util.Date
 import javax.inject.Inject
@@ -36,13 +39,27 @@ import javax.inject.Singleton
 @Singleton
 class VendorMenuRepo @Inject constructor(
     private val firestore: FirebaseFirestore,
-    private val uploader: CloudinaryUploader
+    private val uploader: CloudinaryUploader,
+    private val membership: BranchMembership,
 ) {
+    private suspend fun selectedBranchId(): String = membership.current().let { branch ->
+        if (branch.legacySingleBranch) "*" else branch.id
+    }
+
+    private fun belongsToBranch(map: Map<String, Any?>, branchId: String): Boolean {
+        val owner = (map["branchId"] as? String).orEmpty()
+        return owner.isBlank() || owner == "*" || owner == branchId
+    }
 
     // ------------------------------------------------------------------- reads
 
     /** Every campaign, live, scheduled or switched off (V-061, V-062). */
-    fun observeCampaigns(): Flow<List<Campaign>> = callbackFlow {
+    @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
+    fun observeCampaigns(): Flow<List<Campaign>> = membership.selection.flatMapLatest { branch ->
+        observeCampaignsFor(branch.id)
+    }
+
+    private fun observeCampaignsFor(branchId: String): Flow<List<Campaign>> = callbackFlow {
         val registration = firestore.collection(CAMPAIGNS)
             .orderBy("startAt", com.google.firebase.firestore.Query.Direction.DESCENDING)
             .limit(60)
@@ -52,7 +69,9 @@ class VendorMenuRepo @Inject constructor(
                     return@addSnapshotListener
                 }
                 trySend(
-                    snapshot?.documents.orEmpty().mapNotNull { document ->
+                    snapshot?.documents.orEmpty().filter { document ->
+                        belongsToBranch(document.data.orEmpty(), branchId)
+                    }.mapNotNull { document ->
                         Campaign.fromDocument(document.id, document.data.orEmpty())
                     }
                 )
@@ -61,8 +80,15 @@ class VendorMenuRepo @Inject constructor(
     }.catch { emit(emptyList()) }
 
     /** Every coupon, newest first (V-063, V-064). */
-    fun observeCoupons(): Flow<List<VendorCoupon>> = callbackFlow {
-        val registration = firestore.collection(COUPONS)
+    @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
+    fun observeCoupons(): Flow<List<VendorCoupon>> = membership.selection.flatMapLatest { branch ->
+        observeCouponsFor(branch)
+    }
+
+    private fun observeCouponsFor(branch: VendorBranch): Flow<List<VendorCoupon>> = callbackFlow {
+        var query: com.google.firebase.firestore.Query = firestore.collection(COUPONS)
+        if (!branch.legacySingleBranch) query = query.whereEqualTo("branchId", branch.id)
+        val registration = query
             .limit(80)
             .addSnapshotListener { snapshot, error ->
                 if (error != null) {
@@ -71,6 +97,7 @@ class VendorMenuRepo @Inject constructor(
                 }
                 trySend(
                     snapshot?.documents.orEmpty()
+                        .filter { document -> belongsToBranch(document.data.orEmpty(), branch.id) }
                         .map { document -> VendorCoupon.fromDocument(document.id, document.data.orEmpty()) }
                         .sortedBy { it.code }
                 )
@@ -78,11 +105,13 @@ class VendorMenuRepo @Inject constructor(
         awaitClose { registration.remove() }
     }.catch { emit(emptyList()) }
 
-    /** How many of the last 200 orders contained a dish (V-055). */
+    /** How many of the last 150 orders contained a dish (V-055). */
     suspend fun recentOrdersUsing(itemName: String): Int = runCatching {
-        firestore.collection(ORDERS)
+        val branch = membership.current()
+        var query = firestore.collection(ORDERS)
             .orderBy("createdAt", com.google.firebase.firestore.Query.Direction.DESCENDING)
-            .limit(200)
+        if (!branch.legacySingleBranch) query = query.whereEqualTo("branchId", branch.id)
+        query.limit(150)
             .get()
             .await()
             .documents
@@ -105,6 +134,7 @@ class VendorMenuRepo @Inject constructor(
         iconUrl: String
     ): UndalResult<String> = runCatching {
         val payload = mapOf(
+            "branchId" to selectedBranchId(),
             "name" to name.trim(),
             "order" to order,
             "active" to active,
@@ -171,6 +201,7 @@ class VendorMenuRepo @Inject constructor(
         active: Boolean
     ): UndalResult<String> = runCatching {
         val payload = mapOf(
+            "branchId" to selectedBranchId(),
             "categoryId" to categoryId,
             "name" to name.trim(),
             "order" to order,
@@ -221,6 +252,7 @@ class VendorMenuRepo @Inject constructor(
     suspend fun saveItem(draft: MenuDraft): UndalResult<String> = runCatching {
         if (!draft.isValid) error(draft.nameError ?: draft.priceError ?: "Fill the required fields.")
         val fields = draft.writeFields().toMutableMap()
+        fields["branchId"] = selectedBranchId()
         fields["updatedAt"] = FieldValue.serverTimestamp()
 
         draft.id?.let { existingId ->
@@ -324,6 +356,7 @@ class VendorMenuRepo @Inject constructor(
     suspend fun saveCombo(draft: ComboDraft): UndalResult<String> = runCatching {
         if (!draft.isValid) error(draft.error ?: "Fill the combo fields.")
         val fields = mapOf(
+            "branchId" to selectedBranchId(),
             "name" to draft.name.trim(),
             "description" to draft.description.trim().take(300),
             "amountPaisa" to (draft.pricePaisa ?: 0L),
@@ -375,6 +408,7 @@ class VendorMenuRepo @Inject constructor(
         val start = Timestamp(Date(draft.startAtMillis ?: 0L))
         val end = Timestamp(Date(draft.endAtMillis ?: 0L))
         val fields = mapOf(
+            "branchId" to selectedBranchId(),
             "title" to draft.title.trim(),
             "subtitle" to draft.subtitle.trim().take(120),
             "type" to draft.type,
@@ -418,6 +452,7 @@ class VendorMenuRepo @Inject constructor(
         if (!draft.isValid) error(draft.firstError ?: "Fill the coupon fields.")
         val code = draft.normalisedCode
         val fields = draft.writeFields().toMutableMap()
+        fields["branchId"] = selectedBranchId()
         if (draft.originalCode != null) {
             // Editing must never hand the coupon back its used-up allowance.
             fields.remove("usedCount")

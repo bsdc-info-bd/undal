@@ -425,6 +425,7 @@ const browser = build(
     "usableName",
     "parseMinutes",
     "withinWindow",
+    "whole",
     "discountOf",
     "undalEvaluateCoupon",
   ],
@@ -440,6 +441,7 @@ const browser = build(
   // calls, read out of the shipping text.
   extractFunction(cartClientSource, "parseMinutes", CART_CLIENT),
   extractFunction(cartClientSource, "withinWindow", CART_CLIENT),
+  extractFunction(cartClientSource, "whole", CART_CLIENT),
   extractFunction(cartClientSource, "discountOf", CART_CLIENT),
   extractWindowFunction(cartClientSource, "undalEvaluateCoupon", CART_CLIENT),
   extractFunction(mapClientSource, "haversine", MAP_CLIENT),

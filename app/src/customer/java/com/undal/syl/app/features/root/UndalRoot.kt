@@ -54,18 +54,8 @@ import com.undal.syl.app.features.portal.SupportScreen
 import com.undal.syl.app.features.profile.ProfileScreen
 import com.undal.syl.app.features.store.StoreScreen
 import com.undal.syl.app.features.legal.PolicyScreen
-import com.undal.syl.app.features.vendor.chats.VendorChatListScreen
-import com.undal.syl.app.features.vendor.chats.VendorChatScreen
-import com.undal.syl.app.features.vendor.dashboard.VendorDashboardScreen
-import com.undal.syl.app.features.vendor.inbox.VendorInboxScreen
-import com.undal.syl.app.features.vendor.menu.VendorMenuScreen
-import com.undal.syl.app.features.vendor.menu.VendorMenuViewModel
-import com.undal.syl.app.features.vendor.orders.VendorOrderDetailScreen
-import com.undal.syl.app.features.vendor.orders.VendorOrdersScreen
-import com.undal.syl.app.features.vendor.schedule.VendorScheduleScreen
-import com.undal.syl.app.features.vendor.settings.VendorStoreScreen
-import com.undal.syl.app.features.vendor.DiagnosticsScreen
 
+/* Customer-only shell: vendor composables are not compiled into this APK. */
 /** How long a second back press waits before it is a fresh one again. */
 private const val EXIT_WINDOW_MILLIS = 2500L
 
@@ -233,8 +223,9 @@ fun UndalRoot(
             is UndalRootViewModel.Destination.Auth -> UndalRoutes.LOGIN
             is UndalRootViewModel.Destination.CustomerLocation -> UndalRoutes.LOCATION_SETUP
             is UndalRootViewModel.Destination.CustomerHome -> UndalRoutes.CUSTOMER_HOME
-            is UndalRootViewModel.Destination.VendorDiagnostics -> UndalRoutes.VENDOR_DIAGNOSTICS
-            is UndalRootViewModel.Destination.VendorConsole -> UndalRoutes.VENDOR_CONSOLE
+            is UndalRootViewModel.Destination.VendorDiagnostics -> UndalRoutes.PORTAL_HANDOFF
+            is UndalRootViewModel.Destination.VendorConsole -> UndalRoutes.PORTAL_HANDOFF
+            is UndalRootViewModel.Destination.WrongPortal -> UndalRoutes.PORTAL_HANDOFF
             is UndalRootViewModel.Destination.Error -> UndalRoutes.ROUTER_ERROR
         }
         navigateSafely(navController, target, viewModel::onNavigationFailed)
@@ -242,21 +233,15 @@ fun UndalRoot(
 
     // A push deep link wins immediately: if the kitchen phone is ringing, the
     // first thing it shows is the order that is ringing.
-    LaunchedEffect(initialDeepLink) {
+    LaunchedEffect(initialDeepLink, destination) {
+        if (destination is UndalRootViewModel.Destination.Splash ||
+            destination is UndalRootViewModel.Destination.Auth ||
+            destination is UndalRootViewModel.Destination.WrongPortal ||
+            destination is UndalRootViewModel.Destination.Error
+        ) return@LaunchedEffect
         val route = UndalRoutes.routeForDeepLink(initialDeepLink) ?: return@LaunchedEffect
-        if (route == UndalRoutes.SPLASH) return@LaunchedEffect
+        if (route == UndalRoutes.SPLASH || UndalRoutes.isVendor(route)) return@LaunchedEffect
         navigateSafely(navController, route, viewModel::onNavigationFailed) { launchSingleTop = true }
-    }
-
-    LaunchedEffect(ringing) {
-        val active = ringing
-        if (active != null) {
-            navigateSafely(
-                navController,
-                UndalRoutes.vendorOrderDetail(active.orderId),
-                viewModel::onNavigationFailed
-            ) { launchSingleTop = true }
-        }
     }
 
     Box(modifier = Modifier.fillMaxSize()) {
@@ -271,6 +256,16 @@ fun UndalRoot(
       ) {
         composable(UndalRoutes.SPLASH) {
             UndalSplash(message = "Opening Undal HomeKitchen…")
+        }
+
+        composable(UndalRoutes.PORTAL_HANDOFF) {
+            val role = (destination as? UndalRootViewModel.Destination.WrongPortal)?.accountRole
+                ?: com.undal.syl.app.core.session.UndalRole.VENDOR
+            UndalPortalHandoffScreen(
+                accountRole = role,
+                onSignOut = viewModel::signOut,
+                onOpenSupport = { navigateSafely(navController, UndalRoutes.SUPPORT, viewModel::onNavigationFailed) },
+            )
         }
 
         // The router could not decide where this phone belongs — said in words,
@@ -418,102 +413,6 @@ fun UndalRoot(
                 onEditAddress = { navController.navigate(UndalRoutes.LOCATION_SETUP) { launchSingleTop = true } },
                 onOpenOrders = { navController.navigate(UndalRoutes.CUSTOMER_ORDERS) { launchSingleTop = true } },
                 onOpenInbox = { navController.navigate(UndalRoutes.CUSTOMER_INBOX) { launchSingleTop = true } }
-            )
-        }
-
-        composable(UndalRoutes.VENDOR_DIAGNOSTICS) {
-            DiagnosticsScreen(
-                onContinue = viewModel::onDiagnosticsFinished,
-                onOpenSupport = { navController.navigate(UndalRoutes.SUPPORT) }
-            )
-        }
-
-        composable(UndalRoutes.VENDOR_CONSOLE) {
-            VendorDashboardScreen(
-                onOpenOrders = { navController.navigate(UndalRoutes.VENDOR_ORDERS) },
-                onOpenMenu = { navController.navigate(UndalRoutes.VENDOR_MENU) },
-                onOpenPromos = { navController.navigate(UndalRoutes.VENDOR_PROMOS) },
-                onOpenSchedule = { navController.navigate(UndalRoutes.VENDOR_SCHEDULE) },
-                onOpenSettings = { navController.navigate(UndalRoutes.VENDOR_STORE) },
-                onOpenChats = { navController.navigate(UndalRoutes.VENDOR_CHAT_LIST) },
-                onOpenDiagnostics = { navController.navigate(UndalRoutes.VENDOR_DIAGNOSTICS) },
-                onOpenInbox = { navController.navigate(UndalRoutes.VENDOR_INBOX) },
-                onOpenOrder = { orderId -> navController.navigate(UndalRoutes.vendorOrderDetail(orderId)) },
-                onPreviewAsCustomer = { navController.navigate(UndalRoutes.CUSTOMER_HOME) }
-            )
-        }
-
-        composable(UndalRoutes.VENDOR_ORDERS) {
-            VendorOrdersScreen(
-                onBack = { navController.popBackStack() },
-                onOpenOrder = { orderId -> navController.navigate(UndalRoutes.vendorOrderDetail(orderId)) }
-            )
-        }
-
-        composable(UndalRoutes.VENDOR_ORDER_DETAIL) { backStackEntry ->
-            val orderId = backStackEntry.arguments?.getString(UndalRoutes.ARG_ORDER_ID).orEmpty()
-            VendorOrderDetailScreen(
-                orderId = orderId,
-                sheet = requestedSheet,
-                onBack = { navController.popBackStack() },
-                onOpenChats = { navController.navigate(UndalRoutes.vendorChat(orderId)) }
-            )
-        }
-
-        composable(UndalRoutes.VENDOR_MENU) {
-            VendorMenuScreen(
-                onBack = { navController.popBackStack() },
-                onPreviewAsCustomer = { navController.navigate(UndalRoutes.CUSTOMER_HOME) }
-            )
-        }
-
-        // The studio: the same manager, opened on the offers it is about.
-        composable(UndalRoutes.VENDOR_PROMOS) {
-            VendorMenuScreen(
-                onBack = { navController.popBackStack() },
-                onPreviewAsCustomer = { navController.navigate(UndalRoutes.CUSTOMER_HOME) },
-                startTab = VendorMenuViewModel.Tab.OFFERS
-            )
-        }
-
-        composable(UndalRoutes.VENDOR_SCHEDULE) {
-            VendorScheduleScreen(onBack = { navController.popBackStack() })
-        }
-
-        composable(UndalRoutes.VENDOR_STORE) {
-            VendorStoreScreen(
-                onBack = { navController.popBackStack() },
-                onOpenPolicy = { navController.navigate(UndalRoutes.POLICY) },
-                onOpenDiagnostics = { navController.navigate(UndalRoutes.VENDOR_DIAGNOSTICS) },
-                onPreviewAsCustomer = { navController.navigate(UndalRoutes.CUSTOMER_HOME) },
-                onSignOut = {
-                    viewModel.signOut()
-                    navigateSafely(navController, UndalRoutes.LOGIN, viewModel::onNavigationFailed)
-                }
-            )
-        }
-
-        composable(UndalRoutes.VENDOR_CHAT_LIST) {
-            VendorChatListScreen(
-                onBack = { navController.popBackStack() },
-                onOpenChat = { orderId -> navController.navigate(UndalRoutes.vendorChat(orderId)) },
-                onOpenOrder = { orderId -> navController.navigate(UndalRoutes.vendorOrderDetail(orderId)) }
-            )
-        }
-
-        composable(UndalRoutes.VENDOR_CHAT) { backStackEntry ->
-            val orderId = backStackEntry.arguments?.getString(UndalRoutes.ARG_ORDER_ID).orEmpty()
-            VendorChatScreen(
-                orderId = orderId,
-                onBack = { navController.popBackStack() },
-                onOpenOrder = { id -> navController.navigate(UndalRoutes.vendorOrderDetail(id)) }
-            )
-        }
-
-        composable(UndalRoutes.VENDOR_INBOX) {
-            VendorInboxScreen(
-                onBack = { navController.popBackStack() },
-                onOpenOrder = { orderId -> navController.navigate(UndalRoutes.vendorOrderDetail(orderId)) }
             )
         }
 

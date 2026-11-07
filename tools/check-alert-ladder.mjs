@@ -45,7 +45,10 @@ const APP_CHANNELS = "app/src/main/java/com/undal/syl/app/core/fcm/AlarmChannels
 const APP_ALERT = "app/src/main/java/com/undal/syl/app/core/background/OrderAlertService.kt";
 const APP_WATCHER = "app/src/main/java/com/undal/syl/app/core/background/KitchenWatchService.kt";
 const APP_MANIFEST = "app/src/main/AndroidManifest.xml";
+const VENDOR_MANIFEST = "app/src/vendor/AndroidManifest.xml";
 const APP_TOKEN = "app/src/main/java/com/undal/syl/app/core/fcm/TokenRegistrar.kt";
+const VENDOR_DIAGNOSTICS = "app/src/vendor/java/com/undal/syl/app/features/vendor/DiagnosticsViewModel.kt";
+const CUSTOMER_ROOT = "app/src/customer/java/com/undal/syl/app/features/root/UndalRoot.kt";
 
 const failures = [];
 const passes = [];
@@ -206,7 +209,8 @@ check(
 // ---------------------------------------------------------------------------
 // 6 · the phone-side routes exist
 // ---------------------------------------------------------------------------
-const manifest = read(APP_MANIFEST);
+// Manifest merger combines the common and vendor source sets for this flavor.
+const manifest = read(APP_MANIFEST) + read(VENDOR_MANIFEST);
 check(
   "the live watcher service is declared in the manifest",
   manifest.includes("KitchenWatchService") && /foregroundServiceType="specialUse"/.test(manifest),
@@ -238,9 +242,9 @@ check(
 check(
   "a silent phone is treated as a phone that cannot ring",
   /AlertVolume\.arm\(/.test(read(APP_ALERT)) &&
-    /AlertVolume\.raise\(/.test(read("app/src/main/java/com/undal/syl/app/features/vendor/DiagnosticsViewModel.kt")) &&
+    /AlertVolume\.raise\(/.test(read(VENDOR_DIAGNOSTICS)) &&
     /MODIFY_AUDIO_SETTINGS/.test(manifest) &&
-    /blocking = !volumeHealthy/.test(read("app/src/main/java/com/undal/syl/app/features/vendor/DiagnosticsViewModel.kt")),
+    /blocking = !volumeHealthy/.test(read(VENDOR_DIAGNOSTICS)),
   "the ring plays on the ALARM stream: at zero volume nothing else in this app can make it audible",
 );
 const withoutComments = (source) =>
@@ -293,7 +297,7 @@ check(
 check(
   "the customer is asked for notification permission",
   /POST_NOTIFICATIONS/.test(read("app/src/main/java/com/undal/syl/app/core/fcm/NotificationConsent.kt")) &&
-    /CustomerNotificationConsent/.test(read("app/src/main/java/com/undal/syl/app/features/root/UndalRoot.kt")),
+    /CustomerNotificationConsent/.test(read(CUSTOMER_ROOT)),
   "Android 13+ drops every notification until the permission is granted, and nothing asks the customer",
 );
 check(

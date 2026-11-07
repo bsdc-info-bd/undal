@@ -29,7 +29,10 @@ data class CartLine(
 data class Cart(
     val lines: List<CartLine> = emptyList(),
     val couponCode: String = "",
-    val updatedAtMillis: Long = 0L
+    val updatedAtMillis: Long = 0L,
+    /** Immutable kitchen identity: an address change can never mix branch prices. */
+    val branchId: String = "",
+    val branchName: String = "",
 ) {
 
     val itemCount: Int get() = lines.sumOf { it.quantity }
@@ -86,7 +89,17 @@ data class Cart(
         updatedAtMillis = System.currentTimeMillis()
     )
 
-    fun cleared(): Cart = Cart()
+    fun cleared(): Cart = Cart(branchId = branchId, branchName = branchName)
+
+    /** Bind an empty cart, or reject a branch switch while it still has dishes. */
+    fun forBranch(id: String, name: String): Cart {
+        require(id.isNotBlank()) { "A branch is required before adding food." }
+        val existingOwner = branchId.ifBlank { "default" }
+        if (lines.isNotEmpty() && existingOwner != id) {
+            throw com.undal.syl.app.core.branch.BranchCartConflictException(name)
+        }
+        return copy(branchId = id, branchName = name)
+    }
 
     companion object {
         /** Matches the rules' `qty <= 50` per line and 40 lines per order. */
@@ -106,6 +119,8 @@ object CartCodec {
         val root = org.json.JSONObject()
         root.put("coupon", cart.couponCode)
         root.put("updatedAt", cart.updatedAtMillis)
+        root.put("branchId", cart.branchId)
+        root.put("branchName", cart.branchName)
         val array = org.json.JSONArray()
         cart.lines.forEach { line ->
             array.put(
@@ -149,7 +164,9 @@ object CartCodec {
             Cart(
                 lines = lines.take(Cart.MAX_LINES),
                 couponCode = root.optString("coupon"),
-                updatedAtMillis = root.optLong("updatedAt")
+                updatedAtMillis = root.optLong("updatedAt"),
+                branchId = root.optString("branchId"),
+                branchName = root.optString("branchName")
             )
         }.getOrDefault(Cart())
     }

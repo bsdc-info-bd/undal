@@ -1,10 +1,9 @@
 # ===========================================================================
 # Undal HomeKitchen — android-build
 #
-# push / pull request / manual. Produces the signed, installable undal.apk and
-# (on main) publishes it to the rolling GitHub release so that
-#   https://github.com/bsdc-info-bd/undal/releases/latest/download/undal.apk
-# is always the newest build — the exact URL the Worker hands out.
+# push / pull request / manual. Produces separate signed customer and vendor
+# APKs. The customer keeps the fixed undal.apk URL used by the Worker; the
+# private kitchen build is published alongside it as undal-vendor.apk.
 # ===========================================================================
 name: android-build
 
@@ -36,7 +35,7 @@ concurrency:
 
 jobs:
   build:
-    name: Build and sign undal.apk
+    name: Build and sign customer + vendor APKs
     runs-on: ubuntu-latest
     env:
       UNDAL_CLOUDINARY_CLOUD_NAME: ${{ secrets.CLOUDINARY_CLOUD_NAME }}
@@ -46,6 +45,7 @@ jobs:
       UNDAL_FIREBASE_WEB_API_KEY: ${{ secrets.FIREBASE_WEB_API_KEY }}
       UNDAL_SUPPORT_PHONE: ${{ secrets.SUPPORT_PHONE }}
       UNDAL_MINIFY: ${{ github.event_name == 'workflow_dispatch' && inputs.minify || 'false' }}
+      VENDOR_FIREBASE_REGISTERED: ${{ secrets.GOOGLE_SERVICES_VENDOR_JSON != '' && 'true' || 'false' }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -126,43 +126,74 @@ jobs:
       - name: Prepare the build inputs
         env:
           GOOGLE_SERVICES_JSON: ${{ secrets.GOOGLE_SERVICES_JSON }}
+          GOOGLE_SERVICES_VENDOR_JSON: ${{ secrets.GOOGLE_SERVICES_VENDOR_JSON }}
         run: |
+          set -euo pipefail
+          if [ "${{ github.ref }}" = refs/heads/main ] && [ "$VENDOR_FIREBASE_REGISTERED" != true ]; then
+            echo "::error::Register com.undal.syl.vendor in this Firebase project and add its file as GOOGLE_SERVICES_VENDOR_JSON before publishing."
+            exit 1
+          fi
           gradle wrapper --gradle-version 8.10.2 --distribution-type bin
           mkdir -p app/src/main/res/raw
           cp assets/sound/undal_order_alert.mp3 app/src/main/res/raw/undal_order_alert.mp3
           printf '%s' "$GOOGLE_SERVICES_JSON" > app/google-services.json
+          if [ "$VENDOR_FIREBASE_REGISTERED" = true ]; then
+            printf '%s' "$GOOGLE_SERVICES_VENDOR_JSON" > app/src/vendor/google-services.json
+          else
+            # Verification branches may compile both flavors before the owner has
+            # registered the vendor Firebase app. This file is deliberately
+            # compile-only and is never signed or published (see step conditions).
+            cat > app/src/vendor/google-services.json <<'JSON'
+          {"project_info":{"project_number":"0","project_id":"undal-ci-compile-only"},"client":[{"client_info":{"mobilesdk_app_id":"1:0:android:0000000000000001","android_client_info":{"package_name":"com.undal.syl.vendor"}},"api_key":[{"current_key":"CI_COMPILE_ONLY_NOT_A_CREDENTIAL"}]},{"client_info":{"mobilesdk_app_id":"1:0:android:0000000000000002","android_client_info":{"package_name":"com.undal.syl.vendor.debug"}},"api_key":[{"current_key":"CI_COMPILE_ONLY_NOT_A_CREDENTIAL"}]}],"configuration_version":"1"}
+          JSON
+          fi
           echo "order sound: $(stat -c%s app/src/main/res/raw/undal_order_alert.mp3) bytes"
 
       - name: Unit tests
         run: |
           set -o pipefail
-          ./gradlew :app:testReleaseUnitTest --no-daemon --stacktrace \
+          ./gradlew :app:testCustomerReleaseUnitTest :app:testVendorReleaseUnitTest --no-daemon --stacktrace \
             -PundalVersionCode=${{ github.run_number }} \
             -PundalVersionName=1.0.${{ github.run_number }} 2>&1 | tee "$RUNNER_TEMP/undal-build.log"
 
       - name: Compile adaptive previews and instrumentation tests
         run: |
           set -o pipefail
-          # Offline, compile-only fixture: never copy production credentials into
-          # the unregistered .debug app. This step does not produce/run a debug APK.
-          # Keep the real task graph intact: excluding GoogleServices breaks AGP's
-          # generated-resource providers. Remove the fixture before release build.
-          trap 'rm -f app/src/debug/google-services.json' EXIT
-          cat > app/src/debug/google-services.json <<'JSON'
+          # Offline, compile-only fixtures: never copy production credentials
+          # into either unregistered .debug app. This plugin gives src/vendor
+          # precedence even over a vendorDebug fixture, and that real file has
+          # no com.undal.syl.vendor.debug client. Park it outside the app for
+          # this step only; the trap restores it before release assembly and
+          # removes every fixture on both success and failure.
+          set -euo pipefail
+          mv app/src/vendor/google-services.json "$RUNNER_TEMP/undal-vendor-google-services.json"
+          cleanup_debug_config() {
+            rm -f app/src/customerDebug/google-services.json app/src/vendorDebug/google-services.json
+            if [ -f "$RUNNER_TEMP/undal-vendor-google-services.json" ]; then
+              mv "$RUNNER_TEMP/undal-vendor-google-services.json" app/src/vendor/google-services.json
+            fi
+          }
+          trap cleanup_debug_config EXIT
+          mkdir -p app/src/customerDebug app/src/vendorDebug
+          cat > app/src/customerDebug/google-services.json <<'JSON'
           {"project_info":{"project_number":"0","project_id":"undal-ci-compile-only"},"client":[{"client_info":{"mobilesdk_app_id":"1:0:android:0000000000000000","android_client_info":{"package_name":"com.undal.syl.app.debug"}},"api_key":[{"current_key":"CI_COMPILE_ONLY_NOT_A_CREDENTIAL"}]}],"configuration_version":"1"}
           JSON
-          ./gradlew :app:compileDebugAndroidTestKotlin \
+          cat > app/src/vendorDebug/google-services.json <<'JSON'
+          {"project_info":{"project_number":"0","project_id":"undal-ci-compile-only"},"client":[{"client_info":{"mobilesdk_app_id":"1:0:android:0000000000000001","android_client_info":{"package_name":"com.undal.syl.vendor.debug"}},"api_key":[{"current_key":"CI_COMPILE_ONLY_NOT_A_CREDENTIAL"}]}],"configuration_version":"1"}
+          JSON
+          ./gradlew :app:compileCustomerDebugAndroidTestKotlin :app:compileVendorDebugAndroidTestKotlin \
             --no-daemon --stacktrace 2>&1 | tee -a "$RUNNER_TEMP/undal-build.log"
 
-      - name: Assemble signed-ready release APK
+      - name: Assemble signed-ready release APKs
         run: |
           set -o pipefail
-          ./gradlew :app:assembleRelease --no-daemon --stacktrace \
+          ./gradlew :app:assembleCustomerRelease :app:assembleVendorRelease --no-daemon --stacktrace \
             -PundalVersionCode=${{ github.run_number }} \
             -PundalVersionName=1.0.${{ github.run_number }} \
             -PundalMinify=${UNDAL_MINIFY} 2>&1 | tee -a "$RUNNER_TEMP/undal-build.log"
 
       - name: Keystore fingerprint
+        if: env.VENDOR_FIREBASE_REGISTERED == 'true'
         id: fingerprint
         env:
           KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
@@ -185,7 +216,8 @@ jobs:
       # The keystore's type is sniffed and passed explicitly: `keytool` reads a
       # PKCS12 store whatever it is called, but `apksigner` takes the type from
       # the file name, and `keytool -genkeypair` on JDK 9+ writes PKCS12.
-      - name: Sign the release APK
+      - name: Sign the release APKs
+        if: env.VENDOR_FIREBASE_REGISTERED == 'true'
         id: sign
         env:
           KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
@@ -203,16 +235,6 @@ jobs:
             fi
             echo "build-tools: $TOOLS"
             "${TOOLS}apksigner" version || true
-
-            UNSIGNED=""
-            for candidate in app/build/outputs/apk/release/*.apk; do
-              if [ -f "$candidate" ]; then UNSIGNED="$candidate"; break; fi
-            done
-            if [ -z "$UNSIGNED" ]; then
-              echo "::error::Gradle produced no release APK to sign."
-              exit 1
-            fi
-            echo "unsigned APK: $UNSIGNED"
 
             KEYSTORE="$RUNNER_TEMP/undal-release.keys"
             printf '%s' "$KEYSTORE_BASE64" | base64 -d > "$KEYSTORE"
@@ -232,60 +254,87 @@ jobs:
               UNLOCK="$KEYSTORE_PASSWORD"
             fi
 
-            "${TOOLS}zipalign" -f 4 "$UNSIGNED" "$RUNNER_TEMP/undal-aligned.apk"
-            "${TOOLS}apksigner" sign \
-              --ks "$KEYSTORE" \
-              --ks-type "$KS_TYPE" \
-              --ks-key-alias "$KEY_ALIAS" \
-              --ks-pass "pass:$KEYSTORE_PASSWORD" \
-              --key-pass "pass:$UNLOCK" \
-              --out app/build/outputs/apk/release/undal-signed.apk \
-              "$RUNNER_TEMP/undal-aligned.apk"
-            echo "signed:"
-            "${TOOLS}apksigner" verify --print-certs \
-              app/build/outputs/apk/release/undal-signed.apk | sed -n '1,8p'
-            echo "signedReleaseFile=$PWD/app/build/outputs/apk/release/undal-signed.apk" >> "$GITHUB_OUTPUT"
+            for PORTAL in customer vendor; do
+              UNSIGNED=""
+              for candidate in "app/build/outputs/apk/${PORTAL}/release/"*.apk; do
+                if [ -f "$candidate" ]; then UNSIGNED="$candidate"; break; fi
+              done
+              if [ -z "$UNSIGNED" ]; then
+                echo "::error::Gradle produced no ${PORTAL} release APK to sign."
+                exit 1
+              fi
+              echo "unsigned ${PORTAL} APK: $UNSIGNED"
+              ALIGNED="$RUNNER_TEMP/undal-${PORTAL}-aligned.apk"
+              SIGNED="$PWD/app/build/outputs/apk/${PORTAL}/release/undal-signed.apk"
+              "${TOOLS}zipalign" -f 4 "$UNSIGNED" "$ALIGNED"
+              "${TOOLS}apksigner" sign \
+                --ks "$KEYSTORE" \
+                --ks-type "$KS_TYPE" \
+                --ks-key-alias "$KEY_ALIAS" \
+                --ks-pass "pass:$KEYSTORE_PASSWORD" \
+                --key-pass "pass:$UNLOCK" \
+                --out "$SIGNED" \
+                "$ALIGNED"
+              echo "signed ${PORTAL}:"
+              "${TOOLS}apksigner" verify --print-certs "$SIGNED" | sed -n '1,8p'
+              if [ "$PORTAL" = customer ]; then
+                echo "signedCustomerFile=$SIGNED" >> "$GITHUB_OUTPUT"
+              else
+                echo "signedVendorFile=$SIGNED" >> "$GITHUB_OUTPUT"
+              fi
+            done
           } 2>&1 | tee -a "$RUNNER_TEMP/undal-build.log"
 
-      - name: Publish the fixed asset name
+      - name: Publish the fixed asset names
+        if: env.VENDOR_FIREBASE_REGISTERED == 'true'
         run: |
-          cp "${{ steps.sign.outputs.signedReleaseFile }}" undal.apk
-          ls -l undal.apk
-          sha256sum undal.apk
+          cp "${{ steps.sign.outputs.signedCustomerFile }}" undal.apk
+          cp "${{ steps.sign.outputs.signedVendorFile }}" undal-vendor.apk
+          ls -l undal.apk undal-vendor.apk
+          sha256sum undal.apk undal-vendor.apk
 
-      - name: Prove the order sound is inside the signed APK
+      - name: Prove the order sound is inside both signed APKs
+        if: env.VENDOR_FIREBASE_REGISTERED == 'true'
         run: |
           set -o pipefail
           # Its reasons are copied into the build log so the failure reporter
           # can put them in the pull-request comment.
           python3 tools/check-apk-alert-assets.py undal.apk 2>&1 | tee -a "$RUNNER_TEMP/undal-build.log"
+          python3 tools/check-apk-alert-assets.py undal-vendor.apk 2>&1 | tee -a "$RUNNER_TEMP/undal-build.log"
 
-      - name: Upload the APK artifact
+      - name: Upload the APK artifacts
+        if: env.VENDOR_FIREBASE_REGISTERED == 'true'
         uses: actions/upload-artifact@v4
         with:
-          name: undal-apk
-          path: undal.apk
+          name: undal-apks
+          path: |
+            undal.apk
+            undal-vendor.apk
           retention-days: 30
 
       - name: Attach to the rolling release (main only)
-        if: github.ref == 'refs/heads/main'
+        if: github.ref == 'refs/heads/main' && env.VENDOR_FIREBASE_REGISTERED == 'true'
         uses: softprops/action-gh-release@v2
         with:
           tag_name: v1.0.${{ github.run_number }}
           name: Undal HomeKitchen 1.0.${{ github.run_number }}
           make_latest: true
-          files: undal.apk
+          files: |
+            undal.apk
+            undal-vendor.apk
           body: |
             Automated build from `${{ github.sha }}`.
 
-            Download **undal.apk** and install it (Android will ask you to allow
-            installs from this browser — that is expected for a direct APK).
+            Customers download **undal.apk**. Assigned kitchen staff install
+            **undal-vendor.apk**; it has a separate application id and contains
+            the merchant portal. Android will ask for permission to install from
+            this browser.
 
             Order sound: official Undal alert (loops until the order is answered).
             Signing certificate SHA-256: `${{ steps.fingerprint.outputs.sha256 }}`
 
       - name: Tell the Worker about this release
-        if: github.ref == 'refs/heads/main'
+        if: github.ref == 'refs/heads/main' && env.VENDOR_FIREBASE_REGISTERED == 'true'
         env:
           RELEASE_WEBHOOK_SECRET: ${{ secrets.RELEASE_WEBHOOK_SECRET }}
           WORKER_BASE_URL: ${{ secrets.WORKER_BASE_URL }}
@@ -305,17 +354,26 @@ jobs:
 
       - name: Summarise
         run: |
-          {
-            echo "## Undal APK ready"
-            echo ""
-            echo "| Field | Value |"
-            echo "| --- | --- |"
-            echo "| Version | 1.0.${{ github.run_number }} |"
-            echo "| Download | https://github.com/${{ github.repository }}/releases/latest/download/undal.apk |"
-            echo "| Signing SHA-256 | \`${{ steps.fingerprint.outputs.sha256 }}\` |"
-            echo ""
-            echo "Paste the SHA-256 into the **APP_SIGNING_SHA256** repository secret so App Links verify."
-          } >> "$GITHUB_STEP_SUMMARY"
+          if [ "$VENDOR_FIREBASE_REGISTERED" = true ]; then
+            {
+              echo "## Undal APKs ready"
+              echo ""
+              echo "| Field | Value |"
+              echo "| --- | --- |"
+              echo "| Version | 1.0.${{ github.run_number }} |"
+              echo "| Customer download | https://github.com/${{ github.repository }}/releases/latest/download/undal.apk |"
+              echo "| Vendor download | https://github.com/${{ github.repository }}/releases/latest/download/undal-vendor.apk |"
+              echo "| Signing SHA-256 | \`${{ steps.fingerprint.outputs.sha256 }}\` |"
+              echo ""
+              echo "Paste the SHA-256 into the **APP_SIGNING_SHA256** repository secret so App Links verify."
+            } >> "$GITHUB_STEP_SUMMARY"
+          else
+            {
+              echo "## Both Android flavors compiled"
+              echo ""
+              echo "The vendor Firebase application is not registered in repository secrets, so this run used a compile-only vendor fixture and published no APK. Before a main-branch release, register \`com.undal.syl.vendor\` in Firebase and add its file as \`GOOGLE_SERVICES_VENDOR_JSON\`."
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
 
       # A Gradle failure is only ever useful as its `e: file:///…` lines. This
       # collects them into the job summary and onto the pull request, so the fix
@@ -351,7 +409,8 @@ jobs:
           } > "$OUT"
           # A failing unit test says nothing useful in the log itself, so the
           # JUnit XML — test class, test name, assertion message — is appended.
-          python3 tools/read-test-results.py app/build/test-results/testReleaseUnitTest >> "$OUT" || true
+          python3 tools/read-test-results.py app/build/test-results/testCustomerReleaseUnitTest >> "$OUT" || true
+          python3 tools/read-test-results.py app/build/test-results/testVendorReleaseUnitTest >> "$OUT" || true
           cat "$OUT" >> "$GITHUB_STEP_SUMMARY"
           echo "::error::The build failed — the lines that explain it are in the pull-request comment and the job summary."
           if [ "${{ github.event_name }}" = "pull_request" ]; then

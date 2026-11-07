@@ -29,7 +29,8 @@ import { fsGet } from "../firestore";
 import { sendToTokens } from "../fcmv1";
 import { rtdbGet } from "../rtdb";
 import { memoGet, memoPut, type KvBinding } from "../util/kv";
-import { vendorTokens } from "../recipients";
+import { vendorTokens, tokensForBranch } from "../recipients";
+import { loadBranches } from "../routes/branches";
 import {
   clockMinutes,
   dhakaClock,
@@ -78,8 +79,20 @@ export interface OpeningReminderResult {
   notified?: number;
 }
 
-export async function runOpeningReminder(env: Env, now: Date = new Date()): Promise<OpeningReminderResult> {
-  const config = (await fsGet(env, "config/store")) as StoreConfig | null;
+interface OpeningScope {
+  branchId?: string;
+  configPath: string;
+  presencePath: string;
+}
+
+const LEGACY_OPENING_SCOPE: OpeningScope = { configPath: "config/store", presencePath: "presence/vendor" };
+
+export async function runOpeningReminder(
+  env: Env,
+  now: Date = new Date(),
+  scope: OpeningScope = LEGACY_OPENING_SCOPE,
+): Promise<OpeningReminderResult> {
+  const config = (await fsGet(env, scope.configPath)) as StoreConfig | null;
   if (!config) return { ok: true, reminded: false, reason: "store-config-missing" };
 
   const clock = dhakaClock(now);
@@ -103,14 +116,14 @@ export async function runOpeningReminder(env: Env, now: Date = new Date()): Prom
 
   // Rule 3: a phone that has stopped beating is a phone that will not ring, and
   // asking it to open a store would create an order nobody sees.
-  const presence = await rtdbGet<{ lastSeen?: number }>(env, "presence/vendor");
+  const presence = await rtdbGet<{ lastSeen?: number }>(env, scope.presencePath);
   const lastSeen = typeof presence?.lastSeen === "number" ? presence.lastSeen : 0;
   if (lastSeen === 0 || now.getTime() - lastSeen > FRESH_AFTER_MS * 3) {
     return { ok: true, reminded: false, reason: "device-absent", service, minutesUntil };
   }
 
   // Rule 1: one reminder per service.
-  const key = `presence:opening-reminder:${clock.dateKey}:${service}`;
+  const key = `presence:opening-reminder:${scope.branchId ?? "legacy"}:${clock.dateKey}:${service}`;
   try {
     // `cacheNulls`: the sweep runs every five minutes and this flag is absent
     // until the day's first reminder, so without a cached miss the same empty key
@@ -137,7 +150,9 @@ export async function runOpeningReminder(env: Env, now: Date = new Date()): Prom
         : `starts in ${minutesUntil} minutes`;
   const serviceMinutes = clockMinutes(service);
   const pretty = serviceMinutes === null ? service : prettyMinutes(serviceMinutes);
-  const tokens = await vendorTokens(env);
+  const tokens = scope.branchId
+    ? (await tokensForBranch(env, scope.branchId)).map((entry) => entry.token)
+    : await vendorTokens(env);
   const outcome = await sendToTokens(env, tokens, {
     data: {
       type: "vendor_self",
@@ -148,9 +163,33 @@ export async function runOpeningReminder(env: Env, now: Date = new Date()): Prom
         "your schedule — orders then ring on this phone whenever your hours say open.",
       channelId: "vendor_general",
       clickAction: "vendor/dashboard",
+      ...(scope.branchId ? { branchId: scope.branchId } : {}),
     },
     ttl: "10800s",
   });
 
   return { ok: true, reminded: true, reason: "reminded", service, minutesUntil, notified: outcome.sent };
+}
+
+/** Opening reminders for every active branch, with independent de-duplication. */
+export async function runAllOpeningReminders(env: Env, now: Date = new Date()): Promise<OpeningReminderResult[]> {
+  const branches = await loadBranches(env);
+  return Promise.all(branches.map(async (branch) => {
+    const scope: OpeningScope = branch.legacy === true
+      ? LEGACY_OPENING_SCOPE
+      : {
+          branchId: branch.id,
+          configPath: `branches/${branch.id}`,
+          presencePath: `presence/branches/${branch.id}/vendor`,
+        };
+    try {
+      return await runOpeningReminder(env, now, scope);
+    } catch (error) {
+      return {
+        ok: false,
+        reminded: false,
+        reason: `${branch.id}:${error instanceof Error ? error.message : "opening-reminder-failed"}`,
+      };
+    }
+  }));
 }

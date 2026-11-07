@@ -154,6 +154,7 @@ export function parseHtml(html: string): MiniElement {
 /** A `window` with the timers a page script uses, recorded instead of firing. */
 export type MiniWindow = {
   _undalPoll?: number;
+  fetch: (url: string) => Promise<{ status: number; json: () => Promise<unknown> }>;
   setInterval: (handler: () => void, ms: number) => number;
   clearInterval: (handle: number) => void;
   intervals: Array<{ handle: number; ms: number; handler: () => void }>;
@@ -178,8 +179,17 @@ export function runInlineScript(
   const intervals: MiniWindow["intervals"] = [];
   const cleared: number[] = [];
   let nextHandle = 1;
+  const fetcher = options.fetch ?? (() => ({}));
+  const browserFetch = (url: string) =>
+    Promise.resolve(fetcher(String(url))).then((answer) => ({
+      // The status a page branches on is the status the test asked for; a page
+      // that reads a status it was not given sees 200, like a live response.
+      status: answer.status ?? 200,
+      json: () => Promise.resolve(answer.json),
+    }));
   const window: MiniWindow = {
     intervals,
+    fetch: browserFetch,
     cleared,
     setInterval: (handler, ms) => {
       const handle = nextHandle++;
@@ -224,15 +234,8 @@ export function runInlineScript(
     },
   };
 
-  const fetcher = options.fetch ?? (() => ({}));
   const run = new Function("window", "document", "fetch", `"use strict";\n${code}`);
-  run(window, scoped, (url: string) =>
-    Promise.resolve(fetcher(String(url))).then((answer) => ({
-      // The status a page branches on is the status the test asked for; a page
-      // that reads a status it was not given sees 200, like a live response.
-      status: answer.status ?? 200,
-      json: () => Promise.resolve(answer.json),
-    })));
+  run(window, scoped, browserFetch);
   return { document, window, ids: byId };
 }
 

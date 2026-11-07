@@ -9,11 +9,16 @@ import com.undal.syl.app.core.model.MenuItem
 import com.undal.syl.app.core.model.MenuSnapshot
 import com.undal.syl.app.core.model.MenuSort
 import com.undal.syl.app.core.model.Subcategory
+import com.undal.syl.app.core.branch.BranchMembership
+import com.undal.syl.app.BuildConfig
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.callbackFlow
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.flow.map
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -30,15 +35,33 @@ import javax.inject.Singleton
  */
 @Singleton
 class MenuRepo @Inject constructor(
-    private val firestore: FirebaseFirestore
+    private val firestore: FirebaseFirestore,
+    private val branchRepo: BranchRepo,
+    private val membership: BranchMembership,
 ) {
 
-    fun observeMenu(): Flow<MenuSnapshot> = combine(
-        observeCategories(),
-        observeSubcategories(),
-        observeItems(),
-        observeCombos(),
-        observeCampaigns()
+    private val selection = if (BuildConfig.IS_VENDOR) {
+        membership.selection.map { it.asCustomerSelection() }
+    } else {
+        branchRepo.selection
+    }
+
+    /** Restart all five listeners when the customer's resolved branch changes. */
+    @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
+    fun observeMenu(): Flow<MenuSnapshot> = selection.flatMapLatest { selection ->
+        if (selection.branchId.isBlank()) {
+            flowOf(MenuSnapshot(loaded = true))
+        } else {
+            observeAllMenu(selection.branchId)
+        }
+    }
+
+    private fun observeAllMenu(branchId: String): Flow<MenuSnapshot> = combine(
+        observeCategories(branchId),
+        observeSubcategories(branchId),
+        observeItems(branchId),
+        observeCombos(branchId),
+        observeCampaigns(branchId)
     ) { categories, subcategories, items, combos, campaigns ->
         MenuSnapshot(
             categories = categories,
@@ -50,7 +73,7 @@ class MenuRepo @Inject constructor(
         )
     }
 
-    private fun observeCategories(): Flow<List<Category>> = callbackFlow {
+    private fun observeCategories(branchId: String): Flow<List<Category>> = callbackFlow {
         val registration = firestore.collection(CATEGORIES).addSnapshotListener { snapshot, error ->
             if (error != null) {
                 close(error)
@@ -60,6 +83,7 @@ class MenuRepo @Inject constructor(
                 snapshot?.documents.orEmpty()
                     .mapNotNull { document ->
                         val map = document.data ?: return@mapNotNull null
+                        if (!belongsToBranch(map, branchId)) return@mapNotNull null
                         Category.fromDocument(document.id, map).takeIf { it.name.isNotBlank() }
                     }
                     .sortedBy { it.order }
@@ -68,7 +92,7 @@ class MenuRepo @Inject constructor(
         awaitClose { registration.remove() }
     }.catch { emit(emptyList()) }
 
-    private fun observeSubcategories(): Flow<List<Subcategory>> = callbackFlow {
+    private fun observeSubcategories(branchId: String): Flow<List<Subcategory>> = callbackFlow {
         val registration = firestore.collection(SUBCATEGORIES).addSnapshotListener { snapshot, error ->
             if (error != null) {
                 close(error)
@@ -78,6 +102,7 @@ class MenuRepo @Inject constructor(
                 snapshot?.documents.orEmpty()
                     .mapNotNull { document ->
                         val map = document.data ?: return@mapNotNull null
+                        if (!belongsToBranch(map, branchId)) return@mapNotNull null
                         Subcategory.fromDocument(document.id, map).takeIf { it.name.isNotBlank() }
                     }
                     .sortedBy { it.order }
@@ -86,7 +111,7 @@ class MenuRepo @Inject constructor(
         awaitClose { registration.remove() }
     }.catch { emit(emptyList()) }
 
-    private fun observeItems(): Flow<List<MenuItem>> = callbackFlow {
+    private fun observeItems(branchId: String): Flow<List<MenuItem>> = callbackFlow {
         val registration = firestore.collection(MENU_ITEMS).addSnapshotListener { snapshot, error ->
             if (error != null) {
                 close(error)
@@ -96,6 +121,7 @@ class MenuRepo @Inject constructor(
                 snapshot?.documents.orEmpty()
                     .mapNotNull { document ->
                         val map = document.data ?: return@mapNotNull null
+                        if (!belongsToBranch(map, branchId)) return@mapNotNull null
                         MenuItem.fromDocument(document.id, map).takeIf { it.name.isNotBlank() }
                     }
                     .sortedBy { it.name }
@@ -104,7 +130,7 @@ class MenuRepo @Inject constructor(
         awaitClose { registration.remove() }
     }.catch { emit(emptyList()) }
 
-    private fun observeCombos(): Flow<List<Combo>> = callbackFlow {
+    private fun observeCombos(branchId: String): Flow<List<Combo>> = callbackFlow {
         val registration = firestore.collection(COMBOS).addSnapshotListener { snapshot, error ->
             if (error != null) {
                 close(error)
@@ -113,6 +139,7 @@ class MenuRepo @Inject constructor(
             trySend(
                 snapshot?.documents.orEmpty().mapNotNull { document ->
                     val map = document.data ?: return@mapNotNull null
+                    if (!belongsToBranch(map, branchId)) return@mapNotNull null
                     Combo.fromDocument(document.id, map).takeIf { it.name.isNotBlank() }
                 }
             )
@@ -120,7 +147,7 @@ class MenuRepo @Inject constructor(
         awaitClose { registration.remove() }
     }.catch { emit(emptyList()) }
 
-    private fun observeCampaigns(): Flow<List<com.undal.syl.app.core.model.Campaign>> = callbackFlow {
+    private fun observeCampaigns(branchId: String): Flow<List<com.undal.syl.app.core.model.Campaign>> = callbackFlow {
         val registration = firestore.collection(CAMPAIGNS).addSnapshotListener { snapshot, error ->
             if (error != null) {
                 close(error)
@@ -128,7 +155,9 @@ class MenuRepo @Inject constructor(
             }
             val now = System.currentTimeMillis()
             trySend(
-                snapshot?.documents.orEmpty().mapNotNull { document ->
+                snapshot?.documents.orEmpty().filter { document ->
+                    belongsToBranch(document.data.orEmpty(), branchId)
+                }.mapNotNull { document ->
                     com.undal.syl.app.core.model.Campaign
                         .fromDocument(document.id, document.data.orEmpty())
                         ?.takeIf { it.isLive(now) }
@@ -164,6 +193,13 @@ class MenuRepo @Inject constructor(
 
         val popularity = snapshot.items.associate { it.id to it.orderCount }
         return sort.apply(cards, popularity)
+    }
+
+
+    /** Missing branchId and "*" are deliberately global during migration. */
+    private fun belongsToBranch(map: Map<String, Any>, branchId: String): Boolean {
+        val owner = (map["branchId"] as? String).orEmpty()
+        return owner.isBlank() || owner == "*" || owner == branchId
     }
 
     private companion object {

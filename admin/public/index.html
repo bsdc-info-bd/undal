@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="theme-color" content="#171b18">
+  <meta name="description" content="Undal HomeKitchen super-admin — branches, menus, delivery areas, orders and staff in one live control room.">
+  <title>Undal · Control room</title>
+  <link rel="icon" href="/icon.svg" type="image/svg+xml">
+  <link rel="manifest" href="/manifest.webmanifest">
+  <link rel="stylesheet" href="/app.css">
+</head>
+<body>
+  <noscript><main class="noscript"><h1>Undal Control room</h1><p>This operations panel needs JavaScript to verify your admin session and edit live branch data.</p></main></noscript>
+
+  <section id="login-view" class="login-view" aria-labelledby="login-title">
+    <div class="login-brand">
+      <a class="brand brand--light" href="/" aria-label="Undal HomeKitchen admin home">
+        <span class="brand-mark" aria-hidden="true">U</span>
+        <span><strong>undal</strong><small>HOMEKITCHEN</small></span>
+      </a>
+      <div class="login-story">
+        <p class="eyebrow eyebrow--light">ONE BRAND · EVERY NEIGHBOURHOOD</p>
+        <h1>Every branch.<br><em>One calm control room.</em></h1>
+        <p>Route each dinner to the right kitchen, shape delivery areas on a live map, and keep every menu and opening hour exactly as your team needs it.</p>
+        <div class="login-proof">
+          <span><b>01</b> Single vendor</span><span><b>02</b> Branch-aware</span><span><b>03</b> Live operations</span>
+        </div>
+      </div>
+      <p class="login-foot">Sylhet, Bangladesh · Asia/Dhaka · BDT</p>
+    </div>
+    <div class="login-form-wrap">
+      <form id="login-form" class="login-form">
+        <p class="eyebrow">SUPER ADMIN</p>
+        <h2 id="login-title">Welcome back.</h2>
+        <p class="muted">Use the protected administrator account provisioned for Undal.</p>
+        <label>Email address<input id="login-email" name="email" type="email" autocomplete="username" inputmode="email" required placeholder="admin@undal.com"></label>
+        <label>Password<input id="login-password" name="password" type="password" autocomplete="current-password" required minlength="8" placeholder="Your password"></label>
+        <p id="login-error" class="form-error" role="alert" hidden></p>
+        <button class="button button--primary button--wide" type="submit"><span>Enter control room</span><span aria-hidden="true">→</span></button>
+        <p class="security-note"><span aria-hidden="true">◆</span> Your password goes over HTTPS to the same-origin control plane, which verifies it with Firebase Auth. This panel stores only the short-lived session token in this tab.</p>
+      </form>
+    </div>
+  </section>
+
+  <div id="admin-view" class="admin-view" hidden>
+    <aside class="sidebar" aria-label="Primary navigation">
+      <a class="brand" href="#dashboard" aria-label="Undal control room dashboard">
+        <span class="brand-mark" aria-hidden="true">U</span>
+        <span><strong>undal</strong><small>CONTROL ROOM</small></span>
+      </a>
+      <nav id="side-nav" class="side-nav">
+        <button data-route="dashboard" class="nav-item active"><span class="nav-icon">⌂</span><span>Overview</span></button>
+        <button data-route="branches" class="nav-item"><span class="nav-icon">⌖</span><span>Branches</span><span id="branch-nav-count" class="nav-count">0</span></button>
+        <button data-route="menu" class="nav-item"><span class="nav-icon">▤</span><span>Menu library</span></button>
+        <button data-route="orders" class="nav-item"><span class="nav-icon">◷</span><span>Live orders</span><span id="order-nav-count" class="nav-count nav-count--hot" hidden>0</span></button>
+        <button data-route="requests" class="nav-item"><span class="nav-icon">↗</span><span>Area requests</span><span id="request-nav-count" class="nav-count" hidden>0</span></button>
+        <button data-route="team" class="nav-item"><span class="nav-icon">♙</span><span>Branch team</span></button>
+      </nav>
+      <div class="sidebar-bottom">
+        <div class="system-pill"><i></i><span><strong>System operational</strong><small>Firebase + Cloudflare edge</small></span></div>
+        <button id="logout-button" class="nav-item nav-item--quiet"><span class="nav-icon">↪</span><span>Sign out</span></button>
+        <p>UNDAL OS · v2.0</p>
+      </div>
+    </aside>
+
+    <main class="main-shell">
+      <header class="topbar">
+        <div class="topbar-title">
+          <p id="page-kicker" class="eyebrow">OPERATIONS</p>
+          <h1 id="page-title">Good day, Admin.</h1>
+        </div>
+        <div class="topbar-actions">
+          <div class="live-chip" title="Data refreshes automatically while this tab is visible"><i></i><span>Live</span><small id="sync-label">Connecting…</small></div>
+          <button id="refresh-button" class="icon-button" title="Refresh all live data" aria-label="Refresh all live data">↻</button>
+          <button class="avatar" data-route="team" aria-label="Open branch team">SA</button>
+        </div>
+      </header>
+
+      <div id="global-error" class="global-error" role="alert" hidden></div>
+      <section id="content" class="content" aria-live="polite">
+        <div class="page-loading"><span></span><span></span><span></span><p>Opening your control room…</p></div>
+      </section>
+    </main>
+
+    <nav id="mobile-nav" class="mobile-nav" aria-label="Mobile navigation">
+      <button data-route="dashboard" class="active"><span>⌂</span>Overview</button>
+      <button data-route="branches"><span>⌖</span>Branches</button>
+      <button data-route="menu"><span>▤</span>Menu</button>
+      <button data-route="orders"><span>◷</span>Orders</button>
+      <button data-route="requests"><span>↗</span>More</button>
+    </nav>
+  </div>
+
+  <dialog id="editor-dialog" class="editor-dialog">
+    <div id="dialog-content"></div>
+  </dialog>
+  <div id="toast-region" class="toast-region" aria-live="assertive" aria-atomic="true"></div>
+  <script type="module" src="/app.js"></script>
+</body>
+</html>

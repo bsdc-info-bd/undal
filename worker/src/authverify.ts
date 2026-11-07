@@ -22,6 +22,10 @@ export interface FirebaseIdClaims {
   email_verified?: boolean;
   user_id?: string;
   vendor?: boolean;
+  /** Set only by the protected bootstrap/team workflows. */
+  superAdmin?: boolean;
+  admin?: boolean;
+  branchIds?: string[];
   [key: string]: unknown;
 }
 
@@ -99,6 +103,38 @@ export async function requireVendor(env: Env, request: Request): Promise<Firebas
   const claims = await verifyIdToken(env, bearerToken(request));
   if (claims.vendor !== true) throw new HttpError(403, "vendor-claim-required");
   return claims;
+}
+
+/** Verifies a vendor or the single vendor's super administrator. */
+export async function requireVendorOrAdmin(env: Env, request: Request): Promise<FirebaseIdClaims> {
+  const claims = await verifyIdToken(env, bearerToken(request));
+  if (claims.vendor !== true && claims.superAdmin !== true) {
+    throw new HttpError(403, "vendor-claim-required");
+  }
+  return claims;
+}
+
+/** Only the super-admin claim may manage branches, staff or platform-wide data. */
+export async function requireSuperAdmin(env: Env, request: Request): Promise<FirebaseIdClaims> {
+  const claims = await verifyIdToken(env, bearerToken(request));
+  if (claims.superAdmin !== true) throw new HttpError(403, "super-admin-claim-required");
+  return claims;
+}
+
+/**
+ * A branch manager may touch only assigned orders. Legacy vendors retain access
+ * to legacy/default orders during migration; new orders always carry branchId.
+ */
+export function canAccessBranch(claims: FirebaseIdClaims, branchId: unknown): boolean {
+  if (claims.superAdmin === true) return true;
+  if (claims.vendor !== true) return false;
+  const branch = typeof branchId === "string" && branchId ? branchId : "default";
+  const assigned = Array.isArray(claims.branchIds)
+    ? claims.branchIds.filter((id): id is string => typeof id === "string")
+    : [];
+  // An empty list is the bootstrap-era single-kitchen account, not a new staff
+  // account. Team provisioning always writes an explicit non-empty list.
+  return assigned.length === 0 || assigned.includes(branch) || (branch === "default" && assigned.includes("*"));
 }
 
 /** Verifies the caller and returns their uid (any signed-in customer or vendor). */

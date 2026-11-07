@@ -47,6 +47,7 @@ object UndalRoutes {
     const val VENDOR_PROMOS = "vendor/promos"
 
     const val VENDOR_DIAGNOSTICS = "vendor/diagnostics"
+    const val PORTAL_HANDOFF = "router/portal-handoff"
     const val ROUTER_ERROR = "router/error"
     const val VENDOR_INBOX = "vendor/inbox"
     const val POLICY = "policy"
@@ -79,6 +80,7 @@ object UndalRoutes {
         CUSTOMER_HOME,
         VENDOR_CONSOLE,
         VENDOR_DIAGNOSTICS,
+        PORTAL_HANDOFF,
         ROUTER_ERROR,
     )
 

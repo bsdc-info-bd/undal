@@ -1,17 +1,24 @@
 # Undal HomeKitchen
 
-Single-kitchen food delivery for **Sylhet, Bangladesh** — 100 % cash on delivery,
-one Android app that contains both portals (customer *and* kitchen), one
-Cloudflare Worker for web, deep links and push, and a GitHub Actions pipeline
-that builds, signs and publishes everything.
+Multi-branch food delivery for **Sylhet, Bangladesh** — 100 % cash on delivery,
+two co-installable Android apps (customer and assigned kitchen staff), one
+Cloudflare Worker for web, authoritative checkout, deep links and push, and a
+GitHub Actions pipeline that verifies, builds, signs and publishes both flavors.
 
-**Everything in this repository is operated from a phone browser.** There is no
-laptop step, no CLI step, no paid service anywhere in the stack.
+**Routine setup and deployment can be operated from a phone browser.** The
+one-time legacy multi-branch data migration uses the audited, dry-run-first
+Node runbook below so pagination and activation checks are explicit rather
+than hidden behind a production button.
 
 > Status of the build plan: **Response 1 of 5** is complete — foundation,
 > security rules, Worker, pipelines and the counted feature list.
 > `FEATURES.md` tracks the 263 features and ticks each one only when it is
 > really implemented.
+
+> **Existing single-store installation:** do not toggle branch isolation in the
+> Firebase console. Follow the [multi-branch migration runbook](docs/BRANCH_MIGRATION.md)
+> for the read-only scan, paged backfill, staff-claim audit and guarded activation.
+> No production migration has been run by the repository automation.
 
 > **Google sign-in (Android):** available on login and registration. After enabling
 > the provider, update signing fingerprints and the Firebase build configuration
@@ -32,10 +39,11 @@ laptop step, no CLI step, no paid service anywhere in the stack.
 | A7 | `WORKER_DOMAIN` | `undal.your-subdomain.workers.dev` | Cloudflare dashboard |
 | A8 | `ORDER_SOUND_PATH` | `assets/sound/undal_order_alert.mp3` | already in this repository |
 
-Canonical constants used everywhere: package `com.undal.syl.app` · minSdk 24 ·
-target/compile SDK 35 · timezone **Asia/Dhaka** (no daylight saving, ever) ·
-currency **BDT, stored as integer paisa** (100 paisa = ৳1) · order sound
-resource `undal_order_alert` · APK asset name `undal.apk`.
+Canonical constants used everywhere: customer package `com.undal.syl.app` ·
+vendor package `com.undal.syl.vendor` · minSdk 24 · target/compile SDK 35 ·
+timezone **Asia/Dhaka** (no daylight saving, ever) · currency **BDT, stored as
+integer paisa** (100 paisa = ৳1) · order sound resource `undal_order_alert` ·
+APK assets `undal.apk` (customer) and `undal-vendor.apk` (kitchen staff).
 
 ---
 
@@ -49,7 +57,8 @@ lists exactly what is missing if you forget one):
 
 | Secret | Where the value comes from |
 | --- | --- |
-| `GOOGLE_SERVICES_JSON` | Firebase Console → Project settings → Your apps → Android → `google-services.json` (paste the whole file) |
+| `GOOGLE_SERVICES_JSON` | Firebase Console → Project settings → customer Android app `com.undal.syl.app` → `google-services.json` (paste the whole file) |
+| `GOOGLE_SERVICES_VENDOR_JSON` | The same project → vendor Android app `com.undal.syl.vendor` → its complete `google-services.json`; required before either APK can be signed or published |
 | `FIREBASE_WEB_API_KEY` | Firebase Console → Project settings → General → Web API Key |
 | `FIREBASE_SA_JSON` | Firebase Console → Project settings → Service accounts → **Generate new private key** (paste the whole JSON) |
 | `FIREBASE_RTDB_URL` | Firebase Console → Realtime Database → the URL at the top of the data tab |
@@ -76,8 +85,13 @@ them for you.
 3. **Realtime Database → Create database → region
    `asia-southeast1`** and copy the URL into `FIREBASE_RTDB_URL`.
 4. **Project settings → Your apps → Add app → Android** with package
-   `com.undal.syl.app`, then download `google-services.json`.
-5. **Project settings → Service accounts → Generate new private key.**
+   `com.undal.syl.app`, then download the customer `google-services.json`.
+5. Add a second Android app in that **same project** with package
+   `com.undal.syl.vendor` and download its distinct file for
+   `GOOGLE_SERVICES_VENDOR_JSON`. Registering only the customer package will
+   compile with the explicitly non-publishable CI fixture but cannot produce a
+   release.
+6. **Project settings → Service accounts → Generate new private key.**
 
 Keep the Spark (free) plan: everything here fits inside it.
 
@@ -95,7 +109,7 @@ Keep the Spark (free) plan: everything here fits inside it.
 
 ---
 
-## 3 · Run the workflows — six buttons, in this order
+## 3 · Run the setup workflows in this order
 
 GitHub → **Actions** → pick the workflow → **Run workflow**.
 
@@ -156,11 +170,20 @@ the repository is the rule in force — not only after someone remembers to run
 `seed-config` by hand (which stays safe to re-run: it only ever creates missing
 documents).
 
+For an existing single-store installation, these rules are deliberately safe to
+publish before migration: while both compatibility gates are false, an old APK
+keeps its validated default-branch checkout writes. The guarded activation in
+`docs/BRANCH_MIGRATION.md` closes the Firestore and RTDB legacy paths together
+after the new apps have been rolled out and the data/staff audit is clean.
+
 ### 3e · `android-build`
 
-Runs the no-unfinished-work gate, the unit tests, then builds and signs the
-release APK, publishes it to the rolling release and tells the Worker about the
-new version.
+Runs the no-unfinished-work gate and unit tests for both flavors, compiles both
+instrumentation-test variants, assembles customer and vendor releases, then
+signs and publishes `undal.apk` plus `undal-vendor.apk` and tells the Worker
+about the new version. Verification branches may compile with a clearly marked
+vendor fixture, but signing, artifacts and publication stay blocked until the
+real vendor Firebase registration is supplied. Main cannot bypass that guard.
 
 **Push to `main` runs this automatically.**
 
@@ -190,16 +213,21 @@ namespace the website binds to.
 
 | Step | What to do |
 | --- | --- |
-| 1 | GitHub → your repository → **Releases → latest** → download `undal.apk` |
+| 1 | Customer phones: GitHub → **Releases → latest** → `undal.apk`. Assigned staff phones: `undal-vendor.apk` |
 | 2 | Open the file; Android asks to allow installs from this source → **Allow** |
-| 3 | Install, open, and grant notifications and location when asked |
-| 4 | The direct link never changes: `https://github.com/<owner>/undal/releases/latest/download/undal.apk` |
+| 3 | Install, open, and grant the permissions requested by that portal |
+| 4 | Stable links: `https://github.com/<owner>/undal/releases/latest/download/undal.apk` and `.../undal-vendor.apk` |
+
+The application ids differ, so both can be installed for staff testing. A valid
+account opened in the wrong flavor gets a handoff to the other app; customer
+and vendor deep links cannot bypass that role gate.
 
 ---
 
 ## 5 · Kitchen phone first-run checklist
 
-1. Log in with `VENDOR_EMAIL` / `VENDOR_PASSWORD`.
+1. Install `undal-vendor.apk`, assign the account to its branch in the admin,
+   then sign out/in once so the branch claims refresh before logging in.
 2. Walk the **device diagnostics** wizard (V-004/V-087) and tap through, in
    order: notification permission, battery optimization exemption, autostart
    allowance, sound test.
@@ -379,8 +407,9 @@ step only you can do, because it needs your own Firebase project.
 **What only your project can prove.** Four checks need your real Firebase project,
 your Cloudinary account and a signed keystore, so run them once after §3e:
 
-1. **The build and the signature** — `android-build` finishes green and
-   `releases/latest/download/undal.apk` installs on the customer phone.
+1. **The build and the signature** — `android-build` finishes green with real
+   Firebase registrations; `undal.apk` installs on the customer phone and
+   `undal-vendor.apk` on the assigned kitchen phone.
 2. **A real order, end to end** — place one order in the app, watch the kitchen
    phone ring within seconds, accept it, and follow the status to *delivered*.
 3. **A real push** — the order alert and the status update arrive with the app in

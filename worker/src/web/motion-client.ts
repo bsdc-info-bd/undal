@@ -61,6 +61,26 @@ export const MOTION_SCRIPT = `
     for (var index = 0; index < list.length; index++) handler(list[index], index);
   }
 
+  // A tap can land on a span (or, in an old WebView, its text node), and
+  // Element.closest itself is not universal. Delegation must still find the
+  // control in all three cases; otherwise the visible button simply feels dead.
+  function closest(target, selector) {
+    var node = target && target.nodeType === 3 ? target.parentNode : target;
+    while (node && node.getAttribute) {
+      var matcher = node.matches || node.webkitMatchesSelector || node.msMatchesSelector;
+      if (matcher) {
+        if (matcher.call(node, selector)) return node;
+      } else {
+        var candidates = document.querySelectorAll(selector);
+        for (var index = 0; index < candidates.length; index++) {
+          if (candidates[index] === node) return node;
+        }
+      }
+      node = node.parentNode;
+    }
+    return null;
+  }
+
   function ready(handler) {
     if (document.readyState === "loading") on(document, "DOMContentLoaded", handler);
     else handler();
@@ -107,7 +127,7 @@ export const MOTION_SCRIPT = `
   };
 
   on(document, "click", function (event) {
-    var button = event.target && event.target.closest ? event.target.closest("[data-undal-theme-button]") : null;
+    var button = closest(event.target, "[data-undal-theme-button]");
     if (!button) return;
     event.preventDefault();
     window.undalSetTheme(currentTheme() === "dark" ? "light" : "dark");
@@ -210,9 +230,7 @@ export const MOTION_SCRIPT = `
 
   var POINTER = window.PointerEvent ? "pointerdown" : "touchstart";
   on(document, POINTER, function (event) {
-    var target = event.target;
-    if (!target || !target.closest) return;
-    var node = target.closest(".button, .mini-button, .qty button, .chips a, .tabs a, .tabs button");
+    var node = closest(event.target, ".button, .mini-button, .qty button, .chips a, .tabs a, .tabs button");
     if (!node) return;
     ripple(event.touches && event.touches[0] ? event.touches[0] : event, node);
   });
@@ -398,7 +416,10 @@ export const MOTION_SCRIPT = `
     if (!badge) return;
     if (window.MutationObserver) {
       var observer = new MutationObserver(function () { bumpBasket(); });
-      observer.observe(badge, { childList: true, characterData: true, subtree: true, attributes: true });
+      // Only the count is input. Watching attributes as well makes our own
+      // is-bumped class the next mutation, which calls bumpBasket again forever:
+      // a real browser stays in that observer/timer loop and the Add tap freezes.
+      observer.observe(badge, { childList: true, characterData: true, subtree: true });
     }
     showBasketBar();
   }

@@ -2,6 +2,12 @@ package com.undal.syl.app.core.fcm
 
 import com.google.firebase.firestore.FieldValue
 import com.google.firebase.firestore.FirebaseFirestore
+import androidx.datastore.core.DataStore
+import androidx.datastore.preferences.core.Preferences
+import androidx.datastore.preferences.core.edit
+import androidx.datastore.preferences.core.stringSetPreferencesKey
+import com.undal.syl.app.core.branch.BranchMembership
+import kotlinx.coroutines.flow.first
 import com.google.firebase.messaging.FirebaseMessaging
 import kotlinx.coroutines.tasks.await
 import javax.inject.Inject
@@ -33,11 +39,16 @@ import javax.inject.Singleton
 class TokenRegistrar @Inject constructor(
     private val firestore: FirebaseFirestore,
     private val messaging: FirebaseMessaging,
+    private val membership: BranchMembership,
+    private val dataStore: DataStore<Preferences>,
     @Named("appVersionName") private val appVersionName: String
 ) {
 
     suspend fun register(uid: String, isVendor: Boolean, subscribeToPromos: Boolean): Result<String> = runCatching {
         val token = messaging.token.await()
+        val branches = if (isVendor) membership.availableBranches() else emptyList()
+        val branchTopics = branches.map { branch -> "undal_branch_" + branch.id.lowercase()
+            .replace(Regex("[^a-z0-9-]"), "-").take(48) }.toSet()
         val document = firestore
             .collection(FCM_TOKENS).document(uid)
             .collection(TOKENS).document(token)
@@ -47,6 +58,8 @@ class TokenRegistrar @Inject constructor(
                 "platform" to "android",
                 "appVersion" to appVersionName,
                 "role" to if (isVendor) "vendor" else "customer",
+                "branchIds" to branches.map { it.id },
+                "topics" to branchTopics.toList(),
                 "deviceModel" to android.os.Build.MODEL,
                 "updatedAt" to FieldValue.serverTimestamp()
             )
@@ -63,16 +76,26 @@ class TokenRegistrar @Inject constructor(
             runCatching { messaging.subscribeToTopic(PROMO_TOPIC).await() }
         }
 
+        val previousTopics = dataStore.data.first()[BRANCH_TOPICS].orEmpty()
+        (previousTopics - branchTopics).forEach { topic ->
+            runCatching { messaging.unsubscribeFromTopic(topic).await() }
+        }
         if (isVendor) {
-            // The kitchen route. Deliberately not from the customer path: only a
-            // device signed in as the kitchen may receive order alerts.
-            runCatching { messaging.subscribeToTopic(AlertContract.KITCHEN_TOPIC).await() }
-                .onFailure { subscribeFailure = it.message.orEmpty() }
+            branchTopics.forEach { topic ->
+                runCatching { messaging.subscribeToTopic(topic).await() }
+                    .onFailure { subscribeFailure = it.message.orEmpty() }
+            }
+            // The unscoped topic is only the pre-migration/default fallback.
+            if (branches.any { it.id == "default" }) {
+                runCatching { messaging.subscribeToTopic(AlertContract.KITCHEN_TOPIC).await() }
+                    .onFailure { subscribeFailure = it.message.orEmpty() }
+            } else {
+                runCatching { messaging.unsubscribeFromTopic(AlertContract.KITCHEN_TOPIC).await() }
+            }
         } else {
-            // A phone that used to be the kitchen must stop receiving alert
-            // fan-outs the moment a customer signs in on it.
             runCatching { messaging.unsubscribeFromTopic(AlertContract.KITCHEN_TOPIC).await() }
         }
+        dataStore.edit { it[BRANCH_TOPICS] = if (isVendor) branchTopics else emptySet() }
         token
     }
 
@@ -85,8 +108,15 @@ class TokenRegistrar @Inject constructor(
      * call as often as the readiness check likes: subscribing twice is a no-op.
      */
     suspend fun ensureKitchenSubscription(): Boolean = runCatching {
-        messaging.subscribeToTopic(AlertContract.KITCHEN_TOPIC).await()
-        true
+        val branches = membership.availableBranches()
+        branches.forEach { branch ->
+            val topic = "undal_branch_" + branch.id.lowercase().replace(Regex("[^a-z0-9-]"), "-").take(48)
+            messaging.subscribeToTopic(topic).await()
+        }
+        if (branches.any { it.id == "default" }) {
+            messaging.subscribeToTopic(AlertContract.KITCHEN_TOPIC).await()
+        }
+        branches.isNotEmpty()
     }.getOrDefault(false)
 
     suspend fun currentToken(): String? = runCatching { messaging.token.await() }.getOrNull()
@@ -101,5 +131,6 @@ class TokenRegistrar @Inject constructor(
         const val FCM_TOKENS = "fcmTokens"
         const val TOKENS = "tokens"
         const val PROMO_TOPIC = "promos_all"
+        private val BRANCH_TOPICS = stringSetPreferencesKey("vendor_branch_topics")
     }
 }

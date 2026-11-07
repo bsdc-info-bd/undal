@@ -17,9 +17,11 @@
  * browser or a locked-down phone browser cannot parse. Nothing here is about
  * taste: each entry is a construct whose absence is a blank page.
  *
- * Allowed, because the storefront cannot work without them and every browser
- * that can run the store at all has them: `fetch`, `Promise`, `JSON`, `var`,
- * `function`, `new RegExp` and `try/catch`.
+ * `JSON`, `var`, `function`, `new RegExp` and `try/catch` are the scripting
+ * floor. `fetch` and `Promise` are feature-tested by the account/checkout code:
+ * browsers without them keep the real server-posted forms instead of having
+ * their only working submit cancelled. The rendered browser tests execute both
+ * paths; this gate separately prevents a newer token from killing a whole block.
  *
  * Run it by hand:  node tools/check-web-compat.mjs
  */
@@ -62,6 +64,7 @@ const BANNED = [
   { pattern: /\.\.\.\s*[A-Za-z_$[(]/, name: "spread or rest", needs: "Chrome 46 / WebView 46", instead: "a loop, or slice()" },
   { pattern: /\.padStart\(/, name: "String.prototype.padStart", needs: "Chrome 57 / WebView 57", instead: 'a two-digit helper: ("0" + value).slice(-2)' },
   { pattern: /\.padEnd\(/, name: "String.prototype.padEnd", needs: "Chrome 57 / WebView 57", instead: "a small pad helper" },
+  { pattern: /Math\.trunc\(/, name: "Math.trunc", needs: "Chrome 38 / WebView 38", instead: "a towards-zero helper using Math.floor and Math.ceil" },
   { pattern: /\.replaceChildren\(/, name: "Element.replaceChildren", needs: "Chrome 86 / Safari 14", instead: 'node.innerHTML = "" then appendChild' },
   { pattern: /Object\.fromEntries\(/, name: "Object.fromEntries", needs: "Chrome 73 / WebView 73", instead: "a loop that fills an object" },
   { pattern: /\.flatMap\(/, name: "Array.prototype.flatMap", needs: "Chrome 69 / WebView 69", instead: "map + a loop" },

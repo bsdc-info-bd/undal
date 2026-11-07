@@ -246,7 +246,11 @@ function harness(
 
   const windowListeners = new Map<string, Listener[]>();
   const observers: StubWindow["observers"] = [];
-  const mutations: StubWindow["mutations"] = [];
+  const mutations: Array<{
+    target: StubElement;
+    options: { attributes?: boolean; childList?: boolean; characterData?: boolean; subtree?: boolean };
+    fire: (added: StubElement[]) => void;
+  }> = [];
   const timers: Array<{ id: number; at: number; handler: () => void }> = [];
   const clock = { now: 0 };
   let timerSequence = 0;
@@ -277,8 +281,8 @@ function harness(
 
   function mutationObserverStub(callback: (records: Array<{ addedNodes: StubElement[] }>) => void) {
     return {
-      observe: (target: StubElement) => {
-        mutations.push({ target, fire: (added: StubElement[]) => callback([{ addedNodes: added }]) });
+      observe: (target: StubElement, options: { attributes?: boolean; childList?: boolean; characterData?: boolean; subtree?: boolean }) => {
+        mutations.push({ target, options, fire: (added: StubElement[]) => callback([{ addedNodes: added }]) });
       },
       disconnect: () => {},
     };
@@ -517,6 +521,14 @@ test("adding a dish is answered: a flight, a bump and a bar within reach", async
   assert.equal(page.findAll(".undal-flight").length, 1, "the dish travels to the basket");
 
   const badge = page.byId("undal-cart-count")!;
+  const badgeObserver = page.window.mutations.find((mutation) => mutation.target === badge);
+  assert.ok(badgeObserver, "a changed cart count wakes the motion layer");
+  assert.equal(badgeObserver.options.childList, true);
+  assert.notEqual(
+    badgeObserver.options.attributes,
+    true,
+    "our own animation class must never retrigger the observer (a real-browser main-thread freeze)",
+  );
   badge.textContent = "2";
   for (const mutation of page.window.mutations) mutation.fire([badge]);
   page.advance(30);
@@ -615,6 +627,7 @@ test("the shipped page carries both palettes, the control and the reduced-motion
   assert.match(html, /\.js-reveal \.reveal\{opacity:0/, "a card is hidden only under a class the script adds");
   assert.match(html, /calc\(var\(--i,0\) \* 45ms\)/, "the stagger index travels with the card");
   assert.match(html, /env\(safe-area-inset-bottom\)/, "the sticky bars clear the home indicator");
+  assert.match(html, /\.undal-toast button\{[^}]*min-width:44px;min-height:44px/, "even dismissing a toast is a comfortable tap");
   assert.doesNotMatch(html, /width:100vw/, "nothing is sized by the viewport width, which is how a page overflows sideways");
 });
 

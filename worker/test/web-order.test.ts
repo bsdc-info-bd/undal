@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { FakeFirebase } from "./helpers/fake-firebase";
-import { createWebOrder, type WebOrderInput } from "../src/routes/store";
+import { createWebOrder, customerPhotoSnapshot, type WebOrderInput } from "../src/routes/store";
 import { runPresenceSweep } from "../src/crons/presence";
 import { dhakaClock } from "../src/util/store-hours";
 import { HttpError } from "../src/util/http";
@@ -104,6 +104,21 @@ test("an open kitchen takes the order", async () => {
   const result = await place(kitchen(), order());
   assert.equal(result.order.status, "placed");
   assert.equal(result.subtotalPaisa, 50_000);
+});
+
+test("checkout snapshots only an uploaded Cloudinary photo, never the private profile", async () => {
+  const backend = kitchen().setDocument("users/guest-1", {
+    name: "Private customer",
+    phone: "01712345678",
+    photoUrl: "https://res.cloudinary.com/undal/image/upload/customer.jpg",
+    address: { title: "Private address", desc: "Do not expose" },
+  });
+  const result = await place(backend, order());
+  const stored = backend.docs.get(`orders/${result.order.id}`) as Record<string, unknown>;
+  assert.equal(stored.customerPhotoUrl, "https://res.cloudinary.com/undal/image/upload/customer.jpg");
+  assert.equal(customerPhotoSnapshot("https://attacker.example/tracking.jpg"), "");
+  assert.equal(customerPhotoSnapshot("javascript:alert(1)"), "");
+  assert.equal(customerPhotoSnapshot("https://res.cloudinary.com.evil.example/customer.jpg"), "");
 });
 
 test("a kitchen outside its hours refuses the order, and says when it opens", async () => {
