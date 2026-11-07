@@ -1,13 +1,15 @@
 /*
   X-Content-Type-Options: nosniff
   X-Frame-Options: DENY
-  Referrer-Policy: no-referrer
+  Referrer-Policy: strict-origin-when-cross-origin
   Permissions-Policy: geolocation=(self), camera=(), microphone=()
   Content-Security-Policy: default-src 'self'; img-src 'self' data: https://tile.openstreetmap.org https://res.cloudinary.com https://*.cloudinary.com; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'
 
 /app.js
   Cache-Control: public, max-age=0, must-revalidate
+
 /app.css
   Cache-Control: public, max-age=0, must-revalidate
+
 /branch-map.js
   Cache-Control: public, max-age=0, must-revalidate
