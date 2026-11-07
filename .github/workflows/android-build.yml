@@ -160,13 +160,20 @@ jobs:
         run: |
           set -o pipefail
           # Offline, compile-only fixtures: never copy production credentials
-          # into either unregistered .debug app. Variant-specific source sets
-          # outrank src/vendor/google-services.json, whose real registration
-          # intentionally contains only com.undal.syl.vendor (not .debug). The
-          # production file stays untouched and is used by the release step.
-          # Keep the real task graph intact: excluding GoogleServices breaks
-          # AGP's generated-resource providers. Remove fixtures afterwards.
-          trap 'rm -f app/src/customerDebug/google-services.json app/src/vendorDebug/google-services.json' EXIT
+          # into either unregistered .debug app. This plugin gives src/vendor
+          # precedence even over a vendorDebug fixture, and that real file has
+          # no com.undal.syl.vendor.debug client. Park it outside the app for
+          # this step only; the trap restores it before release assembly and
+          # removes every fixture on both success and failure.
+          set -euo pipefail
+          mv app/src/vendor/google-services.json "$RUNNER_TEMP/undal-vendor-google-services.json"
+          cleanup_debug_config() {
+            rm -f app/src/customerDebug/google-services.json app/src/vendorDebug/google-services.json
+            if [ -f "$RUNNER_TEMP/undal-vendor-google-services.json" ]; then
+              mv "$RUNNER_TEMP/undal-vendor-google-services.json" app/src/vendor/google-services.json
+            fi
+          }
+          trap cleanup_debug_config EXIT
           mkdir -p app/src/customerDebug app/src/vendorDebug
           cat > app/src/customerDebug/google-services.json <<'JSON'
           {"project_info":{"project_number":"0","project_id":"undal-ci-compile-only"},"client":[{"client_info":{"mobilesdk_app_id":"1:0:android:0000000000000000","android_client_info":{"package_name":"com.undal.syl.app.debug"}},"api_key":[{"current_key":"CI_COMPILE_ONLY_NOT_A_CREDENTIAL"}]}],"configuration_version":"1"}
