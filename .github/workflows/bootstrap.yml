@@ -1,14 +1,29 @@
 # ===========================================================================
-# Undal HomeKitchen — bootstrap (run ONCE, from the phone browser)
+# Undal HomeKitchen — owner/vendor/bootstrap provisioning
 #
-# 1. Preflights every required secret and fails with a human-readable checklist.
-# 2. Creates the Gradle wrapper (8.10.2) so later builds need no wrapper binary.
-# 3. Copies the official order sound into app/src/main/res/raw.
-# 4. Writes app/google-services.json from the GOOGLE_SERVICES_JSON secret.
-# 5. Provisions the vendor account: Firebase user + `vendor: true` claim +
-#    the vendor/{uid} Firestore document.
-# 6. Commits the wrapper and the order sound back to the branch.
+# This workflow:
+#   1. Checks the required GitHub secrets.
+#   2. Creates the Gradle wrapper and installs the official order sound.
+#   3. Writes app/google-services.json from GOOGLE_SERVICES_JSON.
+#   4. Provisions VENDOR_EMAIL + VENDOR_PASSWORD as the vendor account.
+#   5. Grants that same owner account BOTH claims:
+#        vendor: true
+#        superAdmin: true
+#   6. Writes the vendor Firestore document through the provisioning script.
+#   7. Commits generated wrapper/sound files when necessary.
+#
+# SECURITY:
+#   This workflow is for the single Undal owner account only.
+#   Do not use it for ordinary branch staff because it grants superAdmin.
+#
+# Required repository secrets:
+#   GOOGLE_SERVICES_JSON
+#   FIREBASE_WEB_API_KEY
+#   FIREBASE_SA_JSON
+#   VENDOR_EMAIL
+#   VENDOR_PASSWORD
 # ===========================================================================
+
 name: bootstrap
 
 on:
@@ -23,8 +38,9 @@ concurrency:
 
 jobs:
   bootstrap:
-    name: Provision Undal
+    name: Provision Undal owner and super admin
     runs-on: ubuntu-latest
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -40,7 +56,16 @@ jobs:
           VENDOR_PASSWORD: ${{ secrets.VENDOR_PASSWORD }}
         run: |
           bash tools/preflight.sh \
-            GOOGLE_SERVICES_JSON FIREBASE_WEB_API_KEY FIREBASE_SA_JSON VENDOR_EMAIL VENDOR_PASSWORD
+            GOOGLE_SERVICES_JSON \
+            FIREBASE_WEB_API_KEY \
+            FIREBASE_SA_JSON \
+            VENDOR_EMAIL \
+            VENDOR_PASSWORD
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
 
       - name: Set up JDK 17
         uses: actions/setup-java@v4
@@ -52,14 +77,19 @@ jobs:
         uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: "8.10.2"
+          gradle-distribution: bin
 
       - name: Create the Gradle wrapper
-        run: gradle wrapper --gradle-version 8.10.2 --distribution-type bin
+        run: |
+          gradle wrapper \
+            --gradle-version 8.10.2 \
+            --distribution-type bin
 
       - name: Copy the official order sound into res/raw
         run: |
           mkdir -p app/src/main/res/raw
-          cp assets/sound/undal_order_alert.mp3 app/src/main/res/raw/undal_order_alert.mp3
+          cp assets/sound/undal_order_alert.mp3 \
+            app/src/main/res/raw/undal_order_alert.mp3
           ls -l app/src/main/res/raw/undal_order_alert.mp3
 
       - name: Write google-services.json
@@ -67,15 +97,30 @@ jobs:
           GOOGLE_SERVICES_JSON: ${{ secrets.GOOGLE_SERVICES_JSON }}
         run: |
           printf '%s' "$GOOGLE_SERVICES_JSON" > app/google-services.json
+
           python3 - <<'PY'
           import json
+
           with open("app/google-services.json") as handle:
               data = json.load(handle)
-          package_name = data["client"][0]["client_info"]["android_client_info"]["package_name"]
+
+          package_name = data["client"][0]["client_info"][
+              "android_client_info"
+          ]["package_name"]
+
           project_id = data["project_info"]["project_id"]
-          print(f"google-services.json is valid for {package_name} (project {project_id})")
+
+          print(
+              f"google-services.json is valid for "
+              f"{package_name} (project {project_id})"
+          )
+
           if package_name != "com.undal.syl.app":
-              raise SystemExit("google-services.json does not contain com.undal.syl.app — add the Android app to the Firebase project.")
+              raise SystemExit(
+                  "google-services.json does not contain "
+                  "com.undal.syl.app — add the Android app "
+                  "to the Firebase project."
+              )
           PY
 
       - name: Provision the vendor account
@@ -84,27 +129,286 @@ jobs:
           FIREBASE_WEB_API_KEY: ${{ secrets.FIREBASE_WEB_API_KEY }}
           VENDOR_EMAIL: ${{ secrets.VENDOR_EMAIL }}
           VENDOR_PASSWORD: ${{ secrets.VENDOR_PASSWORD }}
-        run: node tools/provision-vendor.mjs
+        run: |
+          node tools/provision-vendor.mjs
+
+      - name: Grant owner super-admin access
+        env:
+          FIREBASE_SA_JSON: ${{ secrets.FIREBASE_SA_JSON }}
+          FIREBASE_WEB_API_KEY: ${{ secrets.FIREBASE_WEB_API_KEY }}
+          VENDOR_EMAIL: ${{ secrets.VENDOR_EMAIL }}
+          VENDOR_PASSWORD: ${{ secrets.VENDOR_PASSWORD }}
+        run: |
+          node --input-type=module <<'NODE'
+          import {
+            accessToken,
+            serviceAccountFromEnv,
+          } from "./tools/lib/gcp.mjs";
+
+          const account = serviceAccountFromEnv();
+
+          const apiKey = (
+            process.env.FIREBASE_WEB_API_KEY ?? ""
+          ).trim();
+
+          const email = (
+            process.env.VENDOR_EMAIL ?? ""
+          ).trim().toLowerCase();
+
+          const password =
+            process.env.VENDOR_PASSWORD ?? "";
+
+          if (!apiKey) {
+            throw new Error(
+              "FIREBASE_WEB_API_KEY is empty."
+            );
+          }
+
+          if (!email.includes("@") || !password) {
+            throw new Error(
+              "VENDOR_EMAIL / VENDOR_PASSWORD are empty or invalid."
+            );
+          }
+
+          const identityBase =
+            "https://identitytoolkit.googleapis.com/v1";
+
+          const projectBase =
+            `${identityBase}/projects/` +
+            encodeURIComponent(account.project_id);
+
+          async function jsonPayload(response) {
+            return response.json().catch(() => ({}));
+          }
+
+          function googleError(payload, status) {
+            return String(
+              payload?.error?.message ?? `HTTP_${status}`
+            );
+          }
+
+          /*
+           * Sign in again to verify the configured owner credentials and
+           * obtain the Firebase Auth UID. No password or token is logged.
+           */
+          const signIn = await fetch(
+            `${identityBase}/accounts:signInWithPassword` +
+              `?key=${encodeURIComponent(apiKey)}`,
+            {
+              method: "POST",
+              headers: {
+                "content-type": "application/json",
+              },
+              body: JSON.stringify({
+                email,
+                password,
+                returnSecureToken: true,
+              }),
+            }
+          );
+
+          const signInPayload =
+            await jsonPayload(signIn);
+
+          if (!signIn.ok) {
+            throw new Error(
+              "Firebase rejected VENDOR_EMAIL / VENDOR_PASSWORD " +
+                `(${googleError(
+                  signInPayload,
+                  signIn.status
+                )}). ` +
+                "Reset the password in Firebase Authentication, " +
+                "update VENDOR_PASSWORD in GitHub secrets, and rerun bootstrap."
+            );
+          }
+
+          const uid = signInPayload.localId;
+
+          if (!uid) {
+            throw new Error(
+              "Firebase sign-in returned no localId."
+            );
+          }
+
+          const token = await accessToken(account);
+
+          const adminHeaders = {
+            authorization: `Bearer ${token}`,
+            "content-type": "application/json",
+          };
+
+          /*
+           * accounts:update replaces customAttributes. Read the current
+           * claims first so existing branch assignments and other claims
+           * are preserved.
+           */
+          const lookup = await fetch(
+            `${projectBase}/accounts:lookup`,
+            {
+              method: "POST",
+              headers: adminHeaders,
+              body: JSON.stringify({
+                localId: [uid],
+              }),
+            }
+          );
+
+          const lookupPayload =
+            await jsonPayload(lookup);
+
+          if (!lookup.ok) {
+            throw new Error(
+              "Firebase Auth account lookup failed: " +
+                googleError(
+                  lookupPayload,
+                  lookup.status
+                )
+            );
+          }
+
+          const firebaseUser =
+            Array.isArray(lookupPayload.users)
+              ? lookupPayload.users.find(
+                  (user) => user.localId === uid
+                )
+              : null;
+
+          if (!firebaseUser) {
+            throw new Error(
+              "The owner Firebase Auth account was not found."
+            );
+          }
+
+          if (firebaseUser.disabled) {
+            throw new Error(
+              "The owner Firebase Auth account is disabled. " +
+                "Enable it in Firebase Authentication and rerun bootstrap."
+            );
+          }
+
+          let existingClaims = {};
+
+          const rawClaims =
+            firebaseUser.customAttributes;
+
+          if (
+            typeof rawClaims === "string" &&
+            rawClaims.trim()
+          ) {
+            try {
+              const parsed = JSON.parse(rawClaims);
+
+              if (
+                !parsed ||
+                typeof parsed !== "object" ||
+                Array.isArray(parsed)
+              ) {
+                throw new Error(
+                  "customAttributes is not a JSON object"
+                );
+              }
+
+              existingClaims = parsed;
+            } catch (error) {
+              throw new Error(
+                "Existing Firebase custom claims are malformed; " +
+                  "refusing to overwrite them " +
+                  `(${
+                    error instanceof Error
+                      ? error.message
+                      : String(error)
+                  }).`
+              );
+            }
+          }
+
+          const nextClaims = {
+            ...existingClaims,
+
+            // Vendor Android application access.
+            vendor: true,
+
+            // Full https://undal-admin.pages.dev access.
+            superAdmin: true,
+          };
+
+          const update = await fetch(
+            `${projectBase}/accounts:update`,
+            {
+              method: "POST",
+              headers: adminHeaders,
+              body: JSON.stringify({
+                localId: uid,
+                emailVerified: true,
+                customAttributes:
+                  JSON.stringify(nextClaims),
+              }),
+            }
+          );
+
+          if (!update.ok) {
+            const updatePayload =
+              await jsonPayload(update);
+
+            throw new Error(
+              "Setting superAdmin access failed: " +
+                googleError(
+                  updatePayload,
+                  update.status
+                )
+            );
+          }
+
+          console.log(
+            `Super-admin access granted to owner account: ${email}`
+          );
+
+          console.log(`Firebase Auth UID: ${uid}`);
+
+          console.log(
+            "Active claims include vendor:true and superAdmin:true."
+          );
+
+          console.log(
+            "Open a fresh admin tab and sign in again to receive " +
+              "a token containing the new claim."
+          );
+          NODE
 
       - name: Summarise
         run: |
           {
-            echo "## Undal bootstrap complete"
+            echo "## Undal owner bootstrap complete"
             echo ""
             echo "| Item | State |"
             echo "| --- | --- |"
             echo "| Gradle wrapper | 8.10.2 written to gradle/wrapper |"
-            echo "| Order sound | assets/sound/undal_order_alert.mp3 → app/src/main/res/raw/ |"
-            echo "| google-services.json | written from secret (not committed) |"
-            echo "| Vendor account | Firebase user created, vendor:true claim set, vendor/{uid} document written |"
+            echo "| Order sound | Copied into app/src/main/res/raw |"
+            echo "| google-services.json | Written from secret; not committed |"
+            echo "| Vendor account | Firebase user provisioned |"
+            echo "| Vendor access | vendor:true claim granted |"
+            echo "| Admin access | superAdmin:true claim granted |"
+            echo "| Firestore | vendor/{uid} document written |"
             echo ""
-            echo "Next: run **seed-config**, then **deploy-worker**, then **android-build**."
+            echo "### Admin login"
+            echo ""
+            echo "1. Open a fresh/private browser tab."
+            echo "2. Visit https://undal-admin.pages.dev/"
+            echo "3. Sign in using VENDOR_EMAIL and VENDOR_PASSWORD."
+            echo ""
+            echo "Existing browser sessions must be closed or signed out"
+            echo "because their old Firebase tokens do not contain"
+            echo "the new superAdmin claim."
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Commit wrapper and order sound
         uses: stefanzweifel/git-auto-commit-action@v5
         with:
-          commit_message: "chore(bootstrap): gradle wrapper 8.10.2 and order sound in res/raw"
-          file_pattern: "gradle/wrapper/* gradlew gradlew.bat app/src/main/res/raw/undal_order_alert.mp3"
+          commit_message: >-
+            chore(bootstrap): gradle wrapper 8.10.2
+            and order sound in res/raw
+          file_pattern: >-
+            gradle/wrapper/* gradlew gradlew.bat
+            app/src/main/res/raw/undal_order_alert.mp3
           commit_user_name: undal-bootstrap
           commit_user_email: bootstrap@undal.local
