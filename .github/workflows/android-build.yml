@@ -159,13 +159,20 @@ jobs:
       - name: Compile adaptive previews and instrumentation tests
         run: |
           set -o pipefail
-          # Offline, compile-only fixture: never copy production credentials into
-          # the unregistered .debug app. This step does not produce/run a debug APK.
-          # Keep the real task graph intact: excluding GoogleServices breaks AGP's
-          # generated-resource providers. Remove the fixture before release build.
-          trap 'rm -f app/src/debug/google-services.json' EXIT
-          cat > app/src/debug/google-services.json <<'JSON'
-          {"project_info":{"project_number":"0","project_id":"undal-ci-compile-only"},"client":[{"client_info":{"mobilesdk_app_id":"1:0:android:0000000000000000","android_client_info":{"package_name":"com.undal.syl.app.debug"}},"api_key":[{"current_key":"CI_COMPILE_ONLY_NOT_A_CREDENTIAL"}]},{"client_info":{"mobilesdk_app_id":"1:0:android:0000000000000001","android_client_info":{"package_name":"com.undal.syl.vendor.debug"}},"api_key":[{"current_key":"CI_COMPILE_ONLY_NOT_A_CREDENTIAL"}]}],"configuration_version":"1"}
+          # Offline, compile-only fixtures: never copy production credentials
+          # into either unregistered .debug app. Variant-specific source sets
+          # outrank src/vendor/google-services.json, whose real registration
+          # intentionally contains only com.undal.syl.vendor (not .debug). The
+          # production file stays untouched and is used by the release step.
+          # Keep the real task graph intact: excluding GoogleServices breaks
+          # AGP's generated-resource providers. Remove fixtures afterwards.
+          trap 'rm -f app/src/customerDebug/google-services.json app/src/vendorDebug/google-services.json' EXIT
+          mkdir -p app/src/customerDebug app/src/vendorDebug
+          cat > app/src/customerDebug/google-services.json <<'JSON'
+          {"project_info":{"project_number":"0","project_id":"undal-ci-compile-only"},"client":[{"client_info":{"mobilesdk_app_id":"1:0:android:0000000000000000","android_client_info":{"package_name":"com.undal.syl.app.debug"}},"api_key":[{"current_key":"CI_COMPILE_ONLY_NOT_A_CREDENTIAL"}]}],"configuration_version":"1"}
+          JSON
+          cat > app/src/vendorDebug/google-services.json <<'JSON'
+          {"project_info":{"project_number":"0","project_id":"undal-ci-compile-only"},"client":[{"client_info":{"mobilesdk_app_id":"1:0:android:0000000000000001","android_client_info":{"package_name":"com.undal.syl.vendor.debug"}},"api_key":[{"current_key":"CI_COMPILE_ONLY_NOT_A_CREDENTIAL"}]}],"configuration_version":"1"}
           JSON
           ./gradlew :app:compileCustomerDebugAndroidTestKotlin :app:compileVendorDebugAndroidTestKotlin \
             --no-daemon --stacktrace 2>&1 | tee -a "$RUNNER_TEMP/undal-build.log"
